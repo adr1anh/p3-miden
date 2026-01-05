@@ -25,28 +25,28 @@ itertools = { version = "0.14.0", default-features = false, features = [
 ] }
 
 # Upstream Plonky3 dependencies
-p3-air = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-baby-bear = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-challenger = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-circle = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-commit = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-dft = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-field = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-field-testing = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-fri = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-goldilocks = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-interpolation = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-keccak = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-matrix = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-maybe-rayon = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-mds = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-merkle-tree = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-mersenne-31 = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-poseidon = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-poseidon2 = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-symmetric = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-uni-stark = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
-p3-util = { branch = "main", default-features = false, git = "https://github.com/Plonky3/Plonky3" }
+p3-air = { default-features = false, version = "0.4.2" }
+p3-baby-bear = { default-features = false, version = "0.4.2" }
+p3-challenger = { default-features = false, version = "0.4.2" }
+p3-circle = { default-features = false, version = "0.4.2" }
+p3-commit = { default-features = false, version = "0.4.2" }
+p3-dft = { default-features = false, version = "0.4.2" }
+p3-field = { default-features = false, version = "0.4.2" }
+p3-field-testing = { default-features = false, version = "0.4.2" }
+p3-fri = { default-features = false, version = "0.4.2" }
+p3-goldilocks = { default-features = false, version = "0.4.2" }
+p3-interpolation = { default-features = false, version = "0.4.2" }
+p3-keccak = { default-features = false, version = "0.4.2" }
+p3-matrix = { default-features = false, version = "0.4.2" }
+p3-maybe-rayon = { default-features = false, version = "0.4.2" }
+p3-mds = { default-features = false, version = "0.4.2" }
+p3-merkle-tree = { default-features = false, version = "0.4.2" }
+p3-mersenne-31 = { default-features = false, version = "0.4.2" }
+p3-poseidon = { default-features = false, version = "0.4.2" }
+p3-poseidon2 = { default-features = false, version = "0.4.2" }
+p3-symmetric = { default-features = false, version = "0.4.2" }
+p3-uni-stark = { default-features = false, version = "0.4.2" }
+p3-util = { default-features = false, version = "0.4.2" }
 
 # Internal p3-miden crates
 p3-miden-air = { path = "p3-miden-air", version = "0.4.2" }
