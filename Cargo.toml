@@ -3,6 +3,7 @@ members = [
   "p3-miden-air",
   "p3-miden-fri",
   "p3-miden-prover",
+  "p3-miden-symmetric",
   "p3-miden-uni-stark",
 ]
 resolver = "3"
@@ -27,6 +28,7 @@ itertools = { version = "0.14.0", default-features = false, features = [
 # Upstream Plonky3 dependencies
 p3-air = { default-features = false, version = "0.4.2" }
 p3-baby-bear = { default-features = false, version = "0.4.2" }
+p3-bn254 = { default-features = false, version = "0.4.2" }
 p3-challenger = { default-features = false, version = "0.4.2" }
 p3-circle = { default-features = false, version = "0.4.2" }
 p3-commit = { default-features = false, version = "0.4.2" }
@@ -37,6 +39,7 @@ p3-fri = { default-features = false, version = "0.4.2" }
 p3-goldilocks = { default-features = false, version = "0.4.2" }
 p3-interpolation = { default-features = false, version = "0.4.2" }
 p3-keccak = { default-features = false, version = "0.4.2" }
+p3-koala-bear = { default-features = false, version = "0.4.2" }
 p3-matrix = { default-features = false, version = "0.4.2" }
 p3-maybe-rayon = { default-features = false, version = "0.4.2" }
 p3-mds = { default-features = false, version = "0.4.2" }
@@ -52,6 +55,7 @@ p3-util = { default-features = false, version = "0.4.2" }
 p3-miden-air = { path = "p3-miden-air", version = "0.4.2" }
 p3-miden-fri = { path = "p3-miden-fri", version = "0.4.2" }
 p3-miden-prover = { path = "p3-miden-prover", version = "0.4.2" }
+p3-miden-symmetric = { path = "p3-miden-symmetric", version = "0.4.2" }
 p3-miden-uni-stark = { path = "p3-miden-uni-stark", version = "0.4.2" }
 
 rand = { version = "0.9", default-features = false }

@@ -1,0 +1,22 @@
+[package]
+name = "p3-miden-symmetric"
+description = "Miden-specific symmetric cryptographic primitives, extending Plonky3's p3-symmetric with StatefulHasher support."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+homepage.workspace = true
+
+[dependencies]
+p3-field.workspace = true
+
+itertools.workspace = true
+serde = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+p3-baby-bear.workspace = true
+p3-bn254.workspace = true
+p3-goldilocks.workspace = true
+p3-koala-bear.workspace = true
+p3-mersenne-31.workspace = true
