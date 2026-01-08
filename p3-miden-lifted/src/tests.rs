@@ -8,12 +8,16 @@ use alloc::vec::Vec;
 
 use p3_baby_bear::BabyBear;
 use p3_challenger::DuplexChallenger;
-use p3_field::PackedValue;
+use p3_commit::ExtensionMmcs;
+use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::extension::BinomialExtensionField;
+use p3_field::{BasedVectorSpace, PackedValue};
+use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::{Dimensions, Matrix};
 use p3_miden_symmetric::{StatefulHasher, StatefulSponge, TruncatedPermutation};
 use rand::SeedableRng;
+use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
 
 use crate::merkle_tree::MerkleTreeLmcs;
@@ -65,6 +69,9 @@ pub(crate) type BaseLmcs = MerkleTreeLmcs<P, P, Sponge, Compress, WIDTH, DIGEST>
 
 /// Duplex challenger for Fiat-Shamir.
 pub(crate) type Challenger = DuplexChallenger<F, Perm, WIDTH, RATE>;
+
+/// FRI MMCS for extension field elements.
+pub(crate) type FriMmcs = ExtensionMmcs<F, EF, BaseLmcs>;
 
 // ============================================================================
 // Fixture Functions
@@ -188,4 +195,35 @@ pub(crate) fn matrix_scenarios() -> Vec<Vec<(usize, usize)>> {
         // Single tall matrix
         vec![(pack_width * 2, RATE - 1)],
     ]
+}
+
+/// Create standard FRI MMCS for testing.
+pub(crate) fn fri_mmcs() -> FriMmcs {
+    ExtensionMmcs::new(base_lmcs())
+}
+
+/// Generate a matrix of LDE evaluations for random low-degree polynomials.
+///
+/// Each column is a polynomial of degree `poly_degree`, evaluated on the coset gK
+/// in bit-reversed order, where g = F::GENERATOR and K is a subgroup of order `lde_size`.
+///
+/// The coset evaluation is computed by scaling coefficients: for f(X) = Σ c_j X^j,
+/// the coset evaluations f(gX) = Σ (c_j g^j) X^j are obtained by DFT of scaled coefficients.
+pub(crate) fn random_lde_matrix<V>(
+    rng: &mut SmallRng,
+    log_poly_degree: usize,
+    log_blowup: usize,
+    num_columns: usize,
+    shift: F,
+) -> RowMajorMatrix<V>
+where
+    V: BasedVectorSpace<F> + Clone + Send + Sync + Default,
+    StandardUniform: Distribution<V>,
+{
+    let poly_degree = 1 << log_poly_degree;
+    let dft = Radix2DFTSmallBatch::<F>::default();
+
+    let evals = RowMajorMatrix::rand(rng, poly_degree, num_columns);
+    let lde = dft.coset_lde_algebra_batch(evals, log_blowup, shift);
+    lde.bit_reverse_rows().to_row_major_matrix()
 }
