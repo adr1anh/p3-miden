@@ -25,6 +25,7 @@
 
 use alloc::vec::Vec;
 
+use p3_commit::{BatchOpening, Mmcs};
 use p3_field::Field;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -141,11 +142,80 @@ where
     }
 }
 
+/// Trait for extracting opened values and Merkle proofs from input proof types.
+///
+/// This allows us to separate the actual opened values from their authentication
+/// proofs, enabling batching of the Merkle proofs across queries.
+pub trait InputProofOps<F> {
+    /// The type of Merkle proof used for input openings.
+    type Proof: ProofDigestOps;
+
+    /// The type storing just the opened values (without proofs).
+    type OpenedValues: Clone + Serialize + DeserializeOwned;
+
+    /// Extract just the opened values from the input proof.
+    fn extract_values(proof: &Self) -> Self::OpenedValues;
+
+    /// Extract the Merkle proofs from the input proof.
+    /// Returns one proof per batch (e.g., trace batch, quotient batch).
+    fn extract_proofs(proof: &Self) -> Vec<Self::Proof>;
+
+    /// Reconstruct the input proof from opened values and Merkle proofs.
+    fn from_values_and_proofs(values: Self::OpenedValues, proofs: Vec<Self::Proof>) -> Self;
+
+    /// Get the number of batches (commitments) in this input proof.
+    fn num_batches(proof: &Self) -> usize;
+}
+
+/// Opened values extracted from input proofs (without Merkle proofs).
+/// Structure: `batches[batch_idx][matrix_idx][row_values]`
+pub type ExtractedInputValues<F> = Vec<Vec<Vec<F>>>;
+
+// Implementation for Vec<BatchOpening<...>> which is the standard InputProof type
+impl<F, M> InputProofOps<F> for Vec<BatchOpening<F, M>>
+where
+    F: Field,
+    M: Mmcs<F>,
+    M::Proof: ProofDigestOps,
+{
+    type Proof = M::Proof;
+    type OpenedValues = ExtractedInputValues<F>;
+
+    fn extract_values(proof: &Self) -> Self::OpenedValues {
+        proof
+            .iter()
+            .map(|batch| batch.opened_values.clone())
+            .collect()
+    }
+
+    fn extract_proofs(proof: &Self) -> Vec<Self::Proof> {
+        proof.iter().map(|batch| batch.opening_proof.clone()).collect()
+    }
+
+    fn from_values_and_proofs(values: Self::OpenedValues, proofs: Vec<Self::Proof>) -> Self {
+        values
+            .into_iter()
+            .zip(proofs)
+            .map(|(opened_values, opening_proof)| BatchOpening {
+                opened_values,
+                opening_proof,
+            })
+            .collect()
+    }
+
+    fn num_batches(proof: &Self) -> usize {
+        proof.len()
+    }
+}
+
 /// Convert a standard FRI proof to a batched FRI proof.
 ///
 /// This function takes a standard FRI proof and compresses the Merkle proofs
 /// using batch aggregation. The resulting proof has the same cryptographic
 /// properties but is smaller in size.
+///
+/// Note: This version does NOT batch input proofs. Use `batch_fri_proof_with_inputs`
+/// for full batching including input polynomial openings.
 ///
 /// # Type Parameters
 /// - `F`: The challenge field type
@@ -229,11 +299,234 @@ where
         })
         .collect();
 
-    // TODO: Batch input proofs similarly
-    // For now, we leave input_proofs empty and handle them separately
+    // Input proofs not batched in this version
     let input_proofs = Vec::new();
 
     BatchedFriProof {
+        commit_phase_commits: proof.commit_phase_commits.clone(),
+        query_data,
+        layer_proofs,
+        input_proofs,
+        final_poly: proof.final_poly.clone(),
+        pow_witness: proof.pow_witness.clone(),
+    }
+}
+
+/// Batched input proof data for a single commitment batch.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(bound = "")]
+pub struct InputBatchProof<D>
+where
+    D: Clone + Default + Serialize + DeserializeOwned,
+{
+    /// The batched Merkle proof for all queries opening this input batch.
+    pub batched_proof: BatchMerkleProof<D>,
+    /// The query indices (sorted) for this batch.
+    pub indices: Vec<usize>,
+}
+
+/// A fully batched FRI proof that also batches input polynomial openings.
+///
+/// This is the most compact representation, batching both:
+/// - FRI layer Merkle proofs (commit phase)
+/// - Input polynomial Merkle proofs (trace, quotient, etc.)
+///
+/// Type parameters:
+/// - `Challenge`: The extension field used for FRI (commit phase sibling values)
+/// - `Val`: The base field used for input polynomial values
+/// - `D`: The Merkle tree digest type
+/// - `Commitment`: The commitment type
+/// - `Witness`: The proof-of-work witness type
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(bound = "")]
+pub struct FullyBatchedFriProof<Challenge, Val, D, Commitment, Witness>
+where
+    Challenge: Field,
+    Val: Field,
+    D: Clone + Default + Serialize + DeserializeOwned,
+    Commitment: Clone + Serialize + DeserializeOwned,
+    Witness: Clone + Serialize + DeserializeOwned,
+{
+    /// Commitments to the folded polynomials at each FRI layer.
+    pub commit_phase_commits: Vec<Commitment>,
+
+    /// Query-specific data: sibling values for FRI folding.
+    /// `query_data[query_idx]` contains data for that query.
+    pub query_data: Vec<FullyBatchedQueryData<Challenge, Val>>,
+
+    /// Batched Merkle proofs for each FRI layer.
+    pub layer_proofs: Vec<LayerBatchProof<D>>,
+
+    /// Batched Merkle proofs for input polynomial openings.
+    /// One per input commitment batch (e.g., trace, quotient).
+    pub input_proofs: Vec<InputBatchProof<D>>,
+
+    /// Coefficients of the final polynomial after folding.
+    pub final_poly: Vec<Challenge>,
+
+    /// Proof-of-work witness for grinding.
+    pub pow_witness: Witness,
+}
+
+/// Query-specific data for fully batched proofs.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(bound = "")]
+pub struct FullyBatchedQueryData<Challenge: Field, Val: Field> {
+    /// Opened values from input polynomials for this query (in base field).
+    /// Structure: `input_values[batch_idx][matrix_idx][row_values]`
+    pub input_values: ExtractedInputValues<Val>,
+
+    /// Sibling values for each commit phase layer (in extension field).
+    pub commit_phase_sibling_values: Vec<Vec<Challenge>>,
+}
+
+/// Convert a standard FRI proof to a fully batched FRI proof.
+///
+/// This version batches both FRI layer proofs AND input polynomial proofs,
+/// achieving maximum compression.
+///
+/// # Type Parameters
+/// - `Challenge`: The extension field type used for FRI
+/// - `Val`: The base field type used for input polynomial evaluations
+/// - `FriMmcs`: The MMCS type for FRI layers
+/// - `InputMmcs`: The MMCS type for input polynomial openings
+/// - `Witness`: The proof-of-work witness type
+///
+/// # Arguments
+/// - `proof`: The standard FRI proof to convert
+/// - `query_indices`: The query indices used in the proof
+/// - `log_folding_factor`: Log2 of the folding factor used in FRI
+/// - `log_blowup`: Log2 of the blowup factor
+/// - `input_log_max_heights`: Log2 of max heights for each input batch
+pub fn batch_fri_proof_with_inputs<Challenge, Val, FriMmcs, InputMmcs, Witness>(
+    proof: &crate::FriProof<Challenge, FriMmcs, Witness, Vec<BatchOpening<Val, InputMmcs>>>,
+    query_indices: &[usize],
+    log_folding_factor: usize,
+    log_blowup: usize,
+    input_log_max_heights: &[usize],
+) -> FullyBatchedFriProof<Challenge, Val, <FriMmcs::Proof as ProofDigestOps>::Digest, FriMmcs::Commitment, Witness>
+where
+    Challenge: Field,
+    Val: Field,
+    FriMmcs: Mmcs<Challenge>,
+    FriMmcs::Proof: ProofDigestOps,
+    <FriMmcs::Proof as ProofDigestOps>::Digest: Clone + Default + Serialize + DeserializeOwned + Eq,
+    FriMmcs::Commitment: Clone + Serialize + DeserializeOwned,
+    Witness: Clone + Serialize + DeserializeOwned,
+    InputMmcs: Mmcs<Val>,
+    InputMmcs::Proof: ProofDigestOps<Digest = <FriMmcs::Proof as ProofDigestOps>::Digest>,
+{
+    let num_queries = proof.query_proofs.len();
+    let num_layers = proof.commit_phase_commits.len();
+
+    assert_eq!(
+        query_indices.len(),
+        num_queries,
+        "query_indices length must match number of query proofs"
+    );
+
+    // Compute the log of global max height for index calculations
+    let log_global_max_height =
+        num_layers * log_folding_factor + log_blowup;
+
+    // Extract query data (sibling values and input opened values only)
+    // Sibling values are in Challenge field, input values stay in Val field
+    let query_data: Vec<FullyBatchedQueryData<Challenge, Val>> = proof
+        .query_proofs
+        .iter()
+        .map(|qp| FullyBatchedQueryData {
+            input_values: <Vec<BatchOpening<Val, InputMmcs>> as InputProofOps<Val>>::extract_values(
+                &qp.input_proof,
+            ),
+            commit_phase_sibling_values: qp
+                .commit_phase_openings
+                .iter()
+                .map(|step| step.sibling_values.clone())
+                .collect(),
+        })
+        .collect();
+
+    // Batch Merkle proofs for each FRI layer (same as before)
+    let layer_proofs: Vec<LayerBatchProof<<FriMmcs::Proof as ProofDigestOps>::Digest>> = (0
+        ..num_layers)
+        .map(|layer| {
+            let layer_indices: Vec<usize> = query_indices
+                .iter()
+                .map(|&idx| idx >> (layer * log_folding_factor + log_folding_factor))
+                .collect();
+
+            let individual_proofs: Vec<Vec<<FriMmcs::Proof as ProofDigestOps>::Digest>> = proof
+                .query_proofs
+                .iter()
+                .map(|qp| {
+                    <FriMmcs::Proof as ProofDigestOps>::extract_digests(
+                        &qp.commit_phase_openings[layer].opening_proof,
+                    )
+                })
+                .collect();
+
+            let batched_proof =
+                BatchMerkleProof::from_individual_proofs(&individual_proofs, &layer_indices);
+
+            let mut sorted_indices = layer_indices;
+            sorted_indices.sort();
+
+            LayerBatchProof {
+                batched_proof,
+                indices: sorted_indices,
+            }
+        })
+        .collect();
+
+    // Batch input proofs for each input batch (trace, quotient, etc.)
+    let num_input_batches = if proof.query_proofs.is_empty() {
+        0
+    } else {
+        proof.query_proofs[0].input_proof.len()
+    };
+
+    let input_proofs: Vec<InputBatchProof<<FriMmcs::Proof as ProofDigestOps>::Digest>> =
+        (0..num_input_batches)
+            .map(|batch_idx| {
+                // Compute indices for this input batch
+                // Input indices depend on the batch's max height relative to global max height
+                let batch_log_max_height = input_log_max_heights
+                    .get(batch_idx)
+                    .copied()
+                    .unwrap_or(log_global_max_height);
+                let bits_to_shift = log_global_max_height.saturating_sub(batch_log_max_height);
+
+                let batch_indices: Vec<usize> = query_indices
+                    .iter()
+                    .map(|&idx| idx >> bits_to_shift)
+                    .collect();
+
+                // Extract individual proofs for this batch from all queries
+                let individual_proofs: Vec<Vec<<FriMmcs::Proof as ProofDigestOps>::Digest>> = proof
+                    .query_proofs
+                    .iter()
+                    .map(|qp| {
+                        <InputMmcs::Proof as ProofDigestOps>::extract_digests(
+                            &qp.input_proof[batch_idx].opening_proof,
+                        )
+                    })
+                    .collect();
+
+                // Batch them
+                let batched_proof =
+                    BatchMerkleProof::from_individual_proofs(&individual_proofs, &batch_indices);
+
+                let mut sorted_indices = batch_indices;
+                sorted_indices.sort();
+
+                InputBatchProof {
+                    batched_proof,
+                    indices: sorted_indices,
+                }
+            })
+            .collect();
+
+    FullyBatchedFriProof {
         commit_phase_commits: proof.commit_phase_commits.clone(),
         query_data,
         layer_proofs,

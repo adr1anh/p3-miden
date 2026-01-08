@@ -33,6 +33,7 @@ p3-mersenne-31.workspace = true
 p3-miden-goldilocks.workspace = true
 p3-symmetric.workspace = true
 
+bincode = "1.3"
 criterion.workspace = true
 
 [[bench]]
