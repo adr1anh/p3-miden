@@ -10,6 +10,10 @@ use p3_matrix::Dimensions;
 use p3_util::zip_eq::zip_eq;
 use p3_util::{log2_strict_usize, reverse_bits_len};
 
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+use crate::batched_proof::{BatchedFriProof, ProofDigestOps};
 use crate::{
     CommitPhaseProofStep, CommitmentWithOpeningPoints, FriFoldingStrategy, FriParameters, FriProof,
     QueryProof,
@@ -459,4 +463,76 @@ where
         .rev()
         .map(|(log_height, (_, ro))| (log_height, ro))
         .collect())
+}
+
+/// Verifies a batched FRI proof by first unbatching it.
+///
+/// This is a convenience function that converts a `BatchedFriProof` to a standard
+/// `FriProof` and then verifies it using the standard verification algorithm.
+///
+/// For production use, consider implementing native batch verification to avoid
+/// the overhead of unbatching.
+///
+/// Arguments:
+/// - `folding`: The FRI folding scheme used by the prover.
+/// - `params`: The parameters for the specific FRI protocol instance.
+/// - `batched_proof`: The batched proof to verify.
+/// - `query_indices`: The query indices that were used in the proof.
+/// - `challenger`: The Fiat-Shamir challenger.
+/// - `commitments_with_opening_points`: A vector of joint commitments to collections of matrices
+///   and openings of those matrices at a collection of points.
+pub fn verify_batched_fri<Folding, Val, Challenge, InputMmcs, FriMmcs, Challenger>(
+    folding: &Folding,
+    params: &FriParameters<FriMmcs>,
+    batched_proof: &BatchedFriProof<
+        Challenge,
+        <FriMmcs::Proof as ProofDigestOps>::Digest,
+        FriMmcs::Commitment,
+        Challenger::Witness,
+        Folding::InputProof,
+    >,
+    query_indices: &[usize],
+    challenger: &mut Challenger,
+    commitments_with_opening_points: &[CommitmentWithOpeningPoints<
+        Challenge,
+        InputMmcs::Commitment,
+        TwoAdicMultiplicativeCoset<Val>,
+    >],
+    input_mmcs: &InputMmcs,
+) -> Result<(), FriError<FriMmcs::Error, InputMmcs::Error>>
+where
+    Val: TwoAdicField,
+    Challenge: ExtensionField<Val>,
+    InputMmcs: Mmcs<Val>,
+    FriMmcs: Mmcs<Challenge>,
+    FriMmcs::Proof: ProofDigestOps,
+    <FriMmcs::Proof as ProofDigestOps>::Digest: Clone + Default + Serialize + DeserializeOwned + Eq,
+    FriMmcs::Commitment: Clone + Serialize + DeserializeOwned,
+    Challenger: FieldChallenger<Val> + GrindingChallenger + CanObserve<FriMmcs::Commitment>,
+    Challenger::Witness: Clone + Serialize + DeserializeOwned,
+    Folding: FriFoldingStrategy<
+            Val,
+            Challenge,
+            InputError = InputMmcs::Error,
+            InputProof = Vec<BatchOpening<Val, InputMmcs>>,
+        >,
+    Folding::InputProof: Clone + Serialize + DeserializeOwned,
+{
+    // Unbatch the proof to standard format
+    let unbatched_proof: FriProof<Challenge, FriMmcs, Challenger::Witness, Folding::InputProof> =
+        crate::batched_proof::unbatch_fri_proof::<Challenge, FriMmcs, Challenger::Witness, Folding::InputProof>(
+            batched_proof,
+            query_indices,
+            folding.log_folding_factor(),
+        );
+
+    // Verify using the standard verifier
+    verify_fri(
+        folding,
+        params,
+        &unbatched_proof,
+        challenger,
+        commitments_with_opening_points,
+        input_mmcs,
+    )
 }

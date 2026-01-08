@@ -4,6 +4,8 @@
 
 extern crate alloc;
 
+pub mod batch_merkle;
+pub mod batched_proof;
 mod config;
 mod hiding_pcs;
 mod proof;
