@@ -1,0 +1,26 @@
+[package]
+name = "p3-miden-matrix"
+description = "Miden-specific matrix library, extending Plonky3's p3-matrix with reference forwarding and batched operations."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+homepage.workspace = true
+
+[dependencies]
+p3-miden-field.workspace = true
+p3-maybe-rayon.workspace = true
+p3-util.workspace = true
+
+itertools.workspace = true
+rand.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
+transpose.workspace = true
+
+[dev-dependencies]
+p3-baby-bear.workspace = true
+p3-mersenne-31.workspace = true
+
+criterion.workspace = true
