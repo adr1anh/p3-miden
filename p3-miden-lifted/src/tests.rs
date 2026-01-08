@@ -7,7 +7,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_baby_bear::BabyBear;
+use p3_challenger::DuplexChallenger;
 use p3_field::PackedValue;
+use p3_field::extension::BinomialExtensionField;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::{Dimensions, Matrix};
 use p3_miden_symmetric::{StatefulHasher, StatefulSponge, TruncatedPermutation};
@@ -22,6 +24,9 @@ use crate::merkle_tree::MerkleTreeLmcs;
 
 /// Base field: BabyBear (p = 2^31 - 2^27 + 1).
 pub(crate) type F = BabyBear;
+
+/// Extension field: degree-4 extension of BabyBear for ~128-bit security.
+pub(crate) type EF = BinomialExtensionField<F, 4>;
 
 /// Packed base field for SIMD operations.
 pub(crate) type P = <F as p3_field::Field>::Packing;
@@ -58,9 +63,18 @@ pub(crate) type Compress = TruncatedPermutation<Perm, 2, DIGEST, WIDTH>;
 /// Base Merkle tree LMCS over packed BabyBear.
 pub(crate) type BaseLmcs = MerkleTreeLmcs<P, P, Sponge, Compress, WIDTH, DIGEST>;
 
+/// Duplex challenger for Fiat-Shamir.
+pub(crate) type Challenger = DuplexChallenger<F, Perm, WIDTH, RATE>;
+
 // ============================================================================
 // Fixture Functions
 // ============================================================================
+
+/// Create a standard challenger for Fiat-Shamir.
+pub(crate) fn challenger() -> Challenger {
+    let (perm, _, _) = test_components();
+    Challenger::new(perm)
+}
 
 /// Create standard test components with a consistent seed.
 ///

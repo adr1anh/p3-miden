@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
-use p3_miden_field::TwoAdicField;
-use p3_miden_field::coset::TwoAdicMultiplicativeCoset;
+use p3_field::TwoAdicField;
+use p3_field::coset::TwoAdicMultiplicativeCoset;
 use p3_util::reverse_slice_index_bits;
 
 /// Compute padding needed to align `len` to `alignment`.

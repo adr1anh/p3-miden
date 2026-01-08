@@ -7,12 +7,18 @@
 //!
 //! This crate provides:
 //!
+//! - **[`deep`]**: DEEP (Dimension Extension of Evaluation Protocol) quotient construction
+//!   for batching polynomial evaluation claims into a single low-degree polynomial.
+//!
 //! - **[`merkle_tree`]**: Lifted Merkle tree commitments supporting matrices of varying
 //!   heights via upsampling lifting strategies.
 
 #![no_std]
 
 extern crate alloc;
+
+/// DEEP quotient construction for batched polynomial evaluation.
+pub mod deep;
 
 /// Lifted Merkle tree commitments for matrices of varying heights.
 pub mod merkle_tree;
