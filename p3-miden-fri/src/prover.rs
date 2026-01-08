@@ -205,10 +205,19 @@ where
         }
     }
 
-    // Now we need to get the coefficients of the final polynomial. As we know that the degree
-    // is `<= params.final_poly_len()` and the evaluations are stored in bit-reversed order,
-    // we can just truncate the folded vector, bit-reverse again and run an IDFT.
-    folded.truncate(params.final_poly_len());
+    // Now we need to get the coefficients of the final polynomial.
+    // The evaluations are stored in bit-reversed order, so we bit-reverse and run an IDFT.
+    //
+    // Note: We keep the actual folded length rather than truncating to params.final_poly_len().
+    // This allows the protocol to work even when (log_trace_size - log_final_poly_len) is not
+    // perfectly divisible by log_folding_factor. The verifier will use the actual final_poly
+    // length to compute log_global_max_height.
+    //
+    // The actual final poly length will be in the range:
+    //   (final_poly_len / folding_factor, final_poly_len]
+    // when alignment is imperfect, or exactly final_poly_len when aligned.
+    let actual_final_len = folded.len() / params.blowup();
+    folded.truncate(actual_final_len);
     reverse_slice_index_bits(&mut folded);
     let final_poly = debug_span!("idft final poly")
         .in_scope(|| Radix2DFTSmallBatch::default().idft_algebra(folded));

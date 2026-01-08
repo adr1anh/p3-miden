@@ -76,12 +76,16 @@ where
     let alpha: Challenge = challenger.sample_algebra_element();
 
     // `commit_phase_commits.len()` is the number of folding steps. Each step reduces the height by a factor
-    // of `folding_factor`. So the maximum polynomial degree will be
-    // `commit_phase_commits.len() * log_folding_factor + log_final_poly_len`, and so, as the same blow-up
-    // is used for all polynomials, the maximum matrix height over all commit batches is:
+    // of `folding_factor`. The maximum polynomial degree will be determined by the actual final polynomial
+    // length in the proof, which may be smaller than params.final_poly_len() when the trace size doesn't
+    // align perfectly with the folding factor.
+    //
+    // Using the actual final poly length ensures correct index computation even when
+    // (log_trace_size - log_final_poly_len) % log_folding_factor != 0.
+    let actual_log_final_poly_len = log2_strict_usize(proof.final_poly.len());
     let log_global_max_height = proof.commit_phase_commits.len() * params.log_folding_factor
         + params.log_blowup
-        + params.log_final_poly_len;
+        + actual_log_final_poly_len;
 
     // Generate all of the random challenges for the FRI rounds.
     let betas: Vec<Challenge> = proof
@@ -95,8 +99,13 @@ where
         })
         .collect();
 
-    // Ensure that the final polynomial has the expected degree.
-    if proof.final_poly.len() != params.final_poly_len() {
+    // Ensure that the final polynomial length is valid.
+    // The actual length may be smaller than params.final_poly_len() when the trace size
+    // doesn't align perfectly with the folding factor, but it must be a power of two
+    // and not exceed the configured maximum.
+    if proof.final_poly.len() > params.final_poly_len()
+        || !proof.final_poly.len().is_power_of_two()
+    {
         return Err(FriError::InvalidProofShape);
     }
 
@@ -116,8 +125,8 @@ where
         return Err(FriError::InvalidPowWitness);
     }
 
-    // The log of the final domain size.
-    let log_final_height = params.log_blowup + params.log_final_poly_len;
+    // The log of the final domain size, using the actual final poly length.
+    let log_final_height = params.log_blowup + actual_log_final_poly_len;
 
     for QueryProof {
         input_proof,
