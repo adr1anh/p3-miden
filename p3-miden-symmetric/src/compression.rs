@@ -1,5 +1,6 @@
+use p3_symmetric::CryptographicPermutation;
+
 use crate::hasher::CryptographicHasher;
-use crate::permutation::CryptographicPermutation;
 
 /// An `N`-to-1 compression function collision-resistant in a hash tree setting.
 ///

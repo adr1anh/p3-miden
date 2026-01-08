@@ -3,8 +3,9 @@
 //! This module provides [`MockPermutation`] and [`MockHasher`] for testing
 //! adapter behavior without real cryptographic primitives.
 
+use p3_symmetric::{CryptographicPermutation, Permutation};
+
 use crate::CryptographicHasher;
-use crate::permutation::{CryptographicPermutation, Permutation};
 
 // =============================================================================
 // Binary Mock Implementations (u8, u32, u64)

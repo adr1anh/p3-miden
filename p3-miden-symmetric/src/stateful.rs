@@ -1,9 +1,9 @@
 use core::iter::chain;
 
 use p3_field::Field;
+use p3_symmetric::CryptographicPermutation;
 
 use crate::CryptographicHasher;
-use crate::permutation::CryptographicPermutation;
 
 /// Trait for stateful sponge-like hashers.
 ///

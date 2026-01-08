@@ -3,6 +3,7 @@ members = [
   "p3-miden-air",
   "p3-miden-field",
   "p3-miden-fri",
+  "p3-miden-lifted",
   "p3-miden-matrix",
   "p3-miden-prover",
   "p3-miden-symmetric",
@@ -59,6 +60,7 @@ p3-util = { default-features = false, version = "0.4.2" }
 p3-miden-air = { path = "p3-miden-air", version = "0.4.2" }
 p3-miden-field = { path = "p3-miden-field", version = "0.4.2" }
 p3-miden-fri = { path = "p3-miden-fri", version = "0.4.2" }
+p3-miden-lifted = { path = "p3-miden-lifted", version = "0.4.2" }
 p3-miden-matrix = { path = "p3-miden-matrix", version = "0.4.2" }
 p3-miden-prover = { path = "p3-miden-prover", version = "0.4.2" }
 p3-miden-symmetric = { path = "p3-miden-symmetric", version = "0.4.2" }
@@ -66,6 +68,7 @@ p3-miden-uni-stark = { path = "p3-miden-uni-stark", version = "0.4.2" }
 
 rand = { version = "0.9", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
+thiserror = { version = "2.0", default-features = false }
 tracing = { version = "0.1.37", default-features = false, features = [
   "attributes",
 ] }

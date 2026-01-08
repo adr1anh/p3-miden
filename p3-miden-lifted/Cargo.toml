@@ -1,0 +1,37 @@
+[package]
+name = "p3-miden-lifted"
+description = "Lifted Matrix Commitment Scheme (LMCS) implementation with FRI-based PCS."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+homepage.workspace = true
+
+[dependencies]
+p3-challenger.workspace = true
+p3-commit.workspace = true
+p3-dft.workspace = true
+p3-field.workspace = true
+p3-matrix.workspace = true
+p3-miden-field.workspace = true
+p3-miden-matrix.workspace = true
+p3-miden-symmetric.workspace = true
+p3-maybe-rayon.workspace = true
+p3-util.workspace = true
+
+rand.workspace = true
+serde = { workspace = true, features = ["alloc"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+p3-baby-bear.workspace = true
+p3-goldilocks.workspace = true
+p3-keccak.workspace = true
+p3-symmetric.workspace = true
+
+criterion.workspace = true
+
+[features]
+default = []
+parallel = ["p3-maybe-rayon/parallel"]

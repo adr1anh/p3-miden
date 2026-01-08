@@ -3,9 +3,9 @@ use core::marker::PhantomData;
 
 use itertools::Itertools;
 use p3_field::{Field, PrimeField, PrimeField32, reduce_32};
+use p3_symmetric::CryptographicPermutation;
 
 use crate::hasher::CryptographicHasher;
-use crate::permutation::CryptographicPermutation;
 
 /// A padding-free, overwrite-mode sponge function.
 ///

@@ -10,6 +10,7 @@ homepage.workspace = true
 
 [dependencies]
 p3-field.workspace = true
+p3-symmetric.workspace = true
 
 itertools.workspace = true
 serde = { workspace = true, features = ["alloc"] }
