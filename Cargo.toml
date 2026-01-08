@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "p3-miden-air",
+  "p3-miden-field",
   "p3-miden-fri",
   "p3-miden-prover",
   "p3-miden-symmetric",
@@ -24,6 +25,8 @@ criterion = { version = "0.8", features = ["html_reports"] }
 itertools = { version = "0.14.0", default-features = false, features = [
   "use_alloc",
 ] }
+num-bigint = { version = "0.4", default-features = false }
+paste = { version = "1.0", default-features = false }
 
 # Upstream Plonky3 dependencies
 p3-air = { default-features = false, version = "0.4.2" }
@@ -53,6 +56,7 @@ p3-util = { default-features = false, version = "0.4.2" }
 
 # Internal p3-miden crates
 p3-miden-air = { path = "p3-miden-air", version = "0.4.2" }
+p3-miden-field = { path = "p3-miden-field", version = "0.4.2" }
 p3-miden-fri = { path = "p3-miden-fri", version = "0.4.2" }
 p3-miden-prover = { path = "p3-miden-prover", version = "0.4.2" }
 p3-miden-symmetric = { path = "p3-miden-symmetric", version = "0.4.2" }
