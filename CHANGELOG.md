@@ -1,5 +1,6 @@
 ## 0.4.2 (TBD)
 
+- Added `p3-miden-lifted` crate with Lifted FRI PCS (DEEP quotient + FRI), added `p3-miden-symmetric` crate with `StatefulHasher` trait for incremental hashing (#10).
 - [BREAKING] Removed `p3-miden-goldilocks` crate, now uses upstream `p3-goldilocks` (#3).
 - Updated `Pcs` trait implementation for Plonky3 v0.4.2 compatibility (#3).
 - Updated Plonky3 dependencies to v0.4.2 (#3).
