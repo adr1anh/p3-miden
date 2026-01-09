@@ -10,6 +10,8 @@ Miden-specific [Plonky3](https://github.com/Plonky3/Plonky3) crates for the Mide
 | `p3-miden-uni-stark` | `p3-uni-stark` | Extended `Entry` enum with `Aux` and `Periodic` variants |
 | `p3-miden-fri` | `p3-fri` | Miden FRI implementation with configurable folding factors |
 | `p3-miden-prover` | - | Miden STARK prover combining the above crates |
+| `p3-miden-symmetric` | `p3-symmetric` | StatefulHasher support for incremental hashing |
+| `p3-miden-lifted` | - | Lifted Matrix Commitment Scheme (LMCS) with DEEP quotient and FRI |
 
 ## Modifications
 
@@ -25,6 +27,17 @@ Miden-specific [Plonky3](https://github.com/Plonky3/Plonky3) crates for the Mide
 - Orchestrates proof generation with auxiliary trace support
 - Includes LogUp argument implementation for permutation checks
 - Constraint folding for auxiliary constraints
+
+### p3-miden-symmetric
+- `StatefulHasher` trait for incremental hashing with serializable state
+- `CompressionFunction` trait for two-to-one compression
+- Re-exports upstream `p3-symmetric` types for convenience
+
+### p3-miden-lifted
+- Lifted Merkle tree commitments for matrices of varying heights via upsampling
+- DEEP quotient construction for batching polynomial evaluation claims
+- FRI protocol with configurable arity-2 and arity-4 folding
+- Complete PCS (Polynomial Commitment Scheme) combining DEEP and FRI
 
 ## Upstream Compatibility
 
