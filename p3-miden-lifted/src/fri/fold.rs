@@ -299,11 +299,11 @@ where
     // Inverse DFT formula (without 1/N normalization):
     //   4cⱼ = Σₖ yₖ · ω^(−jk)
     //
-    // Expanded for each coefficient:
+    // Expanded for each coefficient (i = imaginary unit):
     //   4c₀ = y₀ + y₁ + y₂ + y₃
-    //   4c₁ = y₀ − iy₁ − y₂ + iy₃
+    //   4c₁ = y₀ − i·y₁ − y₂ + i·y₃
     //   4c₂ = y₀ − y₁ + y₂ − y₃
-    //   4c₃ = y₀ + iy₁ − y₂ − iy₃
+    //   4c₃ = y₀ + i·y₁ − y₂ − i·y₃
 
     // -------------------------------------------------------------------------
     // Stage 0: length-2 butterflies on bit-reversed pairs

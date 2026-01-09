@@ -269,7 +269,7 @@ where
     }
 }
 
-/// Build leaf states using the upsampled view; see [`Lifting::Upsample`] for semantics.
+/// Build leaf states using the upsampled view (nearest-neighbor upsampling).
 ///
 /// Returns the sponge states after absorbing all matrix rows but **before squeezing**.
 /// Callers must squeeze the states to obtain final leaf digests.

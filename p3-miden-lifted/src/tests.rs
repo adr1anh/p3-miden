@@ -169,7 +169,9 @@ pub(crate) fn lift_matrix(matrix: &RowMajorMatrix<F>, max_height: usize) -> RowM
 /// - Multiple matrices with different lift factors
 /// - Edge cases around packing width boundaries
 pub(crate) fn matrix_scenarios() -> Vec<Vec<(usize, usize)>> {
-    let pack_width = P::WIDTH;
+    // Use max(1, ...) to ensure heights are always at least 1, even when P::WIDTH=1
+    // (no SIMD) on platforms like ubuntu/windows CI without AVX.
+    let pack_width = P::WIDTH.max(2);
     vec![
         // Single matrices
         vec![(1, 1)],
