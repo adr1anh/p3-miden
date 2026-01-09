@@ -93,32 +93,6 @@ use p3_util::{flatten_to_base, log2_strict_usize, reconstitute_from_base};
 
 use super::MatrixGroupEvals;
 
-// ============================================================================
-// Matrix Extension Trait
-// ============================================================================
-
-/// Extension trait for extracting a single lane from a packed extension field.
-///
-/// This bridges the gap between upstream `p3_field` types and our extension methods.
-trait PackedExtFieldExt<
-    BaseField: Field,
-    ExtField: ExtensionField<BaseField, ExtensionPacking = Self>,
->: PackedFieldExtension<BaseField, ExtField>
-{
-    /// Extract a single lane from the packed extension field.
-    fn extract_lane(&self, lane: usize) -> ExtField {
-        self.extract(lane)
-    }
-}
-
-impl<
-    BaseField: Field,
-    ExtField: ExtensionField<BaseField, ExtensionPacking = P>,
-    P: PackedFieldExtension<BaseField, ExtField>,
-> PackedExtFieldExt<BaseField, ExtField> for P
-{
-}
-
 /// Extension trait adding batched column dot product to `p3_matrix::Matrix`.
 ///
 /// This adds the `columnwise_dot_product_batched` method that computes N dot products
@@ -180,7 +154,7 @@ impl<T: Send + Sync + Clone, M: Matrix<T>> MatrixExt<T> for M {
             .chunks(N)
             .flat_map(|chunk| {
                 (0..T::Packing::WIDTH)
-                    .map(move |lane| FieldArray::from_fn(|j| chunk[j].extract_lane(lane)))
+                    .map(move |lane| FieldArray::from_fn(|j| chunk[j].extract(lane)))
             })
             .take(self.width())
             .collect()

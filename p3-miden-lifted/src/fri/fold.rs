@@ -14,49 +14,12 @@
 
 use alloc::vec::Vec;
 
-use p3_field::{
-    Algebra, ExtensionField, PackedField, PackedFieldExtension, PackedValue, TwoAdicField,
-};
+use p3_field::{Algebra, ExtensionField, PackedField, PackedValue, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_maybe_rayon::prelude::*;
 
-// ============================================================================
-// Extension trait for PackedFieldExtension methods not in upstream
-// ============================================================================
-
-/// Extension trait adding `pack_ext_columns` and `to_ext_slice` methods.
-trait PackedFieldExtensionExt<
-    BaseField: p3_field::Field,
-    ExtField: ExtensionField<BaseField, ExtensionPacking = Self>,
->: PackedFieldExtension<BaseField, ExtField>
-{
-    /// Pack columns of extension field elements into packed extension field elements.
-    fn pack_ext_columns<const N: usize>(rows: &[[ExtField; N]]) -> [Self; N] {
-        let width = BaseField::Packing::WIDTH;
-        debug_assert_eq!(rows.len(), width);
-        core::array::from_fn(|col| {
-            let col_elems: Vec<ExtField> = (0..width).map(|lane| rows[lane][col]).collect();
-            Self::from_ext_slice(&col_elems)
-        })
-    }
-
-    /// Extract all lanes to an output slice.
-    fn to_ext_slice(&self, out: &mut [ExtField]) {
-        let width = BaseField::Packing::WIDTH;
-        for (lane, slot) in out.iter_mut().enumerate().take(width) {
-            *slot = self.extract(lane);
-        }
-    }
-}
-
-impl<
-    BaseField: p3_field::Field,
-    ExtField: ExtensionField<BaseField, ExtensionPacking = P>,
-    P: PackedFieldExtension<BaseField, ExtField>,
-> PackedFieldExtensionExt<BaseField, ExtField> for P
-{
-}
+use crate::utils::PackedFieldExtensionExt;
 
 // ============================================================================
 // Trait Definition

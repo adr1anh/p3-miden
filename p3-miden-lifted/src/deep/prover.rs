@@ -1,5 +1,4 @@
 use alloc::vec::Vec;
-use core::array;
 use core::iter::zip;
 use core::marker::PhantomData;
 
@@ -12,50 +11,7 @@ use p3_maybe_rayon::prelude::*;
 
 use super::interpolate::PointQuotients;
 use super::{DeepChallenges, DeepQuery, MatrixGroupEvals};
-
-// ============================================================================
-// Extension Traits for Packed Field Operations
-// ============================================================================
-
-/// Extension trait adding column-wise packing and unpacking to `PackedFieldExtension`.
-///
-/// These methods enable efficient SIMD operations on arrays of extension field elements.
-trait PackedFieldExtensionExt<
-    BaseField: Field,
-    ExtField: ExtensionField<BaseField, ExtensionPacking = Self>,
->: PackedFieldExtension<BaseField, ExtField>
-{
-    /// Pack N columns from WIDTH rows into N packed extension field elements.
-    ///
-    /// Input: `rows[lane][col]` - WIDTH rows, each with N extension field elements.
-    /// Output: `result[col]` - N packed values, where each packs WIDTH lanes.
-    fn pack_ext_columns<const N: usize>(rows: &[[ExtField; N]]) -> [Self; N] {
-        let width = BaseField::Packing::WIDTH;
-        debug_assert_eq!(rows.len(), width);
-
-        // Build column slices dynamically since width is runtime
-        array::from_fn(|col| {
-            let col_elems: Vec<ExtField> = (0..width).map(|lane| rows[lane][col]).collect();
-            Self::from_ext_slice(&col_elems)
-        })
-    }
-
-    /// Unpack this packed value into WIDTH extension field elements.
-    fn to_ext_slice(&self, out: &mut [ExtField]) {
-        let width = BaseField::Packing::WIDTH;
-        for (lane, slot) in out.iter_mut().enumerate().take(width) {
-            *slot = self.extract(lane);
-        }
-    }
-}
-
-impl<
-    BaseField: Field,
-    ExtField: ExtensionField<BaseField, ExtensionPacking = P>,
-    P: PackedFieldExtension<BaseField, ExtField>,
-> PackedFieldExtensionExt<BaseField, ExtField> for P
-{
-}
+use crate::utils::PackedFieldExtensionExt;
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
