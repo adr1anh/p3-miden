@@ -31,9 +31,14 @@ fn test_pcs_open_verify_roundtrip() {
             log_blowup: 2,
             log_folding_factor: 1,
             log_final_degree: 2,
-            num_queries: 5,
+            proof_of_work_bits: 1, // Low for fast tests (per-round)
         },
-        alignment: RATE,
+        deep: DeepParams {
+            alignment: RATE,
+            proof_of_work_bits: 1, // Low for fast tests
+        },
+        num_queries: 5,
+        query_proof_of_work_bits: 1, // Low for fast tests
     };
 
     // Create a matrix of LDE evaluations.

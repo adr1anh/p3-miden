@@ -5,26 +5,33 @@ use p3_commit::{BatchOpening, Mmcs};
 use p3_field::{ExtensionField, Field};
 use thiserror::Error;
 
-use crate::deep::verifier::DeepError;
-use crate::deep::{DeepQuery, MatrixGroupEvals};
+use crate::deep::{DeepError, DeepProof, DeepQuery, MatrixGroupEvals};
+use crate::fri::FriProof;
 
 /// Complete PCS opening proof.
 ///
 /// Contains all information needed by the verifier to check polynomial
-/// evaluation claims against a commitment.
-pub struct Proof<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: Mmcs<EF>> {
+/// evaluation claims against a commitment:
+/// - Evaluations at opening points
+/// - DEEP grinding witness
+/// - FRI proof with commitments, final polynomial, and per-round grinding witnesses
+/// - Query grinding witness
+/// - Query proofs with Merkle openings
+pub struct Proof<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: Mmcs<EF>, Witness> {
     /// Claimed evaluations at each opening point.
-    /// Structure: `evals[point_idx][commit_idx]` is a `MatrixGroupEvals` containing
-    /// `evals[point_idx][commit_idx][matrix_idx][col_idx]`
+    /// Structure: `evals[point_idx][commit_idx][matrix_idx][col_idx]`
     pub(crate) evals: Vec<Vec<MatrixGroupEvals<EF>>>,
 
-    /// FRI round commitments.
-    pub(crate) fri_commitments: Vec<FriMmcs::Commitment>,
+    /// DEEP proof containing grinding witness.
+    pub(crate) deep_proof: DeepProof<Witness>,
 
-    /// Final polynomial coefficients.
-    pub(crate) fri_final_poly: Vec<EF>,
+    /// FRI proof containing commitments, final polynomial, and per-round grinding witnesses.
+    pub(crate) fri_proof: FriProof<EF, FriMmcs, Witness>,
 
-    /// Query phase proofs, one per query index
+    /// Proof-of-work witness for query sampling grinding.
+    pub(crate) query_pow_witness: Witness,
+
+    /// Query phase proofs, one per query index.
     pub(crate) query_proofs: Vec<QueryProof<F, EF, InputMmcs, FriMmcs>>,
 }
 
@@ -62,7 +69,7 @@ impl<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: Mmcs<EF>>
 /// Errors that can occur during PCS verification.
 ///
 /// Verification can fail due to invalid Merkle proofs, inconsistent folding,
-/// or mismatched polynomial evaluations.
+/// mismatched polynomial evaluations, or invalid grinding witnesses.
 #[derive(Debug, Error)]
 pub enum PcsError<InputMmcsError, FriMmcsError> {
     /// Input MMCS verification failed.
@@ -83,4 +90,10 @@ pub enum PcsError<InputMmcsError, FriMmcsError> {
     /// DEEP oracle construction failed.
     #[error("DEEP error: {0}")]
     DeepError(#[from] DeepError),
+    /// FRI proof-of-work witness verification failed.
+    #[error("invalid FRI proof-of-work witness")]
+    InvalidFriPowWitness,
+    /// Query proof-of-work witness verification failed.
+    #[error("invalid query proof-of-work witness")]
+    InvalidQueryPowWitness,
 }

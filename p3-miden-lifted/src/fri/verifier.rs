@@ -26,14 +26,14 @@ use alloc::vec::Vec;
 use core::iter::zip;
 use core::{array, fmt};
 
-use p3_challenger::{CanObserve, FieldChallenger};
+use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
 use p3_commit::{BatchOpening, Mmcs};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::reverse_bits_len;
 
 use crate::fri::fold::{FriFold, FriFold2, FriFold4};
-use crate::fri::{FriError, FriParams};
+use crate::fri::{FriError, FriParams, FriProof};
 
 /// Verifier's oracle for FRI query verification.
 ///
@@ -50,47 +50,60 @@ pub struct FriOracle<EF: Field, FriMmcs: Mmcs<EF>> {
 }
 
 impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
-    /// Create an oracle by observing commitments and sampling challenges.
+    /// Create an oracle from FRI proof, checking per-round PoW witnesses.
     ///
     /// This method enforces the correct Fiat-Shamir order:
-    /// 1. For each round: observe commitment, sample beta
+    /// 1. For each round: observe commitment, check PoW witness, sample beta
     /// 2. Observe final polynomial coefficients
+    ///
+    /// # Arguments
+    /// - `proof`: FRI proof containing commitments, final polynomial, and per-round PoW witnesses
+    /// - `challenger`: The Fiat-Shamir challenger
+    /// - `proof_of_work_bits`: Number of bits for PoW verification (applied per round)
+    ///
+    /// # Errors
+    /// Returns `FriError::InvalidPowWitness` if any round's witness verification fails.
+    /// Returns `FriError::InvalidProofStructure` if witness count doesn't match commitment count.
     pub fn new<F, Challenger>(
-        commitments: Vec<FriMmcs::Commitment>,
-        final_poly: Vec<EF>,
+        proof: &FriProof<EF, FriMmcs, Challenger::Witness>,
         challenger: &mut Challenger,
-    ) -> Self
+        proof_of_work_bits: usize,
+    ) -> Result<Self, FriError<FriMmcs::Error>>
     where
         F: Field,
         EF: ExtensionField<F>,
         FriMmcs::Commitment: Clone,
-        Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment>,
+        Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment> + GrindingChallenger,
     {
-        // Observe each commitment and sample corresponding beta
-        let betas: Vec<EF> = commitments
-            .iter()
-            .map(|commit| {
-                challenger.observe(commit.clone());
-                challenger.sample_algebra_element()
-            })
-            .collect();
+        // Validate structure: witnesses count must match commitments count
+        if proof.pow_witnesses.len() != proof.commitments.len() {
+            return Err(FriError::InvalidProofStructure);
+        }
 
-        // Observe final polynomial coefficients
-        for &coeff in &final_poly {
+        // 1. For each round: observe commitment, check witness, sample beta
+        let mut betas = Vec::with_capacity(proof.commitments.len());
+        for (commit, &witness) in zip(&proof.commitments, &proof.pow_witnesses) {
+            challenger.observe(commit.clone());
+
+            // Check grinding witness for this round
+            if !challenger.check_witness(proof_of_work_bits, witness) {
+                return Err(FriError::InvalidPowWitness);
+            }
+
+            let beta: EF = challenger.sample_algebra_element();
+            betas.push(beta);
+        }
+
+        // 2. Observe final polynomial coefficients
+        for &coeff in &proof.final_poly {
             challenger.observe_algebra_element(coeff);
         }
 
-        Self {
-            commitments,
+        Ok(Self {
+            commitments: proof.commitments.clone(),
             betas,
-            final_poly,
-        }
-    }
-
-    /// Returns the number of folding rounds.
-    #[inline]
-    pub fn num_rounds(&self) -> usize {
-        self.commitments.len()
+            final_poly: proof.final_poly.clone(),
+        })
     }
 
     /// Derive the initial domain size from proof structure.
@@ -126,8 +139,8 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
     /// Returns `FriError` if any verification check fails.
     pub fn verify_query<F: TwoAdicField>(
         &self,
-        mmcs: &FriMmcs,
         params: &FriParams,
+        mmcs: &FriMmcs,
         index: usize,
         eval: EF,
         openings: &[BatchOpening<EF, FriMmcs>],

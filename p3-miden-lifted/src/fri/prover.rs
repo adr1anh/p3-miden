@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use p3_challenger::{CanObserve, FieldChallenger};
+use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
 use p3_commit::{BatchOpening, Mmcs};
 use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::{ExtensionField, TwoAdicField};
@@ -9,24 +9,21 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
 
-use crate::fri::FriParams;
 use crate::fri::fold::{FriFold, FriFold2, FriFold4};
+use crate::fri::{FriParams, FriProof};
 
 // ============================================================================
 // Prover Data Structure
 // ============================================================================
 
-/// Prover's complete state from the FRI commit phase.
+/// Prover's state from the FRI commit phase.
 ///
-/// Contains both the data needed to answer queries (Merkle prover data) and
-/// the commitment data that goes in the proof (commitments + final polynomial).
+/// Contains the data needed to answer queries (Merkle prover data).
+/// The proof data (commitments, final polynomial, pow witnesses) is returned
+/// separately as `FriProof` from the constructor.
 pub struct FriPolys<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> {
     /// Prover data for each folding round, used to open Merkle paths at query indices.
     folded_evals_data: Vec<FriMmcs::ProverData<RowMajorMatrix<EF>>>,
-    /// Merkle commitments for each folding round.
-    pub(crate) commitments: Vec<FriMmcs::Commitment>,
-    /// Coefficients of the final low-degree polynomial.
-    pub(crate) final_poly: Vec<EF>,
     _marker: PhantomData<F>,
 }
 
@@ -68,27 +65,35 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
     ///
     /// Iteratively folds the polynomial, committing to intermediate evaluations
     /// and sampling folding challenges until reaching the target degree.
+    /// Grinds for proof-of-work before each beta challenge.
     ///
     /// ## Arguments
     ///
     /// - `mmcs`: The MMCS for committing to folded evaluations
-    /// - `params`: FRI parameters
+    /// - `params`: FRI parameters (includes per-round proof_of_work_bits)
     /// - `evals`: Initial polynomial evaluations in bit-reversed order
     /// - `challenger`: Fiat-Shamir challenger for sampling β
-    pub fn new<Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment>>(
-        mmcs: &FriMmcs,
+    ///
+    /// ## Returns
+    ///
+    /// Tuple of `(FriPolys, FriProof)` where `FriProof` contains commitments,
+    /// final polynomial, and per-round grinding witnesses.
+    pub fn new<Challenger>(
         params: &FriParams,
+        mmcs: &FriMmcs,
         evals: &[EF],
         challenger: &mut Challenger,
-    ) -> Self
+    ) -> (Self, FriProof<EF, FriMmcs, Challenger::Witness>)
     where
         EF: ExtensionField<F>,
+        Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment> + GrindingChallenger,
     {
         let log_arity = params.log_folding_factor;
         let arity = 1 << log_arity;
 
         let mut commitments = Vec::new();
         let mut folded_evals_data = Vec::new();
+        let mut pow_witnesses = Vec::new();
 
         let mut domain_size = evals.len();
         let log_domain_size = log2_strict_usize(domain_size); // needed for two_adic_generator
@@ -131,8 +136,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
             challenger.observe(commitment.clone());
 
             // ─────────────────────────────────────────────────────────────────────
-            // Sample folding challenge β
+            // Grind and sample folding challenge β
             // ─────────────────────────────────────────────────────────────────────
+            let pow_witness = challenger.grind(params.proof_of_work_bits);
+            pow_witnesses.push(pow_witness);
             let beta: EF = challenger.sample_algebra_element();
 
             // ─────────────────────────────────────────────────────────────────────
@@ -192,12 +199,17 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
             challenger.observe_algebra_element(coeff);
         }
 
-        Self {
-            folded_evals_data,
-            commitments,
-            final_poly,
-            _marker: PhantomData,
-        }
+        (
+            Self {
+                folded_evals_data,
+                _marker: PhantomData,
+            },
+            FriProof {
+                commitments,
+                final_poly,
+                pow_witnesses,
+            },
+        )
     }
 
     /// Open a specific query index across all FRI commit phase rounds.
@@ -206,8 +218,8 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
     /// The index is progressively reduced by shifting off `log_arity` bits per round.
     pub fn open_query(
         &self,
-        mmcs: &FriMmcs,
         params: &FriParams,
+        mmcs: &FriMmcs,
         index: usize,
     ) -> Vec<BatchOpening<EF, FriMmcs>> {
         let log_arity = params.log_folding_factor;

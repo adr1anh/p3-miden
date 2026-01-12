@@ -28,9 +28,9 @@
 //! `fᵢ(zʳ)` for degree-d polynomials, but this equals `fᵢ'(z)` where `fᵢ'(X) = fᵢ(Xʳ)`
 //! is the lifted polynomial. This uniformity enables the `f_reduced` factorization.
 
-pub mod interpolate;
-pub mod prover;
-pub mod verifier;
+pub(crate) mod interpolate;
+pub(crate) mod prover;
+pub(crate) mod verifier;
 
 use alloc::vec::Vec;
 
@@ -38,59 +38,35 @@ use p3_challenger::FieldChallenger;
 use p3_commit::{BatchOpening, Mmcs};
 use p3_field::{ExtensionField, Field};
 
+use thiserror::Error;
+
 use crate::utils::alignment_padding;
 
-/// Challenges for DEEP quotient batching.
+/// DEEP quotient parameters.
 ///
-/// - `alpha` (α): Batches polynomial columns into `f_reduced = Σᵢ αⁱ·fᵢ`
-/// - `beta` (β): Batches opening points into `Q = Σⱼ βʲ·Qⱼ`
-///
-/// Constructed via [`DeepChallenges::sample`], which observes the evaluations
-/// before sampling to enforce correct Fiat-Shamir transcript ordering.
+/// Controls batching alignment and proof-of-work grinding for DEEP challenge sampling.
 #[derive(Clone, Copy, Debug)]
-pub struct DeepChallenges<EF> {
-    /// Column batching challenge α
-    pub(crate) alpha: EF,
-    /// Point batching challenge β
-    pub(crate) beta: EF,
+pub struct DeepParams {
+    /// Column alignment for batching in DEEP quotient construction.
+    ///
+    /// Typically set to the hasher's rate (e.g., 8 for Poseidon2 with WIDTH=16, RATE=8).
+    /// Ensures coefficients are aligned for efficient hashing.
+    pub alignment: usize,
+
+    /// Number of bits for proof-of-work grinding before DEEP challenge sampling.
+    ///
+    /// Set to 0 to disable grinding. Higher values increase prover work but improve
+    /// soundness by preventing grinding attacks on DEEP challenges (α, β).
+    pub proof_of_work_bits: usize,
 }
 
-impl<EF: Field> DeepChallenges<EF> {
-    /// Observe evaluations and sample DEEP challenges from the transcript.
-    ///
-    /// This enforces the correct Fiat-Shamir order: observe data, then sample.
-    /// Each matrix's columns are observed with alignment padding to match
-    /// the coefficient derivation in the DEEP quotient.
-    pub fn sample<F, Challenger>(
-        evals: &[Vec<MatrixGroupEvals<EF>>],
-        challenger: &mut Challenger,
-        alignment: usize,
-    ) -> Self
-    where
-        F: Field,
-        EF: ExtensionField<F>,
-        Challenger: FieldChallenger<F>,
-    {
-        // Observe evaluations with alignment padding
-        for point_evals in evals {
-            for group_evals in point_evals {
-                for matrix_evals in group_evals.iter_matrices() {
-                    for val in matrix_evals {
-                        challenger.observe_algebra_element(*val);
-                    }
-                    // Pad to alignment with zeros (must match coefficient alignment)
-                    for _ in 0..alignment_padding(matrix_evals.len(), alignment) {
-                        challenger.observe_algebra_element(EF::ZERO);
-                    }
-                }
-            }
-        }
-
-        Self {
-            alpha: challenger.sample_algebra_element(),
-            beta: challenger.sample_algebra_element(),
-        }
-    }
+/// DEEP proof-of-work witness.
+///
+/// The evaluations are stored in the PCS `Proof` struct.
+/// This struct only contains the grinding witness for DEEP challenge sampling.
+pub struct DeepProof<Witness> {
+    /// Proof-of-work witness for DEEP challenge grinding.
+    pub(crate) pow_witness: Witness,
 }
 
 /// Query proof containing Merkle openings for DEEP quotient verification.
@@ -98,7 +74,52 @@ impl<EF: Field> DeepChallenges<EF> {
 /// Holds the batch openings from the input commitment that the verifier
 /// needs to reconstruct `f_reduced(X)` at the queried point.
 pub struct DeepQuery<F: Field, Commit: Mmcs<F>> {
-    openings: Vec<BatchOpening<F, Commit>>,
+    pub(crate) openings: Vec<BatchOpening<F, Commit>>,
+}
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during DEEP oracle construction or verification.
+#[derive(Debug, Error)]
+pub enum DeepError {
+    /// Claimed evaluations don't match commitment structure.
+    ///
+    /// This can mean wrong number of evaluation groups, matrices, or columns.
+    #[error("evaluation structure doesn't match commitment")]
+    StructureMismatch,
+    /// Proof-of-work witness verification failed.
+    #[error("invalid proof-of-work witness")]
+    InvalidPowWitness,
+}
+
+/// Observe evaluations into the Fiat-Shamir transcript.
+///
+/// Each matrix's columns are observed with alignment padding to match
+/// the coefficient derivation in the DEEP quotient.
+fn observe_evals<F, EF, Challenger>(
+    evals: &[Vec<MatrixGroupEvals<EF>>],
+    challenger: &mut Challenger,
+    alignment: usize,
+) where
+    F: Field,
+    EF: ExtensionField<F>,
+    Challenger: FieldChallenger<F>,
+{
+    for point_evals in evals {
+        for group_evals in point_evals {
+            for matrix_evals in group_evals.iter_matrices() {
+                for val in matrix_evals {
+                    challenger.observe_algebra_element(*val);
+                }
+                // Pad to alignment with zeros (must match coefficient alignment)
+                for _ in 0..alignment_padding(matrix_evals.len(), alignment) {
+                    challenger.observe_algebra_element(EF::ZERO);
+                }
+            }
+        }
+    }
 }
 
 /// Evaluations of polynomial columns at an out-of-domain point, organized by matrix.
@@ -147,18 +168,6 @@ impl<T> MatrixGroupEvals<T> {
                 .collect(),
         )
     }
-}
-
-/// A claimed evaluation at a single point, with evaluations grouped by commitment.
-///
-/// Used by the verifier to check prover claims. Structure:
-/// `evals[commit_idx][matrix_idx][col_idx]` = claimed value at `point`.
-#[derive(Clone, Debug)]
-pub struct OpeningClaim<EF> {
-    /// The out-of-domain evaluation point `z`.
-    pub(crate) point: EF,
-    /// Claimed evaluations `f_i(z)` grouped by commitment, then matrix, then column.
-    pub(crate) evals: Vec<MatrixGroupEvals<EF>>,
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@ use rand::{Rng, SeedableRng};
 use super::interpolate::PointQuotients;
 use super::prover::DeepPoly;
 use super::verifier::DeepOracle;
-use super::{DeepChallenges, MatrixGroupEvals, OpeningClaim};
+use super::{DeepParams, MatrixGroupEvals};
 use crate::tests::{EF, F, RATE, base_lmcs, challenger};
 use crate::utils::bit_reversed_coset_points;
 
@@ -33,7 +33,11 @@ fn deep_quotient_end_to_end() {
     let log_blowup: usize = 2;
     let log_n = 10;
     let n = 1 << log_n;
-    let alignment = RATE; // Use sponge rate for coefficient alignment
+
+    let params = DeepParams {
+        alignment: RATE,       // Use sponge rate for coefficient alignment
+        proof_of_work_bits: 1, // Low for fast tests
+    };
 
     // Two random opening points
     let z1: EF = rng.sample(StandardUniform);
@@ -74,47 +78,33 @@ fn deep_quotient_end_to_end() {
         })
         .collect();
 
-    // Step 3: Sample DEEP challenges (same for prover and verifier)
+    // Step 3: Prover constructs DeepPoly (handles observe, grind, sample internally)
     let mut prover_challenger = challenger();
     prover_challenger.observe(commitment);
-    let deep_challenges = DeepChallenges::sample::<F, _>(&evals, &mut prover_challenger, alignment);
-
-    // Step 4: Prover constructs DeepPoly with challenges
-    let deep_poly = DeepPoly::new(
+    let (deep_poly, deep_proof) = DeepPoly::new(
+        &params,
         &lmcs,
-        &quotient,
-        &batched_evals,
         vec![&prover_data],
-        &deep_challenges,
-        alignment,
+        &evals,
+        &batched_evals,
+        &quotient,
+        &mut prover_challenger,
     );
 
-    // Step 5: Verifier constructs DeepOracle with same challenges
-    // (in real protocol, verifier samples same challenges from same transcript state)
+    // Step 4: Verifier constructs DeepOracle with same transcript state
     let mut verifier_challenger = challenger();
     verifier_challenger.observe(commitment);
-    let verifier_challenges =
-        DeepChallenges::sample::<F, _>(&evals, &mut verifier_challenger, alignment);
-
-    let openings_for_verifier: Vec<OpeningClaim<EF>> = vec![
-        OpeningClaim {
-            point: z1,
-            evals: evals[0].clone(),
-        },
-        OpeningClaim {
-            point: z2,
-            evals: evals[1].clone(),
-        },
-    ];
     let deep_oracle = DeepOracle::new(
-        &openings_for_verifier,
+        &params,
+        [z1, z2],
+        &evals,
         vec![(commitment, dims)],
-        &verifier_challenges,
-        alignment,
+        &mut verifier_challenger,
+        &deep_proof,
     )
     .expect("DeepOracle construction should succeed");
 
-    // Step 6: Verify at random query indices
+    // Step 5: Verify at random query indices
     let sample_indices = [0, 1, n / 4, n / 2, n - 1];
     for &index in &sample_indices {
         // Prover opens at index

@@ -3,17 +3,20 @@
 //! Fast Reed-Solomon Interactive Oracle Proof for low-degree testing.
 //! Proves that a committed polynomial has degree below a target bound.
 
-pub mod fold;
-pub mod prover;
-pub mod verifier;
+pub(crate) mod fold;
+pub(crate) mod prover;
+pub(crate) mod verifier;
 
-pub use prover::FriPolys;
+use alloc::vec::Vec;
+
+use p3_commit::Mmcs;
+use p3_field::Field;
 use thiserror::Error;
-pub use verifier::FriOracle;
 
 /// FRI protocol parameters.
 ///
 /// Controls the trade-off between proof size, prover time, and verifier time.
+#[derive(Clone, Copy, Debug)]
 pub struct FriParams {
     /// Log₂ of the blowup factor (LDE domain size / polynomial degree).
     ///
@@ -33,11 +36,26 @@ pub struct FriParams {
     /// Final polynomial is sent in clear (coefficients, not evaluations).
     pub log_final_degree: usize,
 
-    /// Number of query repetitions for soundness amplification.
+    /// Number of bits for proof-of-work grinding before each beta challenge.
     ///
-    /// Each query provides ~`log_blowup` bits of security.
-    /// Total security ≈ `num_queries * log_blowup` bits.
-    pub num_queries: usize,
+    /// Set to 0 to disable grinding. Applied per folding round, so total grinding
+    /// work scales with `num_rounds * 2^proof_of_work_bits`.
+    pub proof_of_work_bits: usize,
+}
+
+/// FRI proof data including per-round grinding witnesses.
+///
+/// Contains the FRI round commitments, final polynomial, and the proof-of-work
+/// witnesses for each folding round's beta challenge.
+pub struct FriProof<EF: Field, FriMmcs: Mmcs<EF>, Witness> {
+    /// Merkle commitments for each folding round.
+    pub(crate) commitments: Vec<FriMmcs::Commitment>,
+
+    /// Coefficients of the final low-degree polynomial.
+    pub(crate) final_poly: Vec<EF>,
+
+    /// Proof-of-work witnesses for each round's beta challenge grinding.
+    pub(crate) pow_witnesses: Vec<Witness>,
 }
 
 impl FriParams {
@@ -98,6 +116,9 @@ pub enum FriError<MmcsError> {
     /// Final polynomial evaluation doesn't match folded value.
     #[error("final polynomial mismatch")]
     FinalPolyMismatch,
+    /// Proof-of-work witness verification failed.
+    #[error("invalid proof-of-work witness")]
+    InvalidPowWitness,
 }
 
 #[cfg(test)]

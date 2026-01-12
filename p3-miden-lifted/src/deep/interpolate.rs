@@ -207,11 +207,6 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
         }
     }
 
-    /// Returns the evaluation points `[z₀, z₁, ..., z_{N-1}]`.
-    pub const fn points(&self) -> &FieldArray<EF, N> {
-        &self.points
-    }
-
     /// Returns the precomputed point quotients `1/(zⱼ - xᵢ)` for each domain point.
     ///
     /// `point_quotient[i][j]` is `1/(zⱼ - xᵢ)` where xᵢ is the i-th domain point

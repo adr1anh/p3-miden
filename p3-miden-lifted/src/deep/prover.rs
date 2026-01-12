@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
 
+use p3_challenger::{FieldChallenger, GrindingChallenger};
 use p3_commit::Mmcs;
 use p3_field::{
     ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue, TwoAdicField, dot_product,
@@ -10,7 +11,7 @@ use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 
 use super::interpolate::PointQuotients;
-use super::{DeepChallenges, DeepQuery, MatrixGroupEvals};
+use super::{DeepParams, DeepProof, DeepQuery, MatrixGroupEvals, observe_evals};
 use crate::utils::PackedFieldExtensionExt;
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
@@ -19,7 +20,7 @@ use crate::utils::PackedFieldExtensionExt;
 /// See module documentation for the construction and soundness argument.
 pub struct DeepPoly<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>> {
     /// References to the committed prover data for each matrix group.
-    matrices: Vec<&'a Commit::ProverData<M>>,
+    input_matrices: Vec<&'a Commit::ProverData<M>>,
 
     /// The DEEP quotient polynomial evaluated over the domain.
     /// `deep_evals[i]` is the evaluation at the i-th domain point (bit-reversed order).
@@ -33,37 +34,55 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
 {
     /// Construct `Q(X)` from committed matrices and batched evaluations at N opening points.
     ///
-    /// Uses [`PointQuotients`] to batch N evaluation points together, sharing batch inversion
-    /// and using `columnwise_dot_product_batched` for better cache utilization.
+    /// This method handles the complete transcript flow:
+    /// 1. Observes evaluations into the Fiat-Shamir transcript
+    /// 2. Grinds for proof-of-work witness (if `params.proof_of_work_bits > 0`)
+    /// 3. Samples DEEP batching challenges (α for columns, β for points)
+    /// 4. Constructs the DEEP quotient polynomial
     ///
     /// # Arguments
     /// - `c`: The MMCS used for commitment (extracts matrices from prover data)
     /// - `quotient`: Precomputed `1/(zⱼ - X)` for all N opening points
-    /// - `evals`: Evaluations at all N points, indexed as `evals[group_idx][point_idx]`
-    /// - `prover_data`: References to committed matrix data
-    /// - `challenges`: DEEP batching challenges (α for columns, β for points)
-    /// - `alignment`: Width for coefficient alignment (must match commitment)
-    pub fn new<const N: usize>(
+    /// - `batched_evals`: Evaluations at all N points, indexed as `evals[group_idx][point_idx]`
+    /// - `input_matrices`: References to committed matrix data
+    /// - `evals`: Evaluations transposed as `evals[point_idx][group_idx]` for transcript observation
+    /// - `challenger`: The Fiat-Shamir challenger
+    /// - `params`: DEEP parameters (alignment and proof_of_work_bits)
+    ///
+    /// # Returns
+    /// Tuple of `(DeepPoly, DeepProof)` where `DeepProof` contains the grinding witness.
+    pub fn new<const N: usize, Challenger>(
+        params: &DeepParams,
         c: &Commit,
+        input_matrices: Vec<&'a Commit::ProverData<M>>,
+        evals: &[Vec<MatrixGroupEvals<EF>>],
+        batched_evals: &[MatrixGroupEvals<FieldArray<EF, N>>],
         quotient: &PointQuotients<F, EF, N>,
-        evals: &[MatrixGroupEvals<FieldArray<EF, N>>],
-        prover_data: Vec<&'a Commit::ProverData<M>>,
-        challenges: &DeepChallenges<EF>,
-        alignment: usize,
-    ) -> Self {
+        challenger: &mut Challenger,
+    ) -> (Self, DeepProof<Challenger::Witness>)
+    where
+        Challenger: FieldChallenger<F> + GrindingChallenger,
+    {
         assert_eq!(
-            evals.len(),
-            prover_data.len(),
-            "evals and prover_data must have the same length"
+            batched_evals.len(),
+            input_matrices.len(),
+            "batched_evals and prover_data must have the same length"
         );
 
-        let matrices_groups: Vec<Vec<&M>> = prover_data
+        // 1. Observe evaluations into transcript
+        observe_evals::<F, EF, Challenger>(evals, challenger, params.alignment);
+
+        // 2. Grind for proof-of-work witness
+        let pow_witness = challenger.grind(params.proof_of_work_bits);
+
+        // 3. Sample DEEP challenges
+        let challenge_columns: EF = challenger.sample_algebra_element();
+        let challenge_points: EF = challenger.sample_algebra_element();
+
+        let matrices_groups: Vec<Vec<&M>> = input_matrices
             .iter()
             .map(|data| c.get_matrices(*data))
             .collect();
-
-        let challenge_columns = challenges.alpha;
-        let challenge_points = challenges.beta;
 
         let w = F::Packing::WIDTH;
         let point_quotient = quotient.point_quotient();
@@ -76,7 +95,7 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
             .collect();
 
         let coeffs_columns: Vec<Vec<EF>> =
-            derive_coeffs_from_challenge(&widths, challenge_columns, alignment);
+            derive_coeffs_from_challenge(&widths, challenge_columns, params.alignment);
 
         // Negate coefficients so inner loop computes f_reduced(z) - f_reduced(X) via addition
         let neg_column_coeffs: Vec<Vec<EF>> = coeffs_columns
@@ -104,14 +123,17 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
             .unwrap_or_else(|| EF::zero_vec(n));
 
         // Pre-compute f_reduced(zⱼ) for all N points
-        // Structure: evals[group_idx][point_idx].0[matrix_idx][col_idx]
+        // Structure: batched_evals[group_idx].0[matrix_idx][col_idx] is FieldArray<EF, N>
         let f_reduced_at_points: FieldArray<EF, N> = {
             let coeffs_flat = coeffs_columns
                 .iter()
                 .flatten()
                 .copied()
                 .map(FieldArray::from);
-            let evals_flat = evals.iter().flat_map(|group| group.iter_evals()).copied();
+            let evals_flat = batched_evals
+                .iter()
+                .flat_map(|group| group.iter_evals())
+                .copied();
             dot_product(coeffs_flat, evals_flat)
         };
 
@@ -173,11 +195,14 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
                 });
         }
 
-        Self {
-            matrices: prover_data,
-            deep_evals,
-            _marker: PhantomData,
-        }
+        (
+            Self {
+                input_matrices,
+                deep_evals,
+                _marker: PhantomData,
+            },
+            DeepProof { pow_witness },
+        )
     }
 
     /// Open the committed matrices at a query index.
@@ -186,7 +211,7 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
     /// to reconstruct `f_reduced(X)` at the queried domain point.
     pub fn open(&self, c: &Commit, index: usize) -> DeepQuery<F, Commit> {
         let openings = self
-            .matrices
+            .input_matrices
             .iter()
             .map(|m| c.open_batch(index, m))
             .collect();
@@ -279,7 +304,7 @@ fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>, C: AsRef<[
 /// The zeros don't affect the sum, but they do affect coefficient indexing.
 /// By aligning indices, we ensure the prover's explicit coefficients match
 /// the verifier's Horner reduction (which skips the implicit zeros via `α^gap`).
-pub(crate) fn derive_coeffs_from_challenge<EF: Field>(
+fn derive_coeffs_from_challenge<EF: Field>(
     widths: &[usize],
     challenge: EF,
     alignment: usize,

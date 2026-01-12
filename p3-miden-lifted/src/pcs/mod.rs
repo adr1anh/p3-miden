@@ -20,7 +20,7 @@ mod proof;
 use alloc::vec::Vec;
 use core::iter::zip;
 
-use p3_challenger::{CanObserve, FieldChallenger};
+use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
 use p3_commit::Mmcs;
 use p3_field::{ExtensionField, FieldArray, TwoAdicField};
 use p3_matrix::{Dimensions, Matrix};
@@ -28,11 +28,14 @@ use p3_util::log2_strict_usize;
 
 pub use self::config::PcsConfig;
 pub use self::proof::{PcsError, Proof, QueryProof};
+pub use crate::deep::DeepParams;
+use crate::deep::MatrixGroupEvals;
 use crate::deep::interpolate::PointQuotients;
 use crate::deep::prover::DeepPoly;
 use crate::deep::verifier::DeepOracle;
-use crate::deep::{DeepChallenges, MatrixGroupEvals, OpeningClaim};
-use crate::fri::{FriError, FriOracle, FriPolys};
+use crate::fri::FriError;
+use crate::fri::prover::FriPolys;
+use crate::fri::verifier::FriOracle;
 use crate::utils::bit_reversed_coset_points;
 
 /// Open committed matrices at N evaluation points.
@@ -43,7 +46,7 @@ use crate::utils::bit_reversed_coset_points;
 /// - `InputMmcs`: MMCS used to commit the input matrices
 /// - `FriMmcs`: MMCS used for FRI round commitments (typically `ExtensionMmcs<F, EF, _>`)
 /// - `M`: Matrix type for input matrices
-/// - `Challenger`: Fiat-Shamir challenger
+/// - `Challenger`: Fiat-Shamir challenger (must support grinding)
 /// - `N`: Number of evaluation points (compile-time constant)
 ///
 /// # Arguments
@@ -51,11 +54,11 @@ use crate::utils::bit_reversed_coset_points;
 /// - `prover_data`: Prover data from the commitment phase (one per committed group)
 /// - `eval_points`: Array of N out-of-domain evaluation points
 /// - `challenger`: Mutable reference to the Fiat-Shamir challenger
-/// - `config`: PCS configuration (FRI params + alignment)
+/// - `config`: PCS configuration (FRI params + DEEP params)
 /// - `fri_mmcs`: MMCS instance for FRI round commitments
 ///
 /// # Returns
-/// A `Proof` containing evaluations and all opening proofs
+/// A `Proof` containing evaluations, grinding witnesses, and all opening proofs
 pub fn open<F, EF, InputMmcs, FriMmcs, M, Challenger, const N: usize>(
     input_mmcs: &InputMmcs,
     prover_data: Vec<&InputMmcs::ProverData<M>>,
@@ -63,14 +66,14 @@ pub fn open<F, EF, InputMmcs, FriMmcs, M, Challenger, const N: usize>(
     challenger: &mut Challenger,
     config: &PcsConfig,
     fri_mmcs: &FriMmcs,
-) -> Proof<F, EF, InputMmcs, FriMmcs>
+) -> Proof<F, EF, InputMmcs, FriMmcs, Challenger::Witness>
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
     InputMmcs: Mmcs<F>,
     FriMmcs: Mmcs<EF>,
     M: Matrix<F>,
-    Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment>,
+    Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment> + GrindingChallenger,
 {
     // ─────────────────────────────────────────────────────────────────────────
     // Extract matrix structure from prover data
@@ -107,34 +110,35 @@ where
         .collect();
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Sample DEEP challenges (observes evaluations, then samples α and β)
+    // Construct DEEP quotient (observes evals, grinds, samples α and β)
     // ─────────────────────────────────────────────────────────────────────────
-    let deep_challenges = DeepChallenges::sample(&evals, challenger, config.alignment);
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Construct DEEP quotient
-    // ─────────────────────────────────────────────────────────────────────────
-    let deep_poly = DeepPoly::new(
+    let (deep_poly, deep_proof) = DeepPoly::new(
+        &config.deep,
         input_mmcs,
-        &quotient,
-        &batched_evals,
         prover_data,
-        &deep_challenges,
-        config.alignment,
+        &evals,
+        &batched_evals,
+        &quotient,
+        challenger,
     );
 
     // ─────────────────────────────────────────────────────────────────────────
-    // FRI commit phase (observes commitments, samples betas internally)
+    // FRI commit phase (observes commitments, grinds per-round, samples betas)
     // ─────────────────────────────────────────────────────────────────────────
     // The deep_poly contains evaluations on the LDE domain (size max_height).
     // FRI will prove that this polynomial is low-degree.
-    let fri_polys =
-        FriPolys::<F, EF, _>::new(fri_mmcs, &config.fri, &deep_poly.deep_evals, challenger);
+    let (fri_polys, fri_proof) =
+        FriPolys::<F, EF, _>::new(&config.fri, fri_mmcs, &deep_poly.deep_evals, challenger);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Grind for query sampling
+    // ─────────────────────────────────────────────────────────────────────────
+    let query_pow_witness = challenger.grind(config.query_proof_of_work_bits);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Sample query indices
     // ─────────────────────────────────────────────────────────────────────────
-    let query_indices: Vec<usize> = (0..config.fri.num_queries)
+    let query_indices: Vec<usize> = (0..config.num_queries)
         .map(|_| challenger.sample_bits(log_n))
         .collect();
 
@@ -148,7 +152,7 @@ where
             let deep_query = deep_poly.open(input_mmcs, index);
 
             // Open FRI rounds at this index
-            let fri_round_openings = fri_polys.open_query(fri_mmcs, &config.fri, index);
+            let fri_round_openings = fri_polys.open_query(&config.fri, fri_mmcs, index);
 
             QueryProof::new(deep_query, fri_round_openings)
         })
@@ -159,8 +163,9 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     Proof {
         evals,
-        fri_commitments: fri_polys.commitments,
-        fri_final_poly: fri_polys.final_poly,
+        deep_proof,
+        fri_proof,
+        query_pow_witness,
         query_proofs,
     }
 }
@@ -175,7 +180,7 @@ where
 /// - `commitments`: The commitments to verify against (with dimensions)
 /// - `eval_points`: Array of N out-of-domain evaluation points
 /// - `proof`: The proof to verify
-/// - `challenger`: Mutable reference to the Fiat-Shamir challenger
+/// - `challenger`: Mutable reference to the Fiat-Shamir challenger (must support grinding)
 /// - `config`: PCS configuration (must match prover's)
 /// - `fri_mmcs`: MMCS instance for FRI round commitments
 ///
@@ -187,7 +192,7 @@ pub fn verify<F, EF, InputMmcs, FriMmcs, Challenger, const N: usize>(
     input_mmcs: &InputMmcs,
     commitments: &[(InputMmcs::Commitment, Vec<Dimensions>)],
     eval_points: [EF; N],
-    proof: &Proof<F, EF, InputMmcs, FriMmcs>,
+    proof: &Proof<F, EF, InputMmcs, FriMmcs, Challenger::Witness>,
     challenger: &mut Challenger,
     config: &PcsConfig,
     fri_mmcs: &FriMmcs,
@@ -197,16 +202,16 @@ where
     EF: ExtensionField<F>,
     InputMmcs: Mmcs<F>,
     FriMmcs: Mmcs<EF>,
-    Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment>,
+    Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment> + GrindingChallenger,
     InputMmcs::Error: core::fmt::Debug,
     FriMmcs::Error: core::fmt::Debug,
 {
     // ─────────────────────────────────────────────────────────────────────────
     // Validate proof structure
     // ─────────────────────────────────────────────────────────────────────────
-    if proof.query_proofs.len() != config.fri.num_queries {
+    if proof.query_proofs.len() != config.num_queries {
         return Err(PcsError::WrongNumQueries {
-            expected: config.fri.num_queries,
+            expected: config.num_queries,
             actual: proof.query_proofs.len(),
         });
     }
@@ -220,41 +225,37 @@ where
     let log_n = log2_strict_usize(max_height);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Sample DEEP challenges (observes evaluations, then samples α and β)
+    // Construct verifier's DEEP oracle (observes evals, checks PoW, samples α/β)
     // ─────────────────────────────────────────────────────────────────────────
-    let deep_challenges = DeepChallenges::sample(&proof.evals, challenger, config.alignment);
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Construct verifier's DEEP oracle
-    // ─────────────────────────────────────────────────────────────────────────
-    // Build openings for oracle: pair each eval_point with its evaluations
-    let openings_for_oracle: Vec<OpeningClaim<EF>> = zip(eval_points.iter(), &proof.evals)
-        .map(|(&z, evals)| OpeningClaim {
-            point: z,
-            evals: evals.clone(),
-        })
-        .collect();
-
     let deep_oracle = DeepOracle::new(
-        &openings_for_oracle,
+        &config.deep,
+        eval_points,
+        &proof.evals,
         commitments.to_vec(),
-        &deep_challenges,
-        config.alignment,
+        challenger,
+        &proof.deep_proof,
     )?;
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Create FRI oracle (observes commitments + final poly, samples betas)
+    // Create FRI oracle (observes commitments + final poly, checks per-round PoW)
     // ─────────────────────────────────────────────────────────────────────────
-    let fri_oracle = FriOracle::new(
-        proof.fri_commitments.clone(),
-        proof.fri_final_poly.clone(),
-        challenger,
-    );
+    let fri_oracle = FriOracle::new(&proof.fri_proof, challenger, config.fri.proof_of_work_bits)
+        .map_err(|e| match e {
+            FriError::InvalidPowWitness | FriError::InvalidProofStructure => {
+                PcsError::InvalidFriPowWitness
+            }
+            FriError::MmcsError(err, _) => PcsError::FriMmcsError(err),
+            _ => unreachable!("FriOracle::new only returns PoW, structure, or Mmcs errors"),
+        })?;
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Sample query indices
+    // Check query PoW witness and sample query indices
     // ─────────────────────────────────────────────────────────────────────────
-    let query_indices: Vec<usize> = (0..config.fri.num_queries)
+    if !challenger.check_witness(config.query_proof_of_work_bits, proof.query_pow_witness) {
+        return Err(PcsError::InvalidQueryPowWitness);
+    }
+
+    let query_indices: Vec<usize> = (0..config.num_queries)
         .map(|_| challenger.sample_bits(log_n))
         .collect();
 
@@ -270,8 +271,8 @@ where
         // Verify FRI rounds
         fri_oracle
             .verify_query::<F>(
-                fri_mmcs,
                 &config.fri,
+                fri_mmcs,
                 index,
                 deep_eval,
                 &query_proof.fri_round_openings,
@@ -282,6 +283,7 @@ where
                     PcsError::FriFoldingError { query_index: index }
                 }
                 FriError::FinalPolyMismatch => PcsError::FinalPolyMismatch { query_index: index },
+                FriError::InvalidPowWitness => unreachable!("PoW already checked"),
             })?;
     }
 

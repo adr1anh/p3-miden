@@ -2,13 +2,13 @@ use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
 
+use p3_challenger::{FieldChallenger, GrindingChallenger};
 use p3_commit::{BatchOpeningRef, Mmcs};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::{log2_strict_usize, reverse_bits_len};
-use thiserror::Error;
 
-use super::{DeepChallenges, DeepQuery, OpeningClaim};
+use super::{DeepError, DeepParams, DeepProof, DeepQuery, MatrixGroupEvals, observe_evals};
 use crate::utils::alignment_padding;
 
 /// Verifier's view of the DEEP quotient as a point-query oracle.
@@ -51,13 +51,21 @@ pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> {
 }
 
 impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, Commit> {
-    /// Construct from claimed openings and commitments.
+    /// Construct by observing evaluations, checking PoW, and sampling challenges.
+    ///
+    /// This method handles the complete transcript flow:
+    /// 1. Observes evaluations into the Fiat-Shamir transcript
+    /// 2. Checks the proof-of-work witness
+    /// 3. Samples DEEP batching challenges (α for columns, β for points)
+    /// 4. Validates proof structure and computes reduced openings
     ///
     /// # Arguments
-    /// - `openings`: Claimed evaluations at each opening point
+    /// - `proof`: DEEP proof containing PoW witness
+    /// - `evals`: Claimed evaluations at each opening point
+    /// - `eval_points`: The out-of-domain evaluation points
     /// - `commitments`: Pairs `(commitment, dims)` for Merkle verification
-    /// - `challenges`: DEEP batching challenges (α for columns, β for points)
-    /// - `alignment`: Width for coefficient alignment (see struct doc)
+    /// - `challenger`: The Fiat-Shamir challenger
+    /// - `params`: DEEP parameters (alignment and proof_of_work_bits)
     ///
     /// We reduce each opening's evaluations to `f_reduced(zⱼ) = Σᵢ αⁱ · fᵢ(zⱼʳ)` eagerly.
     /// This optimization is possible because all columns share the same opening points—
@@ -65,42 +73,61 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
     ///
     /// # Errors
     ///
-    /// Returns `DeepError` if the proof structure is invalid.
-    pub fn new(
-        openings: &[OpeningClaim<EF>],
+    /// Returns `DeepError` if the proof structure is invalid or PoW witness is invalid.
+    pub fn new<Challenger, const N: usize>(
+        params: &DeepParams,
+        eval_points: [EF; N],
+        evals: &[Vec<MatrixGroupEvals<EF>>],
         commitments: Vec<(Commit::Commitment, Vec<Dimensions>)>,
-        challenges: &DeepChallenges<EF>,
-        alignment: usize,
-    ) -> Result<Self, DeepError> {
+        challenger: &mut Challenger,
+        proof: &DeepProof<Challenger::Witness>,
+    ) -> Result<Self, DeepError>
+    where
+        Challenger: FieldChallenger<F> + GrindingChallenger,
+    {
+        // 1. Observe evaluations into transcript
+        observe_evals::<F, EF, Challenger>(evals, challenger, params.alignment);
+
+        // 2. Check grinding witness
+        if !challenger.check_witness(params.proof_of_work_bits, proof.pow_witness) {
+            return Err(DeepError::InvalidPowWitness);
+        }
+
+        // 3. Sample DEEP challenges
+        let challenge_columns: EF = challenger.sample_algebra_element();
+        let challenge_points: EF = challenger.sample_algebra_element();
+
         let num_commits = commitments.len();
 
         // Validate structure: evals_groups[commit][matrix][col] matches dims
-        for claim in openings {
-            if claim.evals.len() != num_commits {
-                return Err(DeepError);
+        // Structure: evals[point_idx][commit_idx][matrix_idx][col_idx]
+        for point_evals in evals {
+            if point_evals.len() != num_commits {
+                return Err(DeepError::StructureMismatch);
             }
-            for (evals, (_, dims)) in zip(&claim.evals, &commitments) {
-                if evals.num_matrices() != dims.len() {
-                    return Err(DeepError);
+            for (eval_group, (_, dims)) in zip(point_evals, &commitments) {
+                if eval_group.num_matrices() != dims.len() {
+                    return Err(DeepError::StructureMismatch);
                 }
-                for (matrix_evals, matrix_dims) in zip(evals.iter_matrices(), dims) {
+                for (matrix_evals, matrix_dims) in zip(eval_group.iter_matrices(), dims) {
                     if matrix_evals.len() != matrix_dims.width {
-                        return Err(DeepError);
+                        return Err(DeepError::StructureMismatch);
                     }
                 }
             }
         }
 
-        let challenge_columns = challenges.alpha;
-        let challenge_points = challenges.beta;
+        // Validate number of eval points matches
+        if evals.len() != N {
+            return Err(DeepError::StructureMismatch);
+        }
 
         // Reduce each opening's evaluations via Horner: (z_j, f_reduced(z_j))
-        let reduced_openings: Vec<(EF, EF)> = openings
-            .iter()
-            .map(|claim| {
-                let slices = claim.evals.iter().flat_map(|g| g.iter_matrices());
-                let reduced_eval = reduce_with_powers(slices, challenge_columns, alignment);
-                (claim.point, reduced_eval)
+        let reduced_openings: Vec<(EF, EF)> = zip(&eval_points, evals)
+            .map(|(&point, point_evals)| {
+                let slices = point_evals.iter().flat_map(|g| g.iter_matrices());
+                let reduced_eval = reduce_with_powers(slices, challenge_columns, params.alignment);
+                (point, reduced_eval)
             })
             .collect();
 
@@ -109,7 +136,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
             reduced_openings,
             challenge_columns,
             challenge_points,
-            alignment,
+            alignment: params.alignment,
             _marker: PhantomData,
         })
     }
@@ -158,17 +185,6 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
         Ok(eval)
     }
 }
-
-// ============================================================================
-// Error Types
-// ============================================================================
-
-/// Claimed evaluations don't match commitment structure.
-///
-/// This can mean wrong number of evaluation groups, matrices, or columns.
-#[derive(Debug, Error)]
-#[error("evaluation structure doesn't match commitment")]
-pub struct DeepError;
 
 /// Horner reduction: computes `Σᵢ αⁿ⁻¹⁻ⁱ · vᵢ` via left-to-right accumulation.
 ///

@@ -35,7 +35,7 @@ pub mod merkle_tree;
 /// Polynomial Commitment Scheme combining DEEP quotient and FRI.
 pub mod pcs;
 
-pub mod utils;
+pub(crate) mod utils;
 
 #[cfg(test)]
 mod tests;
