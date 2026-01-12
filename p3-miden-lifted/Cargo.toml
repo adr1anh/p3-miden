@@ -14,8 +14,9 @@ p3-commit.workspace = true
 p3-dft.workspace = true
 p3-field.workspace = true
 p3-matrix.workspace = true
-p3-miden-symmetric.workspace = true
+p3-miden-stateful-hasher.workspace = true
 p3-maybe-rayon.workspace = true
+p3-symmetric.workspace = true
 p3-util.workspace = true
 
 rand.workspace = true
@@ -27,7 +28,6 @@ p3-baby-bear.workspace = true
 p3-goldilocks.workspace = true
 p3-interpolation.workspace = true
 p3-keccak.workspace = true
-p3-symmetric.workspace = true
 
 criterion.workspace = true
 

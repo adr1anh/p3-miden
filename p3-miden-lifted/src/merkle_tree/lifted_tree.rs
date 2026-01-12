@@ -6,7 +6,8 @@ use p3_field::PackedValue;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
-use p3_miden_symmetric::{Hash, PseudoCompressionFunction, StatefulHasher};
+use p3_miden_stateful_hasher::StatefulHasher;
+use p3_symmetric::{Hash, PseudoCompressionFunction};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
 
@@ -476,7 +477,7 @@ mod tests {
 
     use p3_matrix::Matrix;
     use p3_matrix::dense::RowMajorMatrix;
-    use p3_miden_symmetric::StatefulHasher;
+    use p3_miden_stateful_hasher::StatefulHasher;
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
