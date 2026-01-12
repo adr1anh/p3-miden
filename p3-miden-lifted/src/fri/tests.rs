@@ -1,8 +1,6 @@
 //! Integration tests for FRI protocol commit/verify cycles.
 
-use alloc::vec::Vec;
-
-use p3_commit::Mmcs;
+use p3_challenger::FieldChallenger;
 use p3_field::{PrimeCharacteristicRing, TwoAdicField};
 use p3_util::reverse_bits_len;
 use rand::distr::StandardUniform;
@@ -10,27 +8,8 @@ use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
 
 use super::*;
+use crate::fri::FriOracle;
 use crate::tests::{EF, F, challenger, fri_mmcs, random_lde_matrix};
-
-/// Open a specific query index across all commit phase rounds.
-fn open_query<M: Mmcs<EF>>(
-    mmcs: &M,
-    data: &CommitPhaseData<F, EF, M>,
-    params: &FriParams,
-    index: usize,
-) -> Vec<p3_commit::BatchOpening<EF, M>> {
-    let log_arity = params.log_folding_factor;
-    let mut current_index = index;
-    data.folded_evals_data
-        .iter()
-        .map(|prover_data| {
-            let row_index = current_index >> log_arity;
-            let opening = mmcs.open_batch(row_index, prover_data);
-            current_index = row_index;
-            opening
-        })
-        .collect()
-}
 
 // ============================================================================
 // Integration tests
@@ -59,29 +38,24 @@ fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, log_folding_factor: 
 
     // Prover: run commit phase
     let mut prover_challenger = challenger();
-    let (prover_data, proof) =
-        CommitPhaseData::<F, EF, _>::new(&mmcs, &params, evals.clone(), &mut prover_challenger);
+    let fri_polys = FriPolys::<F, EF, _>::new(&mmcs, &params, &evals, &mut prover_challenger);
 
-    // Verifier: replay challenger to get betas
+    // Verifier: replay challenger to get oracle with betas
     let mut verifier_challenger = challenger();
-    let betas = proof.sample_betas::<F, _>(&mut verifier_challenger);
+    let fri_oracle = FriOracle::new(
+        fri_polys.commitments.clone(),
+        fri_polys.final_poly.clone(),
+        &mut verifier_challenger,
+    );
 
     // Verify random queries
     for _ in 0..3 {
         let index: usize = rng.random_range(0..lde_size);
         let initial_eval = evals[index];
-        let openings = open_query(&mmcs, &prover_data, &params, index);
+        let openings = fri_polys.open_query(&mmcs, &params, index);
 
-        proof
-            .verify_query::<F>(
-                &mmcs,
-                &params,
-                index,
-                log_poly_degree,
-                initial_eval,
-                &betas,
-                &openings,
-            )
+        fri_oracle
+            .verify_query::<F>(&mmcs, &params, index, initial_eval, &openings)
             .expect("verification should succeed");
     }
 }
@@ -121,23 +95,21 @@ fn test_fri_verify_wrong_eval() {
     let lde_size = 1 << log_lde_size;
 
     let mut prover_challenger = challenger();
-    let (prover_data, proof) =
-        CommitPhaseData::<F, EF, _>::new(&mmcs, &params, evals, &mut prover_challenger);
+    let fri_polys = FriPolys::<F, EF, _>::new(&mmcs, &params, &evals, &mut prover_challenger);
 
     let mut verifier_challenger = challenger();
-    let betas = proof.sample_betas::<F, _>(&mut verifier_challenger);
+    let fri_oracle = FriOracle::new(
+        fri_polys.commitments.clone(),
+        fri_polys.final_poly.clone(),
+        &mut verifier_challenger,
+    );
 
     let index: usize = rng.random_range(0..lde_size);
     let wrong_eval: EF = rng.sample(StandardUniform); // Wrong!
-    let openings = open_query(&mmcs, &prover_data, &params, index);
+    let openings = fri_polys.open_query(&mmcs, &params, index);
 
-    let result = proof.verify_query::<F>(
-        &mmcs,
-        &params,
-        index,
-        log_poly_degree,
-        wrong_eval, // Should fail
-        &betas,
+    let result = fri_oracle.verify_query::<F>(
+        &mmcs, &params, index, wrong_eval, // Should fail
         &openings,
     );
 
@@ -172,31 +144,32 @@ fn test_fri_verify_wrong_beta() {
     let lde_size = 1 << log_lde_size;
 
     let mut prover_challenger = challenger();
-    let (prover_data, proof) =
-        CommitPhaseData::<F, EF, _>::new(&mmcs, &params, evals.clone(), &mut prover_challenger);
+    let fri_polys = FriPolys::<F, EF, _>::new(&mmcs, &params, &evals, &mut prover_challenger);
 
-    // Use wrong betas
-    let wrong_betas: Vec<EF> = (0..proof.commitments.len())
-        .map(|_| rng.sample(StandardUniform))
-        .collect();
+    // Create an oracle with wrong betas by using a different challenger state
+    // First, get the correct oracle to sample betas (advances challenger)
+    let mut wrong_challenger = challenger();
+    // Sample some garbage to desync the challenger state
+    let _: EF = wrong_challenger.sample_algebra_element();
+    let wrong_oracle = FriOracle::new(
+        fri_polys.commitments.clone(),
+        fri_polys.final_poly.clone(),
+        &mut wrong_challenger,
+    );
 
     let index: usize = rng.random_range(0..lde_size);
     let initial_eval = evals[index];
-    let openings = open_query(&mmcs, &prover_data, &params, index);
+    let openings = fri_polys.open_query(&mmcs, &params, index);
 
-    let result = proof.verify_query::<F>(
-        &mmcs,
-        &params,
-        index,
-        log_poly_degree,
-        initial_eval,
-        &wrong_betas, // Should fail
-        &openings,
-    );
+    let result = wrong_oracle.verify_query::<F>(&mmcs, &params, index, initial_eval, &openings);
 
+    // Should fail because wrong betas produce wrong folding results
     assert!(
-        matches!(result, Err(FriError::EvaluationMismatch { .. })),
-        "expected EvaluationMismatch error, got {:?}",
+        matches!(
+            result,
+            Err(FriError::EvaluationMismatch { .. }) | Err(FriError::FinalPolyMismatch)
+        ),
+        "expected EvaluationMismatch or FinalPolyMismatch error, got {:?}",
         result
     );
 }
@@ -223,12 +196,12 @@ fn test_final_polynomial_correctness() {
     let evals = random_lde_matrix(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
 
     let mut chal = challenger();
-    let (_prover_data, proof) = CommitPhaseData::<F, EF, _>::new(&mmcs, &params, evals, &mut chal);
+    let fri_polys = FriPolys::<F, EF, _>::new(&mmcs, &params, &evals, &mut chal);
 
     // Verify final polynomial has correct degree
     let final_degree = 1 << log_final_degree;
     assert_eq!(
-        proof.final_poly.len(),
+        fri_polys.final_poly.len(),
         final_degree,
         "Final polynomial should have {} coefficients",
         final_degree
@@ -244,7 +217,7 @@ fn test_final_polynomial_correctness() {
         let x: F = g.exp_u64(reverse_bits_len(idx, log_final_height) as u64);
 
         // Evaluate polynomial via Horner
-        let poly_eval: EF = proof
+        let poly_eval: EF = fri_polys
             .final_poly
             .iter()
             .rev()

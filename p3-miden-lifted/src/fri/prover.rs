@@ -11,16 +11,22 @@ use p3_util::{log2_strict_usize, reverse_slice_index_bits};
 
 use crate::fri::FriParams;
 use crate::fri::fold::{FriFold, FriFold2, FriFold4};
-use crate::fri::verifier::CommitPhaseProof;
 
 // ============================================================================
 // Prover Data Structure
 // ============================================================================
 
-/// Prover data from the FRI commit phase, needed to answer queries.
-pub struct CommitPhaseData<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> {
+/// Prover's complete state from the FRI commit phase.
+///
+/// Contains both the data needed to answer queries (Merkle prover data) and
+/// the commitment data that goes in the proof (commitments + final polynomial).
+pub struct FriPolys<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> {
     /// Prover data for each folding round, used to open Merkle paths at query indices.
-    pub(crate) folded_evals_data: Vec<FriMmcs::ProverData<RowMajorMatrix<EF>>>,
+    folded_evals_data: Vec<FriMmcs::ProverData<RowMajorMatrix<EF>>>,
+    /// Merkle commitments for each folding round.
+    pub(crate) commitments: Vec<FriMmcs::Commitment>,
+    /// Coefficients of the final low-degree polynomial.
+    pub(crate) final_poly: Vec<EF>,
     _marker: PhantomData<F>,
 }
 
@@ -57,8 +63,11 @@ pub struct CommitPhaseData<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs
 //   - Adjacent rows have s values that are negatives (for arity=2)
 //   - After folding, row i maps to row i in the halved domain
 
-impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> CommitPhaseData<F, EF, FriMmcs> {
-    /// Execute the FRI commit phase, producing commitments and prover data.
+impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, FriMmcs> {
+    /// Execute the FRI commit phase.
+    ///
+    /// Iteratively folds the polynomial, committing to intermediate evaluations
+    /// and sampling folding challenges until reaching the target degree.
     ///
     /// ## Arguments
     ///
@@ -66,17 +75,12 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> CommitPhaseData<
     /// - `params`: FRI parameters
     /// - `evals`: Initial polynomial evaluations in bit-reversed order
     /// - `challenger`: Fiat-Shamir challenger for sampling β
-    ///
-    /// ## Returns
-    ///
-    /// - `CommitPhaseProof`: Commitments and final polynomial (sent to verifier)
-    /// - `CommitPhaseData`: Prover data needed to answer queries
     pub fn new<Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment>>(
         mmcs: &FriMmcs,
         params: &FriParams,
-        mut evals: Vec<EF>,
+        evals: &[EF],
         challenger: &mut Challenger,
-    ) -> (Self, CommitPhaseProof<EF, FriMmcs>)
+    ) -> Self
     where
         EF: ExtensionField<F>,
     {
@@ -113,11 +117,12 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> CommitPhaseData<
         let mut s_invs: Vec<F> = g_inv.powers().take(num_rows).collect();
         reverse_slice_index_bits(&mut s_invs);
 
+        let mut folded_evals = evals.to_vec();
         while domain_size > final_domain_size {
             // ─────────────────────────────────────────────────────────────────────
             // Reshape into matrix: each row is one coset
             // ─────────────────────────────────────────────────────────────────────
-            let matrix = RowMajorMatrix::new(evals, arity);
+            let matrix = RowMajorMatrix::new(folded_evals, arity);
 
             // ─────────────────────────────────────────────────────────────────────
             // Commit to the folded evaluations
@@ -135,7 +140,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> CommitPhaseData<
             // ─────────────────────────────────────────────────────────────────────
             let matrix_view = mmcs.get_matrices(&prover_data)[0];
 
-            evals = match log_arity {
+            folded_evals = match log_arity {
                 1 => FriFold2::fold_matrix(matrix_view.as_view(), &s_invs, beta),
                 2 => FriFold4::fold_matrix(matrix_view.as_view(), &s_invs, beta),
                 _ => panic!("Unsupported folding arity"),
@@ -177,26 +182,22 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> CommitPhaseData<
         // 1. Take the first `final_poly_degree` evaluations (others are redundant due to blowup)
         // 2. Convert from bit-reversed to standard order
         // 3. Apply inverse DFT to get coefficients
-        evals.truncate(final_poly_degree);
-        reverse_slice_index_bits(&mut evals);
+        folded_evals.truncate(final_poly_degree);
+        reverse_slice_index_bits(&mut folded_evals);
 
-        let final_poly = Radix2DFTSmallBatch::default().idft_algebra(evals);
+        let final_poly = Radix2DFTSmallBatch::default().idft_algebra(folded_evals);
 
         // Observe final polynomial coefficients for Fiat-Shamir
         for &coeff in &final_poly {
             challenger.observe_algebra_element(coeff);
         }
 
-        (
-            Self {
-                folded_evals_data,
-                _marker: PhantomData,
-            },
-            CommitPhaseProof {
-                commitments,
-                final_poly,
-            },
-        )
+        Self {
+            folded_evals_data,
+            commitments,
+            final_poly,
+            _marker: PhantomData,
+        }
     }
 
     /// Open a specific query index across all FRI commit phase rounds.

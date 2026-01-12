@@ -7,7 +7,6 @@ use thiserror::Error;
 
 use crate::deep::verifier::DeepError;
 use crate::deep::{DeepQuery, MatrixGroupEvals};
-use crate::fri::CommitPhaseProof;
 
 /// Complete PCS opening proof.
 ///
@@ -19,8 +18,11 @@ pub struct Proof<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: M
     /// `evals[point_idx][commit_idx][matrix_idx][col_idx]`
     pub(crate) evals: Vec<Vec<MatrixGroupEvals<EF>>>,
 
-    /// FRI commit phase proof (intermediate commitments + final polynomial)
-    pub(crate) fri_commit_proof: CommitPhaseProof<EF, FriMmcs>,
+    /// FRI round commitments.
+    pub(crate) fri_commitments: Vec<FriMmcs::Commitment>,
+
+    /// Final polynomial coefficients.
+    pub(crate) fri_final_poly: Vec<EF>,
 
     /// Query phase proofs, one per query index
     pub(crate) query_proofs: Vec<QueryProof<F, EF, InputMmcs, FriMmcs>>,

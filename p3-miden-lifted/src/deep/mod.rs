@@ -50,9 +50,9 @@ use crate::utils::alignment_padding;
 #[derive(Clone, Copy, Debug)]
 pub struct DeepChallenges<EF> {
     /// Column batching challenge α
-    pub alpha: EF,
+    pub(crate) alpha: EF,
     /// Point batching challenge β
-    pub beta: EF,
+    pub(crate) beta: EF,
 }
 
 impl<EF: Field> DeepChallenges<EF> {
@@ -156,9 +156,9 @@ impl<T> MatrixGroupEvals<T> {
 #[derive(Clone, Debug)]
 pub struct OpeningClaim<EF> {
     /// The out-of-domain evaluation point `z`.
-    pub point: EF,
+    pub(crate) point: EF,
     /// Claimed evaluations `f_i(z)` grouped by commitment, then matrix, then column.
-    pub evals: Vec<MatrixGroupEvals<EF>>,
+    pub(crate) evals: Vec<MatrixGroupEvals<EF>>,
 }
 
 #[cfg(test)]

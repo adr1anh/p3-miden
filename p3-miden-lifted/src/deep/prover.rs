@@ -22,8 +22,8 @@ pub struct DeepPoly<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Co
     matrices: Vec<&'a Commit::ProverData<M>>,
 
     /// The DEEP quotient polynomial evaluated over the domain.
-    /// `deep_poly[i]` is the evaluation at the i-th domain point (bit-reversed order).
-    deep_poly: Vec<EF>,
+    /// `deep_evals[i]` is the evaluation at the i-th domain point (bit-reversed order).
+    pub(crate) deep_evals: Vec<EF>,
 
     _marker: PhantomData<F>,
 }
@@ -125,11 +125,11 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
         });
 
         // Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) · 1/(zⱼ - X)
-        let mut deep_poly = EF::zero_vec(n);
+        let mut deep_evals = EF::zero_vec(n);
 
         if w == 1 {
             // Scalar path: use par_iter directly to avoid chunking overhead
-            deep_poly
+            deep_evals
                 .par_iter_mut()
                 .zip(neg_f_reduced.par_iter())
                 .zip(point_quotient.par_iter())
@@ -150,7 +150,7 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
             let point_coeffs_packed: [EF::ExtensionPacking; N] =
                 point_coeffs.map(EF::ExtensionPacking::from);
 
-            deep_poly
+            deep_evals
                 .par_chunks_exact_mut(w)
                 .zip(neg_f_reduced.par_chunks_exact(w))
                 .zip(point_quotient.par_chunks_exact(w))
@@ -175,16 +175,9 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
 
         Self {
             matrices: prover_data,
-            deep_poly,
+            deep_evals,
             _marker: PhantomData,
         }
-    }
-
-    /// Returns the DEEP quotient evaluations over the LDE domain.
-    ///
-    /// These are `Q(X)` values at each domain point in bit-reversed order.
-    pub fn evals(&self) -> &[EF] {
-        &self.deep_poly
     }
 
     /// Open the committed matrices at a query index.

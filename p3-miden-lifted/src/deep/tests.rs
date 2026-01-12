@@ -125,7 +125,7 @@ fn deep_quotient_end_to_end() {
             .query(&lmcs, index, &deep_query)
             .expect("Merkle verification should pass");
 
-        let prover_eval = deep_poly.evals()[index];
+        let prover_eval = deep_poly.deep_evals[index];
         assert_eq!(
             prover_eval, verifier_eval,
             "Prover and verifier disagree at index {index}"
