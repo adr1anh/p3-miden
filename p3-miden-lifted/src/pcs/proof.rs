@@ -3,9 +3,8 @@ use core::marker::PhantomData;
 
 use p3_commit::{BatchOpening, Mmcs};
 use p3_field::{ExtensionField, Field};
-use thiserror::Error;
 
-use crate::deep::{DeepError, DeepProof, DeepQuery, MatrixGroupEvals};
+use crate::deep::{DeepProof, DeepQuery, MatrixGroupEvals};
 use crate::fri::FriProof;
 
 /// Complete PCS opening proof.
@@ -64,36 +63,4 @@ impl<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: Mmcs<EF>>
             _marker: PhantomData,
         }
     }
-}
-
-/// Errors that can occur during PCS verification.
-///
-/// Verification can fail due to invalid Merkle proofs, inconsistent folding,
-/// mismatched polynomial evaluations, or invalid grinding witnesses.
-#[derive(Debug, Error)]
-pub enum PcsError<InputMmcsError, FriMmcsError> {
-    /// Input MMCS verification failed.
-    #[error("input MMCS error: {0:?}")]
-    InputMmcsError(InputMmcsError),
-    /// FRI MMCS verification failed.
-    #[error("FRI MMCS error: {0:?}")]
-    FriMmcsError(FriMmcsError),
-    /// FRI folding verification failed.
-    #[error("FRI folding error at query {query_index}")]
-    FriFoldingError { query_index: usize },
-    /// Final polynomial evaluation mismatch.
-    #[error("final polynomial mismatch at query {query_index}")]
-    FinalPolyMismatch { query_index: usize },
-    /// Wrong number of queries in proof.
-    #[error("wrong number of queries: expected {expected}, got {actual}")]
-    WrongNumQueries { expected: usize, actual: usize },
-    /// DEEP oracle construction failed.
-    #[error("DEEP error: {0}")]
-    DeepError(#[from] DeepError),
-    /// FRI proof-of-work witness verification failed.
-    #[error("invalid FRI proof-of-work witness")]
-    InvalidFriPowWitness,
-    /// Query proof-of-work witness verification failed.
-    #[error("invalid query proof-of-work witness")]
-    InvalidQueryPowWitness,
 }

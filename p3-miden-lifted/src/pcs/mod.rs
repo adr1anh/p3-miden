@@ -25,14 +25,15 @@ use p3_commit::Mmcs;
 use p3_field::{ExtensionField, FieldArray, TwoAdicField};
 use p3_matrix::{Dimensions, Matrix};
 use p3_util::log2_strict_usize;
+use thiserror::Error;
 
 pub use self::config::PcsConfig;
-pub use self::proof::{PcsError, Proof, QueryProof};
+pub use self::proof::{Proof, QueryProof};
 pub use crate::deep::DeepParams;
-use crate::deep::MatrixGroupEvals;
 use crate::deep::interpolate::PointQuotients;
 use crate::deep::prover::DeepPoly;
 use crate::deep::verifier::DeepOracle;
+use crate::deep::{DeepError, MatrixGroupEvals};
 use crate::fri::FriError;
 use crate::fri::prover::FriPolys;
 use crate::fri::verifier::FriOracle;
@@ -221,7 +222,7 @@ where
         .iter()
         .flat_map(|(_, dims)| dims.iter().map(|d| d.height))
         .max()
-        .expect("at least one matrix required");
+        .ok_or(PcsError::NoCommitments)?;
     let log_n = log2_strict_usize(max_height);
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -239,14 +240,7 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // Create FRI oracle (observes commitments + final poly, checks per-round PoW)
     // ─────────────────────────────────────────────────────────────────────────
-    let fri_oracle = FriOracle::new(&proof.fri_proof, challenger, config.fri.proof_of_work_bits)
-        .map_err(|e| match e {
-            FriError::InvalidPowWitness | FriError::InvalidProofStructure => {
-                PcsError::InvalidFriPowWitness
-            }
-            FriError::MmcsError(err, _) => PcsError::FriMmcsError(err),
-            _ => unreachable!("FriOracle::new only returns PoW, structure, or Mmcs errors"),
-        })?;
+    let fri_oracle = FriOracle::new(&proof.fri_proof, challenger, config.fri.proof_of_work_bits)?;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Check query PoW witness and sample query indices
@@ -269,28 +263,46 @@ where
             .map_err(PcsError::InputMmcsError)?;
 
         // Verify FRI rounds
-        fri_oracle
-            .verify_query::<F>(
-                &config.fri,
-                fri_mmcs,
-                index,
-                deep_eval,
-                &query_proof.fri_round_openings,
-            )
-            .map_err(|e| match e {
-                FriError::MmcsError(err, _) => PcsError::FriMmcsError(err),
-                FriError::InvalidProofStructure | FriError::EvaluationMismatch { .. } => {
-                    PcsError::FriFoldingError { query_index: index }
-                }
-                FriError::FinalPolyMismatch => PcsError::FinalPolyMismatch { query_index: index },
-                FriError::InvalidPowWitness => unreachable!("PoW already checked"),
-            })?;
+        fri_oracle.verify_query::<F>(
+            &config.fri,
+            fri_mmcs,
+            index,
+            deep_eval,
+            &query_proof.fri_round_openings,
+        )?;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Return verified evaluations
     // ─────────────────────────────────────────────────────────────────────────
     Ok(proof.evals.clone())
+}
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during PCS verification.
+#[derive(Debug, Error)]
+pub enum PcsError<InputMmcsError, FriMmcsError> {
+    /// No commitments provided for verification.
+    #[error("no commitments provided")]
+    NoCommitments,
+    /// Wrong number of queries in proof.
+    #[error("wrong number of queries: expected {expected}, got {actual}")]
+    WrongNumQueries { expected: usize, actual: usize },
+    /// Input MMCS verification failed.
+    #[error("input MMCS error: {0:?}")]
+    InputMmcsError(InputMmcsError),
+    /// DEEP oracle construction failed.
+    #[error("DEEP error: {0}")]
+    DeepError(#[from] DeepError),
+    /// FRI verification failed.
+    #[error("FRI error: {0}")]
+    FriError(#[from] FriError<FriMmcsError>),
+    /// Query proof-of-work witness verification failed.
+    #[error("invalid query proof-of-work witness")]
+    InvalidQueryPowWitness,
 }
 
 #[cfg(test)]
