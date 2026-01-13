@@ -9,7 +9,7 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
 
-use crate::fri::fold::{FriFold, FriFold2, FriFold4};
+use crate::fri::fold::{FriFold, FriFold2, FriFold4, FriFold8};
 use crate::fri::{FriParams, FriProof};
 
 // ============================================================================
@@ -150,6 +150,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
             folded_evals = match log_arity {
                 1 => FriFold2::fold_matrix(matrix_view.as_view(), &s_invs, beta),
                 2 => FriFold4::fold_matrix(matrix_view.as_view(), &s_invs, beta),
+                4 => FriFold8::fold_matrix(matrix_view.as_view(), &s_invs, beta),
                 _ => panic!("Unsupported folding arity"),
             };
             // No bit-reversal needed: folded evals maintain bit-reversed order

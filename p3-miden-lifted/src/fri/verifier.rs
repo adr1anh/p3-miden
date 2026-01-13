@@ -32,7 +32,7 @@ use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::reverse_bits_len;
 
-use crate::fri::fold::{FriFold, FriFold2, FriFold4};
+use crate::fri::fold::{FriFold, FriFold2, FriFold4, FriFold8};
 use crate::fri::{FriError, FriParams, FriProof};
 
 /// Verifier's oracle for FRI query verification.
@@ -262,6 +262,7 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
             eval = match log_arity {
                 1 => FriFold2::fold_evals::<F, EF, EF>(array::from_fn(|i| row[i]), s_inv, beta),
                 2 => FriFold4::fold_evals::<F, EF, EF>(array::from_fn(|i| row[i]), s_inv, beta),
+                4 => FriFold8::fold_evals::<F, EF, EF>(array::from_fn(|i| row[i]), s_inv, beta),
                 _ => unreachable!("Unsupported folding arity"),
             };
 
