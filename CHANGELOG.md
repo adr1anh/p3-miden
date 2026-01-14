@@ -1,4 +1,4 @@
-## 0.4.2 (TBD)
+## 0.4.2 (2025-01-14)
 
 - [BREAKING] Removed `p3-miden-goldilocks` crate, now uses upstream `p3-goldilocks` (#3).
 - Updated `Pcs` trait implementation for Plonky3 v0.4.2 compatibility (#3).
