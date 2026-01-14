@@ -37,7 +37,7 @@ use p3_field::{Algebra, TwoAdicField};
 /// The verifier needs to check that `f(β)` equals the claimed folded value.
 /// This function recovers `f(β)` from the four coset evaluations via interpolation.
 #[inline(always)]
-pub(super) fn fold_evals<F, PF, PEF>(evals: &[PEF], s_inv: PF, beta: PEF) -> PEF
+pub fn fold_evals<F, PF, PEF>(evals: &[PEF], s_inv: PF, beta: PEF) -> PEF
 where
     F: TwoAdicField,
     PF: Algebra<F> + Algebra<PF>,

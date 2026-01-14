@@ -23,7 +23,7 @@ use p3_field::{Algebra, TwoAdicField};
 /// - `s_inv`: the inverse of the coset generator `s`.
 /// - `beta`: the FRI folding challenge `β`.
 #[inline(always)]
-pub(super) fn fold_evals<F, PF, PEF>(evals: &[PEF], s_inv: PF, beta: PEF) -> PEF
+pub fn fold_evals<F, PF, PEF>(evals: &[PEF], s_inv: PF, beta: PEF) -> PEF
 where
     F: TwoAdicField,
     PF: Algebra<F> + Algebra<PF>,

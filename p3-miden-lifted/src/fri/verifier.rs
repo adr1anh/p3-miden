@@ -27,12 +27,14 @@ use core::fmt;
 use core::iter::zip;
 
 use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
-use p3_commit::{BatchOpening, Mmcs};
+use p3_commit::Mmcs;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::reverse_bits_len;
+use thiserror::Error;
 
-use crate::fri::{FriError, FriParams, FriProof};
+use crate::fri::FriParams;
+use crate::fri::proof::{FriProof, FriQuery};
 
 /// Verifier's oracle for FRI query verification.
 ///
@@ -106,17 +108,6 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriOracle<F, EF,
         })
     }
 
-    /// Derive the initial domain size from proof structure.
-    ///
-    /// `log_domain_size = num_rounds * log_folding_factor + log_final_poly_degree + log_blowup`
-    #[inline]
-    fn log_domain_size(&self, params: &FriParams) -> usize {
-        let log_final_poly_degree = self.final_poly.len().trailing_zeros() as usize;
-        let log_max_degree =
-            self.commitments.len() * params.fold.log_arity() + log_final_poly_degree;
-        log_max_degree + params.log_blowup
-    }
-
     /// Verify a FRI query by checking all folding rounds.
     ///
     /// Two-phase verification:
@@ -143,21 +134,21 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriOracle<F, EF,
         mmcs: &FriMmcs,
         index: usize,
         eval: EF,
-        openings: &[BatchOpening<EF, FriMmcs>],
+        query: &FriQuery<EF, FriMmcs>,
     ) -> Result<(), FriError<FriMmcs::Error>>
     where
         FriMmcs::Error: fmt::Debug,
     {
         // Verify the proof has the expected structure
-        if openings.len() != self.commitments.len() {
+        if query.openings.len() != self.commitments.len() {
             return Err(FriError::InvalidProofStructure);
         }
 
         // Verify all Merkle openings
-        self.verify_openings(mmcs, params, index, openings)?;
+        self.verify_openings(mmcs, params, index, query)?;
 
         // Process opened rows and verify folding
-        let rows = openings.iter().map(|o| o.opened_values[0].as_slice());
+        let rows = query.openings.iter().map(|o| o.opened_values[0].as_slice());
         self.verify_folding::<FriMmcs::Error>(params, index, eval, rows)?;
 
         Ok(())
@@ -171,7 +162,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriOracle<F, EF,
         mmcs: &FriMmcs,
         params: &FriParams,
         mut index: usize,
-        openings: &[BatchOpening<EF, FriMmcs>],
+        query: &FriQuery<EF, FriMmcs>,
     ) -> Result<(), FriError<FriMmcs::Error>>
     where
         FriMmcs::Error: fmt::Debug,
@@ -180,7 +171,9 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriOracle<F, EF,
         let arity = params.fold.arity();
         let mut num_rows = 1 << self.log_domain_size(params).saturating_sub(log_arity);
 
-        for (round_idx, (commitment, opening)) in zip(&self.commitments, openings).enumerate() {
+        for (round_idx, (commitment, opening)) in
+            zip(&self.commitments, &query.openings).enumerate()
+        {
             let row_index = index >> log_arity;
 
             mmcs.verify_batch(
@@ -296,4 +289,41 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriOracle<F, EF,
 
         Ok(())
     }
+
+    /// Derive the initial domain size from proof structure.
+    ///
+    /// `log_domain_size = num_rounds * log_folding_factor + log_final_poly_degree + log_blowup`
+    #[inline]
+    fn log_domain_size(&self, params: &FriParams) -> usize {
+        let log_final_poly_degree = self.final_poly.len().trailing_zeros() as usize;
+        let log_max_degree =
+            self.commitments.len() * params.fold.log_arity() + log_final_poly_degree;
+        log_max_degree + params.log_blowup
+    }
+}
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during FRI verification.
+#[derive(Debug, Error)]
+pub enum FriError<MmcsError> {
+    /// Merkle verification failed.
+    #[error("Merkle verification failed at round {1}: {0:?}")]
+    MmcsError(MmcsError, usize),
+    /// Proof structure doesn't match expected format.
+    ///
+    /// This includes wrong number of commitments, openings, betas, or final polynomial length.
+    #[error("invalid proof structure")]
+    InvalidProofStructure,
+    /// Evaluation mismatch during folding.
+    #[error("evaluation mismatch at row {row_index}, position {position}")]
+    EvaluationMismatch { row_index: usize, position: usize },
+    /// Final polynomial evaluation doesn't match folded value.
+    #[error("final polynomial mismatch")]
+    FinalPolyMismatch,
+    /// Proof-of-work witness verification failed.
+    #[error("invalid proof-of-work witness")]
+    InvalidPowWitness,
 }

@@ -3,6 +3,12 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::deep::DeepParams;
+use crate::fri::{FriFold, FriParams};
+use crate::pcs::config::PcsConfig;
+use crate::pcs::prover::open;
+use crate::pcs::verifier::verify;
+use crate::tests::{EF, F, RATE, base_lmcs, challenger, fri_mmcs, random_lde_matrix};
 use p3_challenger::CanObserve;
 use p3_commit::Mmcs;
 use p3_field::Field;
@@ -11,10 +17,6 @@ use p3_matrix::dense::RowMajorMatrix;
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
-
-use super::*;
-use crate::fri::{FriFold, FriParams};
-use crate::tests::{EF, F, RATE, base_lmcs, challenger, fri_mmcs, random_lde_matrix};
 
 // ============================================================================
 // End-to-end test
@@ -73,11 +75,11 @@ fn test_pcs_open_verify_roundtrip() {
 
     let proof = open::<F, EF, _, _, _, _, 2>(
         &lmcs,
-        vec![&prover_data],
-        eval_points,
-        &mut prover_challenger,
-        &config,
         &mmcs,
+        &config,
+        eval_points,
+        vec![&prover_data],
+        &mut prover_challenger,
     );
 
     // Verifier

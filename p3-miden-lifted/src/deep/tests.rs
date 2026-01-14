@@ -12,12 +12,12 @@ use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
 
+use super::DeepParams;
 use super::interpolate::PointQuotients;
 use super::prover::DeepPoly;
 use super::verifier::DeepOracle;
-use super::{DeepParams, MatrixGroupEvals};
 use crate::tests::{EF, F, RATE, base_lmcs, challenger};
-use crate::utils::bit_reversed_coset_points;
+use crate::utils::{MatrixGroupEvals, bit_reversed_coset_points};
 
 // ============================================================================
 // End-to-end test

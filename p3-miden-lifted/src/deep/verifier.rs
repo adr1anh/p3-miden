@@ -2,14 +2,16 @@ use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
 
+use super::DeepParams;
+use super::utils::{observe_evals, reduce_with_powers};
+use crate::deep::proof::{DeepProof, DeepQuery};
+use crate::utils::MatrixGroupEvals;
 use p3_challenger::{FieldChallenger, GrindingChallenger};
 use p3_commit::{BatchOpeningRef, Mmcs};
-use p3_field::{ExtensionField, Field, TwoAdicField};
+use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::{log2_strict_usize, reverse_bits_len};
-
-use super::{DeepError, DeepParams, DeepProof, DeepQuery, MatrixGroupEvals, observe_evals};
-use crate::utils::alignment_padding;
+use thiserror::Error;
 
 /// Verifier's view of the DEEP quotient as a point-query oracle.
 ///
@@ -186,34 +188,19 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
     }
 }
 
-/// Horner reduction: computes `Σᵢ αⁿ⁻¹⁻ⁱ · vᵢ` via left-to-right accumulation.
-///
-/// For each value v, computes `acc = α·acc + v`. The reversed coefficient order
-/// (from [`super::prover::derive_coeffs_from_challenge`]) makes this produce the
-/// same result as explicit `Σᵢ coeffs[i] · vals[i]`.
-///
-/// # Alignment
-///
-/// After each slice, multiplies by `α^gap` where `gap` pads the slice length to
-/// the next multiple of `alignment`. This is equivalent to:
-/// - Padding each row with zeros to the alignment width
-/// - Including those zeros in the Horner accumulation
-///
-/// An alternative implementation could materialize zero-padded rows; this approach
-/// achieves the same result without allocating the padding.
-pub(crate) fn reduce_with_powers<'a, F, EF>(
-    slices: impl IntoIterator<Item = &'a [F]>,
-    challenge: EF,
-    alignment: usize,
-) -> EF
-where
-    F: Field + 'a,
-    EF: ExtensionField<F>,
-{
-    slices.into_iter().fold(EF::ZERO, |acc, slice| {
-        // Horner's method on this slice: acc = α·acc + v for each v
-        let acc = slice.iter().fold(acc, |a, &val| a * challenge + val);
-        // Skip alignment gap: equivalent to processing implicit zeros
-        acc * challenge.exp_u64(alignment_padding(slice.len(), alignment) as u64)
-    })
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during DEEP oracle construction or verification.
+#[derive(Debug, Error)]
+pub enum DeepError {
+    /// Claimed evaluations don't match commitment structure.
+    ///
+    /// This can mean wrong number of evaluation groups, matrices, or columns.
+    #[error("evaluation structure doesn't match commitment")]
+    StructureMismatch,
+    /// Proof-of-work witness verification failed.
+    #[error("invalid proof-of-work witness")]
+    InvalidPowWitness,
 }

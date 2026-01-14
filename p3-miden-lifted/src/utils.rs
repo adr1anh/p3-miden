@@ -125,14 +125,6 @@ impl<T: Send + Sync + Clone, M: Matrix<T>> MatrixExt<T> for M {
     }
 }
 
-/// Compute padding needed to align `len` to `alignment`.
-///
-/// Returns the number of zeros to add so that `len + padding` is a multiple of `alignment`.
-#[inline]
-pub(crate) const fn alignment_padding(len: usize, alignment: usize) -> usize {
-    len.next_multiple_of(alignment) - len
-}
-
 /// Coset points `gK` in bit-reversed order.
 ///
 /// Bit-reversal gives two properties essential for lifting:
@@ -145,4 +137,56 @@ pub(crate) fn bit_reversed_coset_points<F: TwoAdicField>(log_n: usize) -> Vec<F>
     let mut pts: Vec<F> = coset.iter().collect();
     reverse_slice_index_bits(&mut pts);
     pts
+}
+
+// ============================================================================
+// MatrixGroupEvals
+// ============================================================================
+
+/// Evaluations of polynomial columns at an out-of-domain point, organized by matrix.
+///
+/// Structure: `evals[matrix_idx][column_idx]` holds `f_{matrix,col}(z)`.
+///
+/// The grouping by matrix preserves the structure needed for batched reduction,
+/// where matrices are processed in height order and each matrix's columns are
+/// reduced with consecutive challenge powers.
+#[derive(Clone, Debug)]
+pub struct MatrixGroupEvals<T>(pub(crate) Vec<Vec<T>>);
+
+impl<T> MatrixGroupEvals<T> {
+    /// Create a new `MatrixGroupEvals` from nested vectors.
+    ///
+    /// Structure: `evals[matrix_idx][column_idx]` for each matrix in a commitment group.
+    pub const fn new(evals: Vec<Vec<T>>) -> Self {
+        Self(evals)
+    }
+
+    /// Returns the number of matrices in this group.
+    pub const fn num_matrices(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Iterate over matrices, yielding the column evaluations for each.
+    pub fn iter_matrices(&self) -> impl Iterator<Item = &[T]> {
+        self.0.iter().map(|v| v.as_slice())
+    }
+
+    /// Iterate over all column evaluations across all matrices.
+    ///
+    /// Yields evaluations in order: all columns of matrix 0, then matrix 1, etc.
+    pub fn iter_evals(&self) -> impl Iterator<Item = &T> {
+        self.0.iter().flatten()
+    }
+
+    /// Transform each evaluation using the provided closure.
+    ///
+    /// Preserves the matrix/column structure while mapping `T -> U`.
+    pub fn map<U, F: FnMut(&T) -> U>(&self, mut f: F) -> MatrixGroupEvals<U> {
+        MatrixGroupEvals::new(
+            self.0
+                .iter()
+                .map(|matrix| matrix.iter().map(&mut f).collect())
+                .collect(),
+        )
+    }
 }

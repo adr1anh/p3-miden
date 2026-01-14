@@ -2,15 +2,15 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
-use p3_commit::{BatchOpening, Mmcs};
+use p3_commit::Mmcs;
 use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
 
-use crate::fri::{FriParams, FriProof};
-
+use crate::fri::FriParams;
+use crate::fri::proof::{FriProof, FriQuery};
 // ============================================================================
 // Prover Data Structure
 // ============================================================================
@@ -218,10 +218,11 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
         params: &FriParams,
         mmcs: &FriMmcs,
         index: usize,
-    ) -> Vec<BatchOpening<EF, FriMmcs>> {
+    ) -> FriQuery<EF, FriMmcs> {
         let log_arity = params.fold.log_arity();
         let mut current_index = index;
-        self.folded_evals_data
+        let openings = self
+            .folded_evals_data
             .iter()
             .map(|prover_data| {
                 let row_index = current_index >> log_arity;
@@ -229,6 +230,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
                 current_index = row_index;
                 opening
             })
-            .collect()
+            .collect();
+        FriQuery { openings }
     }
 }

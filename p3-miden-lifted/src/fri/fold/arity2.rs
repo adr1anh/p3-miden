@@ -56,7 +56,7 @@ use p3_field::{Algebra, TwoAdicField};
 /// 2. Compute `fₒ(s²) = (f(s) − f(−s)) / (2s)`
 /// 3. Return `f(β) = fₑ(s²) + β · fₒ(s²)` (valid since `β² = s²` in the folded domain)
 #[inline(always)]
-pub(super) fn fold_evals<F, PF, PEF>(evals: &[PEF], s_inv: PF, beta: PEF) -> PEF
+pub fn fold_evals<F, PF, PEF>(evals: &[PEF], s_inv: PF, beta: PEF) -> PEF
 where
     F: TwoAdicField,
     PF: Algebra<F> + Algebra<PF>,

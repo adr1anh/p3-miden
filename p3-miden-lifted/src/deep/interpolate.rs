@@ -88,8 +88,7 @@ use p3_maybe_rayon::prelude::*;
 use p3_util::linear_map::LinearMap;
 use p3_util::{flatten_to_base, log2_strict_usize, reconstitute_from_base};
 
-use super::MatrixGroupEvals;
-use crate::utils::MatrixExt;
+use crate::utils::{MatrixExt, MatrixGroupEvals};
 
 /// Precomputed `1/(zⱼ - xᵢ)` for N evaluation points, enabling batched O(n) barycentric
 /// evaluation and DEEP quotient construction.

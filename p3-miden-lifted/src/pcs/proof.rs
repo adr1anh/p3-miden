@@ -1,11 +1,10 @@
 use alloc::vec::Vec;
-use core::marker::PhantomData;
 
-use p3_commit::{BatchOpening, Mmcs};
+use crate::deep::{DeepProof, DeepQuery};
+use crate::fri::{FriProof, FriQuery};
+use crate::utils::MatrixGroupEvals;
+use p3_commit::Mmcs;
 use p3_field::{ExtensionField, Field};
-
-use crate::deep::{DeepProof, DeepQuery, MatrixGroupEvals};
-use crate::fri::FriProof;
 
 /// Complete PCS opening proof.
 ///
@@ -19,19 +18,51 @@ use crate::fri::FriProof;
 pub struct Proof<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: Mmcs<EF>, Witness> {
     /// Claimed evaluations at each opening point.
     /// Structure: `evals[point_idx][commit_idx][matrix_idx][col_idx]`
-    pub(crate) evals: Vec<Vec<MatrixGroupEvals<EF>>>,
+    pub(super) evals: Vec<Vec<MatrixGroupEvals<EF>>>,
 
     /// DEEP proof containing grinding witness.
-    pub(crate) deep_proof: DeepProof<Witness>,
+    pub(super) deep_proof: DeepProof<Witness>,
 
     /// FRI proof containing commitments, final polynomial, and per-round grinding witnesses.
-    pub(crate) fri_proof: FriProof<EF, FriMmcs, Witness>,
+    pub(super) fri_proof: FriProof<EF, FriMmcs, Witness>,
 
     /// Proof-of-work witness for query sampling grinding.
-    pub(crate) query_pow_witness: Witness,
+    pub(super) query_pow_witness: Witness,
 
     /// Query phase proofs, one per query index.
-    pub(crate) query_proofs: Vec<QueryProof<F, EF, InputMmcs, FriMmcs>>,
+    pub(super) query_proofs: Vec<QueryProof<F, EF, InputMmcs, FriMmcs>>,
+}
+
+impl<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: Mmcs<EF>, Witness>
+    Proof<F, EF, InputMmcs, FriMmcs, Witness>
+{
+    /// Returns the claimed evaluations at each opening point.
+    ///
+    /// Structure: `evals[point_idx][commit_idx]` yields a [`MatrixGroupEvals`]
+    /// containing `[matrix_idx][col_idx]` evaluations.
+    pub fn evals(&self) -> &[Vec<MatrixGroupEvals<EF>>] {
+        &self.evals
+    }
+
+    /// Returns the DEEP proof containing the grinding witness.
+    pub fn deep_proof(&self) -> &DeepProof<Witness> {
+        &self.deep_proof
+    }
+
+    /// Returns the FRI proof with commitments, final polynomial, and per-round witnesses.
+    pub fn fri_proof(&self) -> &FriProof<EF, FriMmcs, Witness> {
+        &self.fri_proof
+    }
+
+    /// Returns the proof-of-work witness for query sampling grinding.
+    pub fn query_pow_witness(&self) -> &Witness {
+        &self.query_pow_witness
+    }
+
+    /// Returns the query phase proofs, one per query index.
+    pub fn query_proofs(&self) -> &[QueryProof<F, EF, InputMmcs, FriMmcs>] {
+        &self.query_proofs
+    }
 }
 
 /// Proof for a single FRI query index.
@@ -41,26 +72,22 @@ pub struct Proof<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: M
 pub struct QueryProof<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: Mmcs<EF>> {
     /// Openings of the input matrices at this query index
     /// (one BatchOpening per committed matrix group)
-    pub(crate) input_openings: DeepQuery<F, InputMmcs>,
+    pub(super) input_openings: DeepQuery<F, InputMmcs>,
 
     /// Openings for each FRI folding round
-    pub(crate) fri_round_openings: Vec<BatchOpening<EF, FriMmcs>>,
-
-    _marker: PhantomData<F>,
+    pub(super) fri_round_openings: FriQuery<EF, FriMmcs>,
 }
 
 impl<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: Mmcs<EF>>
     QueryProof<F, EF, InputMmcs, FriMmcs>
 {
-    /// Create a new query proof from input and FRI round openings.
-    pub const fn new(
-        input_openings: DeepQuery<F, InputMmcs>,
-        fri_round_openings: Vec<BatchOpening<EF, FriMmcs>>,
-    ) -> Self {
-        Self {
-            input_openings,
-            fri_round_openings,
-            _marker: PhantomData,
-        }
+    /// Returns the DEEP query containing input matrix openings.
+    pub fn input_openings(&self) -> &DeepQuery<F, InputMmcs> {
+        &self.input_openings
+    }
+
+    /// Returns the FRI query containing folding round openings.
+    pub fn fri_round_openings(&self) -> &FriQuery<EF, FriMmcs> {
+        &self.fri_round_openings
     }
 }

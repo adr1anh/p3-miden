@@ -190,7 +190,7 @@ impl FriFold {
 // ============================================================================
 
 #[cfg(test)]
-pub(super) mod tests {
+pub mod tests {
     use alloc::vec::Vec;
 
     use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, TwoAdicField};

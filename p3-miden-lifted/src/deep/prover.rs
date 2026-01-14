@@ -2,6 +2,11 @@ use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
 
+use super::DeepParams;
+use super::interpolate::PointQuotients;
+use super::utils::observe_evals;
+use crate::deep::proof::{DeepProof, DeepQuery};
+use crate::utils::{MatrixGroupEvals, PackedFieldExtensionExt};
 use p3_challenger::{FieldChallenger, GrindingChallenger};
 use p3_commit::Mmcs;
 use p3_field::{
@@ -9,10 +14,6 @@ use p3_field::{
 };
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
-
-use super::interpolate::PointQuotients;
-use super::{DeepParams, DeepProof, DeepQuery, MatrixGroupEvals, observe_evals};
-use crate::utils::PackedFieldExtensionExt;
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
@@ -329,10 +330,10 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
+    use super::derive_coeffs_from_challenge;
+    use crate::deep::utils::reduce_with_powers;
     use p3_field::{PrimeCharacteristicRing, dot_product};
 
-    use super::derive_coeffs_from_challenge;
-    use crate::deep::verifier::reduce_with_powers;
     use crate::tests::{EF, F};
 
     /// `reduce_with_powers` (Horner) must match explicit `derive_coeffs` + dot product.
