@@ -18,15 +18,49 @@
 //! 1. **Inverse FFT**: Recover coefficients of `f(sX)` from evaluations on `⟨ω⟩`.
 //! 2. **Evaluate**: Compute `f(sX)` at `X = β/s`, yielding `f(β)`.
 
-use p3_field::{Algebra, ExtensionField, PackedField, TwoAdicField};
+use core::array;
 
-use super::FriFold;
+use p3_field::{Algebra, TwoAdicField};
 
-/// Marker type for arity-4 FRI folding.
+/// Evaluate `f(β)` from evaluations on a coset.
 ///
-/// Folds quadruples of evaluations via size-4 inverse FFT followed by Horner evaluation.
-/// More efficient than two rounds of arity-2 folding.
-pub struct FriFold4;
+/// ## Inputs
+///
+/// - `evals`: slice of 4 evaluations `[f(s), f(ω²s), f(ωs), f(ω³s)]` in bit-reversed order,
+///   equivalently `[f(s), f(−s), f(is), f(−is)]` since `ω = i`.
+/// - `s_inv`: the inverse of the coset generator `s`.
+/// - `beta`: the FRI folding challenge `β`.
+///
+/// ## FRI Context
+///
+/// In arity-4 FRI, the polynomial `f` is evaluated on cosets of the form `s·⟨ω⟩`.
+/// The verifier needs to check that `f(β)` equals the claimed folded value.
+/// This function recovers `f(β)` from the four coset evaluations via interpolation.
+#[inline(always)]
+pub(super) fn fold_evals<F, PF, PEF>(evals: &[PEF], s_inv: PF, beta: PEF) -> PEF
+where
+    F: TwoAdicField,
+    PF: Algebra<F> + Algebra<PF>,
+    PEF: Algebra<PF>,
+{
+    debug_assert_eq!(evals.len(), 4, "evals must have 4 elements");
+    let evals = array::from_fn(|i| evals[i].clone());
+    // Recover coefficients [c₀, c₁, c₂, c₃] of 4·f(sX) via inverse FFT.
+    let [c0, c1, c2, c3] = ifft4::<F, PF, PEF>(evals);
+
+    // f(β) = f(s · β/s) = (1/4) · (c₀ + c₁·x + c₂·x² + c₃·x³)  where x = β/s.
+    let x = beta * s_inv;
+    let terms = [
+        c0,              // c₀
+        c1 * x.clone(),  // c₁ · x
+        c2 * x.square(), // c₂ · x²
+        c3 * x.cube(),   // c₃ · x³
+    ];
+
+    // Divide by 4
+    let four_inv: PF = F::ONE.halve().halve().into();
+    PEF::sum_array::<4>(&terms) * four_inv
+}
 
 /// Size-4 inverse FFT (unscaled), input in bit-reversed order.
 ///
@@ -40,14 +74,14 @@ pub struct FriFold4;
 /// The caller chooses whether to operate on scalars or packed values by selecting
 /// the appropriate type parameters.
 #[inline(always)]
-fn ifft4<PF, PEF>(evals: [PEF; 4]) -> [PEF; 4]
+fn ifft4<F, PF, PEF>(evals: [PEF; 4]) -> [PEF; 4]
 where
-    PF: PackedField,
-    PF::Scalar: TwoAdicField,
+    F: TwoAdicField,
+    PF: Algebra<F> + Algebra<PF>,
     PEF: Algebra<PF>,
 {
     // ω = i, primitive 4th root of unity
-    let w: PF = PF::Scalar::two_adic_generator(2).into();
+    let w: PF = F::two_adic_generator(2).into();
 
     // Input (bit-reversed): [y₀, y₂, y₁, y₃]
     let [y0, y2, y1, y3] = evals;
@@ -88,96 +122,45 @@ where
     ]
 }
 
-impl FriFold<4> for FriFold4 {
-    /// Evaluate `f(β)` from evaluations on a coset.
-    ///
-    /// ## Inputs
-    ///
-    /// - `evals`: evaluations `[f(s), f(ω²s), f(ωs), f(ω³s)]` in bit-reversed order,
-    ///   equivalently `[f(s), f(−s), f(is), f(−is)]` since `ω = i`.
-    /// - `s_inv`: the inverse of the coset generator `s`.
-    /// - `beta`: the FRI folding challenge `β`.
-    ///
-    /// ## FRI Context
-    ///
-    /// In arity-4 FRI, the polynomial `f` is evaluated on cosets of the form `s·⟨ω⟩`.
-    /// The verifier needs to check that `f(β)` equals the claimed folded value.
-    /// This function recovers `f(β)` from the four coset evaluations via interpolation.
-    #[inline(always)]
-    fn fold_evals<PF, EF, PEF>(evals: [PEF; 4], s_inv: PF, beta: EF) -> PEF
-    where
-        PF: PackedField,
-        PF::Scalar: TwoAdicField,
-        EF: ExtensionField<PF::Scalar>,
-        PEF: Algebra<PF> + Algebra<EF>,
-    {
-        // Recover coefficients [c₀, c₁, c₂, c₃] of 4·f(sX) via inverse FFT.
-        let [c0, c1, c2, c3] = ifft4::<PF, PEF>(evals);
-
-        // f(β) = f(s · β/s) = (1/4) · (c₀ + c₁·x + c₂·x² + c₃·x³)  where x = β/s.
-        let x = PEF::from(beta) * s_inv;
-        let terms = [
-            c0,              // c₀
-            c1 * x.clone(),  // c₁ · x
-            c2 * x.square(), // c₂ · x²
-            c3 * x.cube(),   // c₃ · x³
-        ];
-
-        // Divide by 4: use base field 1/4 since EF×F is cheaper than EF.halve().halve().
-        PEF::sum_array::<4>(&terms).halve().halve()
-    }
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
+    use p3_dft::{NaiveDft, TwoAdicSubgroupDft};
     use p3_field::PrimeCharacteristicRing;
+    use p3_matrix::dense::RowMajorMatrix;
+    use rand::distr::StandardUniform;
+    use rand::prelude::SmallRng;
+    use rand::{Rng, SeedableRng};
 
-    use super::*;
-    use crate::fri::fold::tests::{EF, F, Pef, Pf, test_fold, test_fold_matrix_packed_equivalence};
+    use super::ifft4;
+    use crate::fri::fold::tests::{EF, F};
 
-    /// Test that ifft4 compiles with scalar types (F, EF).
+    /// Test that ifft4 correctly recovers polynomial coefficients from DFT evaluations.
     #[test]
-    fn test_ifft4_scalar_types() {
-        let evals: [EF; 4] = [EF::ZERO; 4];
-        let _coeffs: [EF; 4] = ifft4::<F, EF>(evals);
-    }
+    fn test_ifft4() {
+        let mut rng = SmallRng::seed_from_u64(42);
 
-    /// Test that ifft4 compiles with packed types (Pf, Pef).
-    #[test]
-    fn test_ifft4_packed_types() {
-        let evals: [Pef; 4] = [Pef::ZERO; 4];
-        let _coeffs: [Pef; 4] = ifft4::<Pf, Pef>(evals);
-    }
+        // Random polynomial coefficients
+        let coeffs: [EF; 4] = core::array::from_fn(|_| rng.sample(StandardUniform));
 
-    /// Test that fold_evals (arity 4) compiles with scalar types.
-    #[test]
-    fn test_fold_evals_arity4_scalar_types() {
-        let evals: [EF; 4] = [EF::ZERO; 4];
-        let s_inv = F::ONE;
-        let beta = EF::ONE;
-        let _result: EF = FriFold4::fold_evals::<F, EF, EF>(evals, s_inv, beta);
-    }
+        // Compute DFT using NaiveDft (standard order)
+        let coeffs_matrix = RowMajorMatrix::new(coeffs.to_vec(), 1);
+        let evals_matrix = NaiveDft.dft_batch(coeffs_matrix);
+        let evals_std = evals_matrix.values;
 
-    /// Test that fold_evals (arity 4) compiles with packed types.
-    #[test]
-    fn test_fold_evals_arity4_packed_types() {
-        let evals: [Pef; 4] = [Pef::ZERO; 4];
-        let s_inv = Pf::ZERO;
-        let beta = EF::ONE;
-        let _result: Pef = FriFold4::fold_evals::<Pf, EF, Pef>(evals, s_inv, beta);
-    }
+        // Convert to bit-reversed order for ifft4
+        let evals_br: [EF; 4] = [evals_std[0], evals_std[2], evals_std[1], evals_std[3]];
 
-    #[test]
-    fn test_arity_4_babybear() {
-        test_fold::<F, EF, FriFold4, 4>();
-    }
+        // Run ifft4 (returns 4 * coefficients)
+        let recovered_scaled = ifft4::<F, F, EF>(evals_br);
 
-    #[test]
-    fn test_fold_matrix_arity4_packed_equivalence() {
-        test_fold_matrix_packed_equivalence::<FriFold4, 4>();
+        // Verify: recovered_scaled[i] == 4 * coeffs[i]
+        for (i, (recovered, &original)) in recovered_scaled.iter().zip(coeffs.iter()).enumerate() {
+            let expected = original.double().double(); // 4 * original
+            assert_eq!(*recovered, expected, "Coefficient mismatch at index {i}");
+        }
     }
 }

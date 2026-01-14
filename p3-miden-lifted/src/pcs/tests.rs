@@ -13,7 +13,7 @@ use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
 
 use super::*;
-use crate::fri::FriParams;
+use crate::fri::{FriFold, FriParams};
 use crate::tests::{EF, F, RATE, base_lmcs, challenger, fri_mmcs, random_lde_matrix};
 
 // ============================================================================
@@ -29,7 +29,7 @@ fn test_pcs_open_verify_roundtrip() {
     let config = PcsConfig {
         fri: FriParams {
             log_blowup: 2,
-            log_folding_factor: 1,
+            fold: FriFold::ARITY_2,
             log_final_degree: 2,
             proof_of_work_bits: 1, // Low for fast tests (per-round)
         },

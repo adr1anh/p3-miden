@@ -10,14 +10,56 @@
 //!
 //! The inverse FFT uses a 3-stage Cooley-Tukey DIT butterfly structure.
 
-use p3_field::{Algebra, ExtensionField, PackedField, TwoAdicField};
+use core::array;
 
-use super::{FriFold, dit_butterfly, twiddle_free_butterfly};
+use p3_field::{Algebra, TwoAdicField};
 
-/// Marker type for arity-8 FRI folding.
+/// Evaluate `f(β)` from evaluations on a coset.
 ///
-/// Folds octuples of evaluations via size-8 inverse FFT followed by polynomial evaluation.
-pub struct FriFold8;
+/// ## Inputs
+///
+/// - `evals`: slice of 8 evaluations `[f(s), f(ω⁴s), f(ω²s), f(ω⁶s), f(ωs), f(ω⁵s), f(ω³s), f(ω⁷s)]`
+///   in bit-reversed order, where `ω` is the primitive 8th root of unity.
+/// - `s_inv`: the inverse of the coset generator `s`.
+/// - `beta`: the FRI folding challenge `β`.
+#[inline(always)]
+pub(super) fn fold_evals<F, PF, PEF>(evals: &[PEF], s_inv: PF, beta: PEF) -> PEF
+where
+    F: TwoAdicField,
+    PF: Algebra<F> + Algebra<PF>,
+    PEF: Algebra<PF>,
+{
+    debug_assert_eq!(evals.len(), 8, "evals must have 8 elements");
+    let evals = array::from_fn(|i| evals[i].clone());
+    // Recover coefficients [c₀, ..., c₇] of 8·f(sX) via inverse FFT.
+    let coeffs = ifft8::<F, PF, PEF>(evals);
+
+    // f(β) = f(s · β/s) = (1/8) · Σᵢ cᵢ · xⁱ  where x = β/s.
+    let x = beta * s_inv;
+
+    // Compute powers of x efficiently
+    let x2 = x.square();
+    let x3 = x2.clone() * x.clone();
+    let x4 = x2.clone().square();
+    let x5 = x4.clone() * x.clone();
+    let x6 = x4.clone() * x2.clone();
+    let x7 = x4.clone() * x3.clone();
+
+    let terms = [
+        coeffs[0].clone(),
+        coeffs[1].clone() * x,
+        coeffs[2].clone() * x2,
+        coeffs[3].clone() * x3,
+        coeffs[4].clone() * x4,
+        coeffs[5].clone() * x5,
+        coeffs[6].clone() * x6,
+        coeffs[7].clone() * x7,
+    ];
+
+    // Divide by 8
+    let eight_inv: PF = F::ONE.halve().halve().halve().into();
+    PEF::sum_array::<8>(&terms) * eight_inv
+}
 
 /// Size-8 inverse FFT (unscaled), input in bit-reversed order.
 ///
@@ -25,23 +67,26 @@ pub struct FriFold8;
 ///
 /// Uses DIT butterfly operations following the pattern from [`p3_dft::DitButterfly`].
 #[inline(always)]
-fn ifft8<PF, PEF>(evals: [PEF; 8]) -> [PEF; 8]
+fn ifft8<F, PF, PEF>(evals: [PEF; 8]) -> [PEF; 8]
 where
-    PF: PackedField,
-    PF::Scalar: TwoAdicField,
+    F: TwoAdicField,
+    PF: Algebra<PF> + Algebra<F>,
     PEF: Algebra<PF>,
 {
-    // Roots of unity (as packed base field for efficient multiplication)
-    let w4: PF = PF::Scalar::two_adic_generator(2).into();
-    let w8: PF = PF::Scalar::two_adic_generator(3).into();
+    // Compute powers of ω₈ needed for inverse twiddles
+    let w8 = F::two_adic_generator(3);
+    let w8_2 = F::two_adic_generator(2);
+    let w8_3 = w8_2 * w8;
+    let w8_5 = w8_3 * w8_2;
+    let w8_6 = w8_3.square();
+    let w8_7 = w8_6 * w8;
 
-    // Precompute inverse twiddles for IDFT: ω⁻ᵏ = ω^(N-k)
-    let w4_inv = w4.cube(); // ω₄³ = ω₄⁻¹
-    let w8_2 = w8.square(); // ω₈²
-    let w8_3 = w8_2 * w8; // ω₈³
-    let w8_5 = w8_3 * w8_2; // ω₈⁵ = ω₈⁻³
-    let w8_6 = w8_3.square(); // ω₈⁶ = ω₈⁻²
-    let w8_7 = w8_6 * w8; // ω₈⁷ = ω₈⁻¹
+    // Inverse twiddles: ω⁻ᵏ = ω^(n-k)
+    // Note: ω₄⁻¹ = ω₄³ = (ω₈²)³ = ω₈⁶
+    let w4_inv: PF = w8_6.into();
+    let w8_inv_1: PF = w8_7.into();
+    let w8_inv_2: PF = w8_6.into();
+    let w8_inv_3: PF = w8_5.into();
 
     // Bit-reversed input: [y₀, y₄, y₂, y₆, y₁, y₅, y₃, y₇]
     let [y0, y4, y2, y6, y1, y5, y3, y7] = evals;
@@ -58,67 +103,43 @@ where
     // Stage 1: length-4 butterflies with twiddle ω₄⁻¹
     // -------------------------------------------------------------------------
     let (b0, b2) = twiddle_free_butterfly(a0, a2);
-    let (b1, b3) = dit_butterfly(a1, a3, w4_inv);
+    let (b1, b3) = dit_butterfly(a1, a3, &w4_inv);
 
     let (b4, b6) = twiddle_free_butterfly(a4, a6);
-    let (b5, b7) = dit_butterfly(a5, a7, w4_inv);
+    let (b5, b7) = dit_butterfly(a5, a7, &w4_inv);
 
     // -------------------------------------------------------------------------
     // Stage 2: length-8 butterflies with twiddles ω₈⁻ᵏ
     // -------------------------------------------------------------------------
     let (c0, c4) = twiddle_free_butterfly(b0, b4);
-    let (c1, c5) = dit_butterfly(b1, b5, w8_7); // ω₈⁻¹ = ω₈⁷
-    let (c2, c6) = dit_butterfly(b2, b6, w8_6); // ω₈⁻² = ω₈⁶
-    let (c3, c7) = dit_butterfly(b3, b7, w8_5); // ω₈⁻³ = ω₈⁵
+    let (c1, c5) = dit_butterfly(b1, b5, &w8_inv_1);
+    let (c2, c6) = dit_butterfly(b2, b6, &w8_inv_2);
+    let (c3, c7) = dit_butterfly(b3, b7, &w8_inv_3);
 
     [c0, c1, c2, c3, c4, c5, c6, c7]
 }
 
-impl FriFold<8> for FriFold8 {
-    /// Evaluate `f(β)` from evaluations on a coset.
-    ///
-    /// ## Inputs
-    ///
-    /// - `evals`: evaluations `[f(s), f(ω⁴s), f(ω²s), f(ω⁶s), f(ωs), f(ω⁵s), f(ω³s), f(ω⁷s)]`
-    ///   in bit-reversed order, where `ω` is the primitive 8th root of unity.
-    /// - `s_inv`: the inverse of the coset generator `s`.
-    /// - `beta`: the FRI folding challenge `β`.
-    #[inline(always)]
-    fn fold_evals<PF, EF, PEF>(evals: [PEF; 8], s_inv: PF, beta: EF) -> PEF
-    where
-        PF: PackedField,
-        PF::Scalar: TwoAdicField,
-        EF: ExtensionField<PF::Scalar>,
-        PEF: Algebra<PF> + Algebra<EF>,
-    {
-        // Recover coefficients [c₀, ..., c₇] of 8·f(sX) via inverse FFT.
-        let coeffs = ifft8::<PF, PEF>(evals);
+// ============================================================================
+// Butterfly Helpers
+// ============================================================================
 
-        // f(β) = f(s · β/s) = (1/8) · Σᵢ cᵢ · xⁱ  where x = β/s.
-        let x = PEF::from(beta) * s_inv;
+/// DIT butterfly: `(x1 + twiddle * x2, x1 - twiddle * x2)`
+///
+/// See [`p3_dft::DitButterfly`] for the standard implementation.
+/// This version supports mixed-type operations where values are extension field
+/// elements and twiddles are base field elements.
+#[inline(always)]
+fn dit_butterfly<F: Clone, EF: Algebra<EF> + Algebra<F>>(x1: EF, x2: EF, twiddle: &F) -> (EF, EF) {
+    let x2_tw = x2 * twiddle.clone();
+    (x1.clone() + x2_tw.clone(), x1 - x2_tw)
+}
 
-        // Compute powers of x efficiently
-        let x2 = x.square();
-        let x3 = x2.clone() * x.clone();
-        let x4 = x2.clone().square();
-        let x5 = x4.clone() * x.clone();
-        let x6 = x4.clone() * x2.clone();
-        let x7 = x4.clone() * x3.clone();
-
-        let terms = [
-            coeffs[0].clone(),
-            coeffs[1].clone() * x,
-            coeffs[2].clone() * x2,
-            coeffs[3].clone() * x3,
-            coeffs[4].clone() * x4,
-            coeffs[5].clone() * x5,
-            coeffs[6].clone() * x6,
-            coeffs[7].clone() * x7,
-        ];
-
-        // Divide by 8
-        PEF::sum_array::<8>(&terms).halve().halve().halve()
-    }
+/// Twiddle-free butterfly: `(x1 + x2, x1 - x2)`
+///
+/// See [`p3_dft::TwiddleFreeButterfly`] for the standard implementation.
+#[inline(always)]
+fn twiddle_free_butterfly<F: Algebra<F>>(x1: F, x2: F) -> (F, F) {
+    (x1.clone() + x2.clone(), x1 - x2)
 }
 
 // ============================================================================
@@ -127,50 +148,41 @@ impl FriFold<8> for FriFold8 {
 
 #[cfg(test)]
 mod tests {
+    use p3_dft::{NaiveDft, TwoAdicSubgroupDft};
     use p3_field::PrimeCharacteristicRing;
+    use p3_matrix::dense::RowMajorMatrix;
+    use p3_util::reverse_slice_index_bits;
+    use rand::distr::StandardUniform;
+    use rand::prelude::SmallRng;
+    use rand::{Rng, SeedableRng};
 
-    use super::*;
-    use crate::fri::fold::tests::{EF, F, Pef, Pf, test_fold, test_fold_matrix_packed_equivalence};
+    use super::ifft8;
+    use crate::fri::fold::tests::{EF, F};
 
-    /// Test that ifft8 compiles with scalar types (F, EF).
+    /// Test that ifft8 correctly recovers polynomial coefficients from DFT evaluations.
     #[test]
-    fn test_ifft8_scalar_types() {
-        let evals: [EF; 8] = [EF::ZERO; 8];
-        let _coeffs: [EF; 8] = ifft8::<F, EF>(evals);
-    }
+    fn test_ifft8() {
+        let mut rng = SmallRng::seed_from_u64(42);
 
-    /// Test that ifft8 compiles with packed types (Pf, Pef).
-    #[test]
-    fn test_ifft8_packed_types() {
-        let evals: [Pef; 8] = [Pef::ZERO; 8];
-        let _coeffs: [Pef; 8] = ifft8::<Pf, Pef>(evals);
-    }
+        // Random polynomial coefficients
+        let coeffs: [EF; 8] = core::array::from_fn(|_| rng.sample(StandardUniform));
 
-    /// Test that fold_evals (arity 8) compiles with scalar types.
-    #[test]
-    fn test_fold_evals_arity8_scalar_types() {
-        let evals: [EF; 8] = [EF::ZERO; 8];
-        let s_inv = F::ONE;
-        let beta = EF::ONE;
-        let _result: EF = FriFold8::fold_evals::<F, EF, EF>(evals, s_inv, beta);
-    }
+        // Compute DFT using NaiveDft (standard order)
+        let coeffs_matrix = RowMajorMatrix::new(coeffs.to_vec(), 1);
+        let evals_matrix = NaiveDft.dft_batch(coeffs_matrix);
+        let mut evals = evals_matrix.values;
 
-    /// Test that fold_evals (arity 8) compiles with packed types.
-    #[test]
-    fn test_fold_evals_arity8_packed_types() {
-        let evals: [Pef; 8] = [Pef::ZERO; 8];
-        let s_inv = Pf::ZERO;
-        let beta = EF::ONE;
-        let _result: Pef = FriFold8::fold_evals::<Pf, EF, Pef>(evals, s_inv, beta);
-    }
+        // Convert to bit-reversed order for ifft8
+        reverse_slice_index_bits(&mut evals);
+        let evals_br: [EF; 8] = evals.try_into().unwrap();
 
-    #[test]
-    fn test_arity_8_babybear() {
-        test_fold::<F, EF, FriFold8, 8>();
-    }
+        // Run ifft8 (returns 8 * coefficients)
+        let recovered_scaled = ifft8::<F, F, EF>(evals_br);
 
-    #[test]
-    fn test_fold_matrix_arity8_packed_equivalence() {
-        test_fold_matrix_packed_equivalence::<FriFold8, 8>();
+        // Verify: recovered_scaled[i] == 8 * coeffs[i]
+        for (i, (recovered, &original)) in recovered_scaled.iter().zip(coeffs.iter()).enumerate() {
+            let expected = original.double().double().double(); // 8 * original
+            assert_eq!(*recovered, expected, "Coefficient mismatch at index {i}");
+        }
     }
 }

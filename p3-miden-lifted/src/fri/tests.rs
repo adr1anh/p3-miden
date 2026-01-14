@@ -21,13 +21,13 @@ use crate::tests::{EF, F, challenger, fri_mmcs, random_lde_matrix};
 /// 1. Generates a random polynomial and computes its LDE
 /// 2. Runs the FRI commit phase to fold down to final polynomial
 /// 3. Verifies random query indices
-fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, log_folding_factor: usize) {
+fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
     let mut rng = SmallRng::seed_from_u64(42);
     let mmcs = fri_mmcs();
 
     let params = FriParams {
         log_blowup: 2,
-        log_folding_factor,
+        fold,
         log_final_degree: 2,
         proof_of_work_bits: 1, // Low for fast tests (per-round)
     };
@@ -57,21 +57,19 @@ fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, log_folding_factor: 
         let openings = fri_polys.open_query(&params, &mmcs, index);
 
         fri_oracle
-            .verify_query::<F>(&params, &mmcs, index, initial_eval, &openings)
+            .verify_query(&params, &mmcs, index, initial_eval, &openings)
             .expect("verification should succeed");
     }
 }
 
 #[test]
 fn test_fri_commit_verify_arity2() {
-    // Test with arity 2 (log_folding_factor = 1)
-    test_fri_commit_verify_roundtrip(10, 1);
+    test_fri_commit_verify_roundtrip(10, FriFold::ARITY_2);
 }
 
 #[test]
 fn test_fri_commit_verify_arity4() {
-    // Test with arity 4 (log_folding_factor = 2)
-    test_fri_commit_verify_roundtrip(10, 2);
+    test_fri_commit_verify_roundtrip(10, FriFold::ARITY_4);
 }
 
 /// Test that verification fails with wrong initial evaluation.
@@ -83,11 +81,10 @@ fn test_fri_verify_wrong_eval() {
     let log_poly_degree = 8;
     let log_blowup = 2;
     let log_final_degree = 2;
-    let log_folding_factor = 1;
 
     let params = FriParams {
         log_blowup,
-        log_folding_factor,
+        fold: FriFold::ARITY_2,
         log_final_degree,
         proof_of_work_bits: 1,
     };
@@ -112,7 +109,7 @@ fn test_fri_verify_wrong_eval() {
     let wrong_eval: EF = rng.sample(StandardUniform); // Wrong!
     let openings = fri_polys.open_query(&params, &mmcs, index);
 
-    let result = fri_oracle.verify_query::<F>(
+    let result = fri_oracle.verify_query(
         &params, &mmcs, index, wrong_eval, // Should fail
         &openings,
     );
@@ -137,11 +134,10 @@ fn test_fri_verify_wrong_beta() {
     let log_poly_degree = 8;
     let log_blowup = 2;
     let log_final_degree = 2;
-    let log_folding_factor = 1;
 
     let params = FriParams {
         log_blowup,
-        log_folding_factor,
+        fold: FriFold::ARITY_2,
         log_final_degree,
         proof_of_work_bits: 0, // No grinding to simplify test
     };
@@ -177,7 +173,7 @@ fn test_fri_verify_wrong_beta() {
     let initial_eval = evals1[index];
     let openings = fri_polys1.open_query(&params, &mmcs, index);
 
-    let result = wrong_oracle.verify_query::<F>(&params, &mmcs, index, initial_eval, &openings);
+    let result = wrong_oracle.verify_query(&params, &mmcs, index, initial_eval, &openings);
 
     // Should fail because wrong betas produce wrong folding results
     assert!(
@@ -200,11 +196,10 @@ fn test_final_polynomial_correctness() {
     let log_poly_degree = 8;
     let log_blowup = 2;
     let log_final_degree = 3;
-    let log_folding_factor = 1;
 
     let params = FriParams {
         log_blowup,
-        log_folding_factor,
+        fold: FriFold::ARITY_2,
         log_final_degree,
         proof_of_work_bits: 0, // No grinding for this test
     };

@@ -23,16 +23,15 @@
 //! After each fold, we shift off `log_arity` bits, moving to the parent coset.
 
 use alloc::vec::Vec;
+use core::fmt;
 use core::iter::zip;
-use core::{array, fmt};
 
 use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
 use p3_commit::{BatchOpening, Mmcs};
-use p3_field::{ExtensionField, Field, TwoAdicField};
+use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::reverse_bits_len;
 
-use crate::fri::fold::{FriFold, FriFold2, FriFold4, FriFold8};
 use crate::fri::{FriError, FriParams, FriProof};
 
 /// Verifier's oracle for FRI query verification.
@@ -40,16 +39,18 @@ use crate::fri::{FriError, FriParams, FriProof};
 /// Created via [`FriOracle::new`], which samples folding challenges from
 /// the Fiat-Shamir transcript. The oracle can then verify queries against
 /// the committed polynomial.
-pub struct FriOracle<EF: Field, FriMmcs: Mmcs<EF>> {
+pub struct FriOracle<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> {
     /// Merkle commitments for each folding round.
     commitments: Vec<FriMmcs::Commitment>,
     /// Folding challenges β for each round.
     betas: Vec<EF>,
     /// Coefficients of the final low-degree polynomial.
     final_poly: Vec<EF>,
+    /// Marker for base field type.
+    _marker: core::marker::PhantomData<F>,
 }
 
-impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
+impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriOracle<F, EF, FriMmcs> {
     /// Create an oracle from FRI proof, checking per-round PoW witnesses.
     ///
     /// This method enforces the correct Fiat-Shamir order:
@@ -64,14 +65,12 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
     /// # Errors
     /// Returns `FriError::InvalidPowWitness` if any round's witness verification fails.
     /// Returns `FriError::InvalidProofStructure` if witness count doesn't match commitment count.
-    pub fn new<F, Challenger>(
+    pub fn new<Challenger>(
         proof: &FriProof<EF, FriMmcs, Challenger::Witness>,
         challenger: &mut Challenger,
         proof_of_work_bits: usize,
     ) -> Result<Self, FriError<FriMmcs::Error>>
     where
-        F: Field,
-        EF: ExtensionField<F>,
         FriMmcs::Commitment: Clone,
         Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment> + GrindingChallenger,
     {
@@ -103,6 +102,7 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
             commitments: proof.commitments.clone(),
             betas,
             final_poly: proof.final_poly.clone(),
+            _marker: core::marker::PhantomData,
         })
     }
 
@@ -113,7 +113,7 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
     fn log_domain_size(&self, params: &FriParams) -> usize {
         let log_final_poly_degree = self.final_poly.len().trailing_zeros() as usize;
         let log_max_degree =
-            self.commitments.len() * params.log_folding_factor + log_final_poly_degree;
+            self.commitments.len() * params.fold.log_arity() + log_final_poly_degree;
         log_max_degree + params.log_blowup
     }
 
@@ -137,7 +137,7 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
     /// ## Errors
     ///
     /// Returns `FriError` if any verification check fails.
-    pub fn verify_query<F: TwoAdicField>(
+    pub fn verify_query(
         &self,
         params: &FriParams,
         mmcs: &FriMmcs,
@@ -146,7 +146,6 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
         openings: &[BatchOpening<EF, FriMmcs>],
     ) -> Result<(), FriError<FriMmcs::Error>>
     where
-        EF: ExtensionField<F>,
         FriMmcs::Error: fmt::Debug,
     {
         // Verify the proof has the expected structure
@@ -159,7 +158,7 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
 
         // Process opened rows and verify folding
         let rows = openings.iter().map(|o| o.opened_values[0].as_slice());
-        self.verify_folding::<F, FriMmcs::Error>(params, index, eval, rows)?;
+        self.verify_folding::<FriMmcs::Error>(params, index, eval, rows)?;
 
         Ok(())
     }
@@ -177,8 +176,8 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
     where
         FriMmcs::Error: fmt::Debug,
     {
-        let log_arity = params.log_folding_factor;
-        let arity = 1 << log_arity;
+        let log_arity = params.fold.log_arity();
+        let arity = params.fold.arity();
         let mut num_rows = 1 << self.log_domain_size(params).saturating_sub(log_arity);
 
         for (round_idx, (commitment, opening)) in zip(&self.commitments, openings).enumerate() {
@@ -209,7 +208,7 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
     /// 3. Fold the coset evaluations: eval' = f(β) via interpolation
     ///
     /// Finally, check that the folded value matches the final polynomial.
-    fn verify_folding<'a, F: TwoAdicField, MmcsError: fmt::Debug>(
+    fn verify_folding<'a, MmcsError: fmt::Debug>(
         &self,
         params: &FriParams,
         mut index: usize,
@@ -217,9 +216,9 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
         rows: impl Iterator<Item = &'a [EF]>,
     ) -> Result<(), FriError<MmcsError>>
     where
-        EF: ExtensionField<F> + 'a,
+        EF: 'a,
     {
-        let log_arity = params.log_folding_factor;
+        let log_arity = params.fold.log_arity();
         let mut log_domain_size = self.log_domain_size(params);
 
         // Precompute g_inv once; we'll update it each round by raising to power arity
@@ -259,12 +258,7 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> FriOracle<EF, FriMmcs> {
             // Fold: interpolate f on coset and evaluate at β
             // ─────────────────────────────────────────────────────────────────
             // Given evaluations [f(s), f(−s), ...] (bit-reversed), compute f(β).
-            eval = match log_arity {
-                1 => FriFold2::fold_evals::<F, EF, EF>(array::from_fn(|i| row[i]), s_inv, beta),
-                2 => FriFold4::fold_evals::<F, EF, EF>(array::from_fn(|i| row[i]), s_inv, beta),
-                4 => FriFold8::fold_evals::<F, EF, EF>(array::from_fn(|i| row[i]), s_inv, beta),
-                _ => unreachable!("Unsupported folding arity"),
-            };
+            eval = params.fold.fold_evals(row, s_inv, beta);
 
             // Update for next round:
             // - index becomes row_index

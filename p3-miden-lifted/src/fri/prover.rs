@@ -9,7 +9,6 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
 
-use crate::fri::fold::{FriFold, FriFold2, FriFold4, FriFold8};
 use crate::fri::{FriParams, FriProof};
 
 // ============================================================================
@@ -88,8 +87,8 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
         EF: ExtensionField<F>,
         Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment> + GrindingChallenger,
     {
-        let log_arity = params.log_folding_factor;
-        let arity = 1 << log_arity;
+        let log_arity = params.fold.log_arity();
+        let arity = params.fold.arity();
 
         let mut commitments = Vec::new();
         let mut folded_evals_data = Vec::new();
@@ -147,12 +146,9 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
             // ─────────────────────────────────────────────────────────────────────
             let matrix_view = mmcs.get_matrices(&prover_data)[0];
 
-            folded_evals = match log_arity {
-                1 => FriFold2::fold_matrix(matrix_view.as_view(), &s_invs, beta),
-                2 => FriFold4::fold_matrix(matrix_view.as_view(), &s_invs, beta),
-                4 => FriFold8::fold_matrix(matrix_view.as_view(), &s_invs, beta),
-                _ => panic!("Unsupported folding arity"),
-            };
+            folded_evals = params
+                .fold
+                .fold_matrix(matrix_view.as_view(), &s_invs, beta);
             // No bit-reversal needed: folded evals maintain bit-reversed order
             // because s_invs are already bit-reversed to match
 
@@ -223,7 +219,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
         mmcs: &FriMmcs,
         index: usize,
     ) -> Vec<BatchOpening<EF, FriMmcs>> {
-        let log_arity = params.log_folding_factor;
+        let log_arity = params.fold.log_arity();
         let mut current_index = index;
         self.folded_evals_data
             .iter()

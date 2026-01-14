@@ -1,7 +1,7 @@
 //! FRI folding via polynomial interpolation.
 //!
 //! FRI (Fast Reed-Solomon IOP of Proximity) requires computing `f(β)` from evaluations
-//! of a polynomial `f` on a coset. This module provides a trait-based abstraction for
+//! of a polynomial `f` on a coset. This module provides an enum-based abstraction for
 //! FRI folding at different arities.
 //!
 //! ## Arity
@@ -9,6 +9,7 @@
 //! The **arity** determines how many evaluations are folded together in each round:
 //! - **Arity 2**: Fold pairs `{f(s), f(-s)}` using even-odd decomposition
 //! - **Arity 4**: Fold quadruples `{f(s), f(-s), f(is), f(-is)}` using inverse FFT
+//! - **Arity 8**: Fold octuples using size-8 inverse FFT
 //!
 //! Higher arity reduces the number of FRI rounds but increases per-round work.
 
@@ -16,13 +17,9 @@ mod arity2;
 mod arity4;
 mod arity8;
 
-pub use arity2::FriFold2;
-pub use arity4::FriFold4;
-pub use arity8::FriFold8;
-
 use alloc::vec::Vec;
 
-use p3_field::{Algebra, ExtensionField, PackedField, PackedValue, TwoAdicField};
+use p3_field::{ExtensionField, PackedValue, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_maybe_rayon::prelude::*;
@@ -30,38 +27,90 @@ use p3_maybe_rayon::prelude::*;
 use crate::utils::PackedFieldExtensionExt;
 
 // ============================================================================
-// Trait Definition
+// FriFold Enum
 // ============================================================================
 
-/// FRI folding strategy for evaluating `f(β)` from coset evaluations.
+/// FRI folding strategy.
 ///
-/// Given evaluations of a polynomial `f` on a coset of size `ARITY`, this trait
-/// provides a method to recover `f(β)` for an arbitrary challenge point `β`.
-pub trait FriFold<const ARITY: usize> {
-    /// Evaluate `f(β)` from evaluations on a coset.
-    ///
-    /// ## Inputs
-    ///
-    /// - `evals`: evaluations in bit-reversed order
-    /// - `s_inv`: inverse of the coset generator `s`
-    /// - `beta`: the FRI folding challenge `β`
-    fn fold_evals<PF, EF, PEF>(evals: [PEF; ARITY], s_inv: PF, beta: EF) -> PEF
-    where
-        PF: PackedField,
-        PF::Scalar: TwoAdicField,
-        EF: ExtensionField<PF::Scalar>,
-        PEF: Algebra<PF> + Algebra<EF>;
+/// This enum encapsulates different folding arities (2, 4, 8).
+#[derive(Clone, Copy, Debug)]
+pub struct FriFold {
+    log_arity: usize,
+}
 
-    fn fold_matrix<F: TwoAdicField, EF: ExtensionField<F>>(
-        input: RowMajorMatrixView<'_, EF>,
-        s_invs: &[F],
-        beta: EF,
-    ) -> Vec<EF> {
-        let width = F::Packing::WIDTH;
-        if input.height() < width || width == 1 {
-            Self::fold_matrix_scalar(input, s_invs, beta)
+impl FriFold {
+    /// Arity-2 folding (halves degree per round).
+    pub const ARITY_2: Self = Self { log_arity: 1 };
+
+    /// Arity-4 folding (quarters degree per round).
+    pub const ARITY_4: Self = Self { log_arity: 2 };
+
+    /// Arity-8 folding (reduces degree by 8x per round).
+    pub const ARITY_8: Self = Self { log_arity: 3 };
+
+    /// Create a new folder for a supported log-arity (currently only 1, 2, 3).
+    pub const fn new(log_arity: usize) -> Option<Self> {
+        if log_arity == 1 || log_arity == 2 || log_arity == 3 {
+            Some(Self { log_arity })
         } else {
-            Self::fold_matrix_packed(input, s_invs, beta)
+            None
+        }
+    }
+
+    /// The folding arity (2, 4, or 8).
+    #[inline]
+    pub const fn arity(&self) -> usize {
+        1 << self.log_arity()
+    }
+
+    /// Log₂ of the folding arity (1, 2, or 3).
+    #[inline]
+    pub const fn log_arity(&self) -> usize {
+        self.log_arity
+    }
+
+    /// Fold evaluations from a slice of extension field elements.
+    ///
+    /// The slice must have exactly `arity()` elements.
+    /// Used by the verifier in scalar mode.
+    #[inline]
+    pub fn fold_evals<F: TwoAdicField, EF: ExtensionField<F>>(
+        &self,
+        evals: &[EF],
+        s_inv: F,
+        beta: EF,
+    ) -> EF {
+        match self.log_arity {
+            1 => arity2::fold_evals::<F, F, EF>(evals, s_inv, beta),
+            2 => arity4::fold_evals::<F, F, EF>(evals, s_inv, beta),
+            3 => arity8::fold_evals::<F, F, EF>(evals, s_inv, beta),
+            _ => unreachable!("unsupported arity"),
+        }
+    }
+
+    /// Fold evaluations using packed (SIMD) field operations.
+    ///
+    /// This is the packed version of `fold_evals`, using `F::Packing` and
+    /// `EF::ExtensionPacking` for SIMD parallelism.
+    #[inline]
+    fn fold_evals_packed<F: TwoAdicField, EF: ExtensionField<F>>(
+        &self,
+        evals: &[EF::ExtensionPacking],
+        s_inv: F::Packing,
+        beta: EF,
+    ) -> EF::ExtensionPacking {
+        let beta_packed: EF::ExtensionPacking = beta.into();
+        match self.log_arity {
+            1 => {
+                arity2::fold_evals::<F, F::Packing, EF::ExtensionPacking>(evals, s_inv, beta_packed)
+            }
+            2 => {
+                arity4::fold_evals::<F, F::Packing, EF::ExtensionPacking>(evals, s_inv, beta_packed)
+            }
+            3 => {
+                arity8::fold_evals::<F, F::Packing, EF::ExtensionPacking>(evals, s_inv, beta_packed)
+            }
+            _ => unreachable!("unsupported arity"),
         }
     }
 
@@ -69,33 +118,45 @@ pub trait FriFold<const ARITY: usize> {
     ///
     /// Each row contains evaluations on a coset `s·⟨ω⟩`. Returns folded
     /// evaluations, one per row, maintaining bit-reversed order.
-    fn fold_matrix_scalar<F: TwoAdicField, EF: ExtensionField<F>>(
+    ///
+    /// Automatically dispatches to scalar or packed implementation based on matrix size.
+    pub fn fold_matrix<F: TwoAdicField, EF: ExtensionField<F>>(
+        &self,
         input: RowMajorMatrixView<'_, EF>,
         s_invs: &[F],
         beta: EF,
     ) -> Vec<EF> {
-        assert_eq!(input.width, ARITY);
-        let (evals, _) = input.values.as_chunks::<ARITY>();
-
-        evals
-            .par_iter()
-            .zip(s_invs.par_iter())
-            .map(|(evals, s_inv)| {
-                // Scalar mode: PF=F, EF=EF, PEF=EF
-                Self::fold_evals::<F, EF, EF>(*evals, *s_inv, beta)
-            })
-            .collect()
+        let width = F::Packing::WIDTH;
+        if input.height() < width || width == 1 {
+            // Scalar path
+            let arity = self.arity();
+            assert_eq!(input.width, arity);
+            input
+                .values
+                .par_chunks(arity)
+                .zip(s_invs.par_iter())
+                .map(|(evals, &s_inv)| self.fold_evals(evals, s_inv, beta))
+                .collect()
+        } else {
+            match self.log_arity {
+                1 => self.fold_matrix_packed_impl::<2, F, EF>(input, s_invs, beta),
+                2 => self.fold_matrix_packed_impl::<4, F, EF>(input, s_invs, beta),
+                3 => self.fold_matrix_packed_impl::<8, F, EF>(input, s_invs, beta),
+                _ => unreachable!("unsupported arity"),
+            }
+        }
     }
 
-    /// SIMD-optimized matrix folding using packed field operations.
-    ///
-    /// Processes multiple rows in parallel using horizontal SIMD packing.
-    /// Equivalent to [`Self::fold_matrix_scalar`] but faster for large matrices.
-    fn fold_matrix_packed<F: TwoAdicField, EF: ExtensionField<F>>(
+    fn fold_matrix_packed_impl<const ARITY: usize, F, EF>(
+        &self,
         input: RowMajorMatrixView<'_, EF>,
         s_invs: &[F],
         beta: EF,
-    ) -> Vec<EF> {
+    ) -> Vec<EF>
+    where
+        F: TwoAdicField,
+        EF: ExtensionField<F>,
+    {
         assert_eq!(input.width, ARITY);
         let (evals, _) = input.values.as_chunks::<ARITY>();
         let width = F::Packing::WIDTH;
@@ -109,15 +170,12 @@ pub trait FriFold<const ARITY: usize> {
             .zip(s_invs.par_chunks_exact(width))
             .for_each(|((new_evals_chunk, evals_chunk), s_inv_chunk)| {
                 let evals_packed =
-                    <EF::ExtensionPacking as PackedFieldExtensionExt<F, EF>>::pack_ext_columns(
-                        evals_chunk,
-                    );
+                    <EF::ExtensionPacking as PackedFieldExtensionExt<F, EF>>::pack_ext_columns::<
+                        ARITY,
+                    >(evals_chunk);
                 let s_invs_packed = F::Packing::from_slice(s_inv_chunk);
-                let new_evals_packed = Self::fold_evals::<F::Packing, EF, EF::ExtensionPacking>(
-                    evals_packed,
-                    *s_invs_packed,
-                    beta,
-                );
+                let new_evals_packed =
+                    self.fold_evals_packed::<F, EF>(&evals_packed, *s_invs_packed, beta);
                 <EF::ExtensionPacking as PackedFieldExtensionExt<F, EF>>::to_ext_slice(
                     &new_evals_packed,
                     new_evals_chunk,
@@ -128,48 +186,14 @@ pub trait FriFold<const ARITY: usize> {
 }
 
 // ============================================================================
-// Butterfly Helpers
-// ============================================================================
-
-/// DIT butterfly: `(x1 + twiddle * x2, x1 - twiddle * x2)`
-///
-/// See [`p3_dft::DitButterfly`] for the standard implementation.
-/// This version supports mixed-type operations where values are extension field
-/// elements and twiddles are base field elements.
-#[inline(always)]
-pub(super) fn dit_butterfly<PF: PackedField, PEF: Algebra<PF>>(
-    x1: PEF,
-    x2: PEF,
-    twiddle: PF,
-) -> (PEF, PEF) {
-    let x2_tw = x2 * twiddle;
-    (x1.clone() + x2_tw.clone(), x1 - x2_tw)
-}
-
-/// Twiddle-free butterfly: `(x1 + x2, x1 - x2)`
-///
-/// See [`p3_dft::TwiddleFreeButterfly`] for the standard implementation.
-#[inline(always)]
-pub(super) fn twiddle_free_butterfly<
-    PEF: Clone + core::ops::Add<Output = PEF> + core::ops::Sub<Output = PEF>,
->(
-    x1: PEF,
-    x2: PEF,
-) -> (PEF, PEF) {
-    (x1.clone() + x2.clone(), x1 - x2)
-}
-
-// ============================================================================
 // Shared Test Utilities
 // ============================================================================
 
 #[cfg(test)]
 pub(super) mod tests {
-    use core::array;
-
     use alloc::vec::Vec;
 
-    use p3_field::{ExtensionField, Field, TwoAdicField};
+    use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, TwoAdicField};
     use p3_matrix::dense::RowMajorMatrix;
     use p3_util::reverse_slice_index_bits;
     use rand::distr::{Distribution, StandardUniform};
@@ -179,24 +203,58 @@ pub(super) mod tests {
     use super::*;
     pub(super) use crate::tests::{EF, F};
 
-    pub type Pf = <F as Field>::Packing;
-    pub type Pef = <EF as ExtensionField<F>>::ExtensionPacking;
+    // Type alias for tests using packed fields
+    type Pf = <F as Field>::Packing;
 
     /// Evaluate polynomial using Horner's method.
-    pub fn horner<F: Field, EF: ExtensionField<F>>(coeffs: &[EF], x: F) -> EF {
+    fn horner<Fo: Field, EFo: ExtensionField<Fo>>(coeffs: &[EFo], x: Fo) -> EFo {
         coeffs
             .iter()
             .rev()
             .copied()
             .reduce(|acc, c| acc * x + c)
-            .unwrap_or(EF::ZERO)
+            .unwrap_or(EFo::ZERO)
     }
 
-    /// Generic test for FRI folding at any arity.
+    /// Test fold_evals against NaiveDft coset evaluations for a specific arity.
     ///
-    /// Creates a random polynomial of degree `ARITY - 1`, evaluates it on a coset
-    /// of size `ARITY`, then verifies that `fold_evals` correctly recovers `f(β)`.
-    pub fn test_fold<Fo, EFo, FF: FriFold<ARITY>, const ARITY: usize>()
+    /// Generates a random polynomial, computes evaluations on a coset using NaiveDft,
+    /// then verifies fold_evals correctly recovers f(β).
+    fn test_fold_evals_naive_dft(fold: &FriFold) {
+        use p3_dft::{NaiveDft, TwoAdicSubgroupDft};
+
+        let mut rng = SmallRng::seed_from_u64(42);
+        let arity = fold.arity();
+
+        // Polynomial of degree arity-1
+        let coeffs: Vec<EF> = (0..arity).map(|_| rng.sample(StandardUniform)).collect();
+
+        // Coset generator
+        let s: F = rng.sample(StandardUniform);
+        let s_inv = s.inverse();
+
+        // Compute evaluations using NaiveDft on coset s·⟨ω⟩
+        let mut coeffs_padded = coeffs.clone();
+        coeffs_padded.resize(arity, EF::ZERO);
+        let coeffs_matrix = RowMajorMatrix::new(coeffs_padded, 1);
+        let evals_matrix = NaiveDft.coset_dft_batch(coeffs_matrix, EF::from(s));
+        let mut evals: Vec<EF> = evals_matrix.values;
+        reverse_slice_index_bits(&mut evals);
+
+        // Fold with random beta
+        let beta: EF = rng.sample(StandardUniform);
+        let result = fold.fold_evals(&evals, s_inv, beta);
+
+        // Expected: direct Horner evaluation at beta
+        let expected = horner(&coeffs, beta);
+        assert_eq!(result, expected, "fold_evals mismatch for arity {arity}");
+    }
+
+    /// Test FRI folding correctness for a specific arity.
+    ///
+    /// Creates a random polynomial of degree `arity - 1`, evaluates it on a coset
+    /// of size `arity`, then verifies that `fold_evals` correctly recovers `f(β)`.
+    fn test_fold_correctness<Fo, EFo>(fold: &FriFold)
     where
         Fo: TwoAdicField,
         EFo: ExtensionField<Fo>,
@@ -204,58 +262,153 @@ pub(super) mod tests {
     {
         let rng = &mut SmallRng::seed_from_u64(1);
         let beta: EFo = rng.sample(StandardUniform);
+        let arity = fold.arity();
+        let log_arity = fold.log_arity();
 
-        // Random polynomial of degree ARITY - 1
-        let poly: [EFo; ARITY] = array::from_fn(|_| rng.sample(StandardUniform));
+        // Random polynomial of degree arity - 1
+        let poly: Vec<EFo> = (0..arity).map(|_| rng.sample(StandardUniform)).collect();
 
         // Compute roots of unity in bit-reversed order for this arity
-        // For ARITY=2: [1, -1]
-        // For ARITY=4: [1, -1, w, -w] = [w^0, w^2, w^1, w^3]
-        let roots: [Fo; ARITY] = {
-            let log_arity = ARITY.ilog2() as usize;
-            let mut points = Fo::two_adic_generator(log_arity).powers().collect_n(ARITY);
-            reverse_slice_index_bits(&mut points);
-            points.try_into().unwrap()
-        };
+        let mut roots: Vec<Fo> = Fo::two_adic_generator(log_arity)
+            .powers()
+            .take(arity)
+            .collect();
+        reverse_slice_index_bits(&mut roots);
 
         let s: Fo = rng.sample(StandardUniform);
         let s_inv = s.inverse();
 
         // Evaluate polynomial at coset points: [f(s·root) for root in roots]
-        let evals: [EFo; ARITY] = roots.map(|root| horner(&poly, root * s));
+        let evals: Vec<EFo> = roots.iter().map(|&root| horner(&poly, root * s)).collect();
 
         // Expected: f(beta)
         let expected = horner::<EFo, EFo>(&poly, beta);
 
-        // Test fold_evals with scalar types: PF=F, EF=EF, PEF=EF
-        let result = FF::fold_evals::<Fo, EFo, EFo>(evals, s_inv, beta);
+        // Test fold_evals
+        let result = fold.fold_evals(&evals, s_inv, beta);
         assert_eq!(result, expected);
     }
 
-    /// Test that `fold_matrix` and `fold_matrix_packed` produce identical results.
-    pub fn test_fold_matrix_packed_equivalence<FF: FriFold<ARITY>, const ARITY: usize>() {
+    /// Test that `fold_matrix` scalar and packed paths produce identical results.
+    ///
+    /// Creates a matrix large enough to trigger the packed path, then verifies
+    /// the result matches row-by-row scalar `fold_evals` computation.
+    fn test_fold_matrix_scalar_packed_equivalence(fold: &FriFold) {
         let rng = &mut SmallRng::seed_from_u64(42);
+        let arity = fold.arity();
 
-        // Create input matrix with height = multiple of packing width
-        let height = Pf::WIDTH * 4; // 4 packed rows worth
-        let width = ARITY;
-        let values: Vec<EF> = (0..height * width)
+        // Create input matrix with height = multiple of packing width (triggers packed path)
+        let height = Pf::WIDTH * 4;
+        let values: Vec<EF> = (0..height * arity)
             .map(|_| rng.sample(StandardUniform))
             .collect();
-        let input = RowMajorMatrix::new(values, width);
+        let input = RowMajorMatrix::new(values.clone(), arity);
 
-        // Generate s_invs (one per row)
-        let s_invs: Vec<F> = (0..height)
-            .map(|_| rng.sample::<F, _>(StandardUniform).inverse())
+        // Generate random coset generators and their inverses
+        let s_values: Vec<F> = (0..height)
+            .map(|_| rng.sample::<F, _>(StandardUniform))
             .collect();
+        let s_invs: Vec<F> = s_values.iter().map(|s| s.inverse()).collect();
 
         let beta: EF = rng.sample(StandardUniform);
 
-        // Call both implementations
-        let result_scalar = FF::fold_matrix_scalar::<F, EF>(input.as_view(), &s_invs, beta);
-        let result_packed = FF::fold_matrix_packed::<F, EF>(input.as_view(), &s_invs, beta);
+        // Scalar path: compute fold_evals for each row
+        let scalar_result: Vec<EF> = values
+            .chunks(arity)
+            .zip(s_invs.iter())
+            .map(|(evals, &s_inv)| fold.fold_evals(evals, s_inv, beta))
+            .collect();
 
-        // They should be identical
-        assert_eq!(result_scalar, result_packed);
+        // Packed path: call fold_matrix (uses packed impl for large matrices)
+        let packed_result = fold.fold_matrix(input.as_view(), &s_invs, beta);
+
+        assert_eq!(
+            scalar_result, packed_result,
+            "Scalar vs packed mismatch for arity {arity}"
+        );
+    }
+
+    /// Test that folding preserves low-degree structure.
+    ///
+    /// After folding a degree-d polynomial, the result should have degree d/arity.
+    /// Verifies by checking that high coefficients are zero after IDFT.
+    fn test_folding_preserves_low_degree(fold: &FriFold) {
+        let rng = &mut SmallRng::seed_from_u64(42);
+        let arity = fold.arity();
+        let log_arity = fold.log_arity();
+
+        let log_blowup = 2;
+        let log_poly_degree = 4; // degree 16 polynomial
+        let poly_degree = 1 << log_poly_degree;
+        let log_lde_size = log_poly_degree + log_blowup;
+        let lde_size = 1 << log_lde_size;
+
+        // Generate random low-degree polynomial
+        let coeffs: Vec<EF> = (0..poly_degree)
+            .map(|_| rng.sample(StandardUniform))
+            .collect();
+
+        // Compute LDE in bit-reversed order
+        let mut full_coeffs = coeffs;
+        full_coeffs.resize(lde_size, EF::ZERO);
+        let dft = p3_dft::Radix2DFTSmallBatch::<EF>::default();
+        let mut evals = p3_dft::TwoAdicSubgroupDft::dft_algebra(&dft, full_coeffs);
+        reverse_slice_index_bits(&mut evals);
+
+        // Compute s_invs
+        let log_num_cosets = log_lde_size - log_arity;
+        let num_cosets = 1 << log_num_cosets;
+        let g_inv = F::two_adic_generator(log_lde_size).inverse();
+        let mut s_invs: Vec<F> = g_inv.powers().take(num_cosets).collect();
+        reverse_slice_index_bits(&mut s_invs);
+
+        // Fold with random beta
+        let beta: EF = rng.sample(StandardUniform);
+        let matrix = RowMajorMatrix::new(evals, arity);
+        let folded = fold.fold_matrix(matrix.as_view(), &s_invs, beta);
+
+        // IDFT the result to get coefficients
+        let mut folded_for_idft = folded;
+        reverse_slice_index_bits(&mut folded_for_idft);
+        let folded_coeffs = p3_dft::TwoAdicSubgroupDft::idft_algebra(&dft, folded_for_idft);
+
+        // Check that all coefficients beyond degree/arity are zero
+        let expected_degree = poly_degree / arity;
+        for (i, coeff) in folded_coeffs.iter().enumerate().skip(expected_degree) {
+            assert_eq!(
+                *coeff,
+                EF::ZERO,
+                "Arity {arity}: High coefficient c[{i}] should be zero but was {:?}",
+                coeff
+            );
+        }
+    }
+
+    #[test]
+    fn test_fold() {
+        test_fold_correctness::<F, EF>(&FriFold::ARITY_2);
+        test_fold_correctness::<F, EF>(&FriFold::ARITY_4);
+        test_fold_correctness::<F, EF>(&FriFold::ARITY_8);
+    }
+
+    #[test]
+    fn test_fold_evals_against_naive_dft() {
+        test_fold_evals_naive_dft(&FriFold::ARITY_2);
+        test_fold_evals_naive_dft(&FriFold::ARITY_4);
+        test_fold_evals_naive_dft(&FriFold::ARITY_8);
+    }
+
+    #[test]
+    fn test_fold_matrix() {
+        test_fold_matrix_scalar_packed_equivalence(&FriFold::ARITY_2);
+        test_fold_matrix_scalar_packed_equivalence(&FriFold::ARITY_4);
+        test_fold_matrix_scalar_packed_equivalence(&FriFold::ARITY_8);
+    }
+
+    #[test]
+    fn test_fold_low_degree() {
+        test_folding_preserves_low_degree(&FriFold::ARITY_2);
+        test_folding_preserves_low_degree(&FriFold::ARITY_4);
+        test_folding_preserves_low_degree(&FriFold::ARITY_8);
     }
 }
