@@ -29,132 +29,134 @@ impl<Inner> ChainingHasher<Inner> {
 }
 
 // -----------------------------------------------------------------------------
-// Scalar implementations: F -> digest
+// Scalar implementations: F -> [T; N]
+// For ChainingHasher, State = Digest since the state IS the digest.
 // -----------------------------------------------------------------------------
 
 // Scalar field -> byte digest
-impl<F, Inner, const N: usize> StatefulHasher<F, [u8; N], [u8; N]> for ChainingHasher<Inner>
+impl<F, Inner, const N: usize> StatefulHasher<F, [u8; N]> for ChainingHasher<Inner>
 where
     F: Field,
     Inner: CryptographicHasher<u8, [u8; N]>,
+    [u8; N]: Default,
 {
-    fn absorb_into<I>(&self, state: &mut [u8; N], input: I)
-    where
-        I: IntoIterator<Item = F>,
-    {
+    type State = [u8; N];
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = F>) {
         let prev = *state;
         *state = self
             .inner
             .hash_iter(chain(prev, F::into_byte_stream(input)));
     }
 
-    fn squeeze(&self, state: &[u8; N]) -> [u8; N] {
+    fn squeeze(&self, state: &Self::State) -> [u8; N] {
         *state
     }
 }
 
 // Scalar field -> u32 digest
-impl<F, Inner, const N: usize> StatefulHasher<F, [u32; N], [u32; N]> for ChainingHasher<Inner>
+impl<F, Inner, const N: usize> StatefulHasher<F, [u32; N]> for ChainingHasher<Inner>
 where
     F: Field,
     Inner: CryptographicHasher<u32, [u32; N]>,
+    [u32; N]: Default,
 {
-    fn absorb_into<I>(&self, state: &mut [u32; N], input: I)
-    where
-        I: IntoIterator<Item = F>,
-    {
+    type State = [u32; N];
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = F>) {
         let prev = *state;
         *state = self.inner.hash_iter(chain(prev, F::into_u32_stream(input)));
     }
 
-    fn squeeze(&self, state: &[u32; N]) -> [u32; N] {
+    fn squeeze(&self, state: &Self::State) -> [u32; N] {
         *state
     }
 }
 
 // Scalar field -> u64 digest
-impl<F, Inner, const N: usize> StatefulHasher<F, [u64; N], [u64; N]> for ChainingHasher<Inner>
+impl<F, Inner, const N: usize> StatefulHasher<F, [u64; N]> for ChainingHasher<Inner>
 where
     F: Field,
     Inner: CryptographicHasher<u64, [u64; N]>,
+    [u64; N]: Default,
 {
-    fn absorb_into<I>(&self, state: &mut [u64; N], input: I)
-    where
-        I: IntoIterator<Item = F>,
-    {
+    type State = [u64; N];
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = F>) {
         let prev = *state;
         *state = self.inner.hash_iter(chain(prev, F::into_u64_stream(input)));
     }
 
-    fn squeeze(&self, state: &[u64; N]) -> [u64; N] {
+    fn squeeze(&self, state: &Self::State) -> [u64; N] {
         *state
     }
 }
 
 // -----------------------------------------------------------------------------
-// Parallel implementations: [F; M] -> [[binary; M]; OUT]
+// Parallel implementations: [F; M] -> [[T; M]; OUT]
+// For ChainingHasher, State = Digest since the state IS the digest.
 // -----------------------------------------------------------------------------
 
 // Parallel lanes (array-based) implemented via per-lane scalar hashing.
-impl<F, Inner, const OUT: usize, const M: usize>
-    StatefulHasher<[F; M], [[u8; M]; OUT], [[u8; M]; OUT]> for ChainingHasher<Inner>
+impl<F, Inner, const OUT: usize, const M: usize> StatefulHasher<[F; M], [[u8; M]; OUT]>
+    for ChainingHasher<Inner>
 where
     F: Field,
     Inner: CryptographicHasher<[u8; M], [[u8; M]; OUT]>,
+    [[u8; M]; OUT]: Default,
 {
-    fn absorb_into<I>(&self, state: &mut [[u8; M]; OUT], input: I)
-    where
-        I: IntoIterator<Item = [F; M]>,
-    {
+    type State = [[u8; M]; OUT];
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = [F; M]>) {
         let prev = *state;
         *state = self
             .inner
             .hash_iter(chain(prev, F::into_parallel_byte_streams(input)));
     }
 
-    fn squeeze(&self, state: &[[u8; M]; OUT]) -> [[u8; M]; OUT] {
+    fn squeeze(&self, state: &Self::State) -> [[u8; M]; OUT] {
         *state
     }
 }
 
-impl<F, Inner, const OUT: usize, const M: usize>
-    StatefulHasher<[F; M], [[u32; M]; OUT], [[u32; M]; OUT]> for ChainingHasher<Inner>
+impl<F, Inner, const OUT: usize, const M: usize> StatefulHasher<[F; M], [[u32; M]; OUT]>
+    for ChainingHasher<Inner>
 where
     F: Field,
     Inner: CryptographicHasher<[u32; M], [[u32; M]; OUT]>,
+    [[u32; M]; OUT]: Default,
 {
-    fn absorb_into<I>(&self, state: &mut [[u32; M]; OUT], input: I)
-    where
-        I: IntoIterator<Item = [F; M]>,
-    {
+    type State = [[u32; M]; OUT];
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = [F; M]>) {
         let prev = *state;
         *state = self
             .inner
             .hash_iter(chain(prev, F::into_parallel_u32_streams(input)));
     }
 
-    fn squeeze(&self, state: &[[u32; M]; OUT]) -> [[u32; M]; OUT] {
+    fn squeeze(&self, state: &Self::State) -> [[u32; M]; OUT] {
         *state
     }
 }
 
-impl<F, Inner, const OUT: usize, const M: usize>
-    StatefulHasher<[F; M], [[u64; M]; OUT], [[u64; M]; OUT]> for ChainingHasher<Inner>
+impl<F, Inner, const OUT: usize, const M: usize> StatefulHasher<[F; M], [[u64; M]; OUT]>
+    for ChainingHasher<Inner>
 where
     F: Field,
     Inner: CryptographicHasher<[u64; M], [[u64; M]; OUT]>,
+    [[u64; M]; OUT]: Default,
 {
-    fn absorb_into<I>(&self, state: &mut [[u64; M]; OUT], input: I)
-    where
-        I: IntoIterator<Item = [F; M]>,
-    {
+    type State = [[u64; M]; OUT];
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = [F; M]>) {
         let prev = *state;
         *state = self
             .inner
             .hash_iter(chain(prev, F::into_parallel_u64_streams(input)));
     }
 
-    fn squeeze(&self, state: &[[u64; M]; OUT]) -> [[u64; M]; OUT] {
+    fn squeeze(&self, state: &Self::State) -> [[u64; M]; OUT] {
         *state
     }
 }
@@ -191,7 +193,11 @@ mod tests {
         // Test via adapter
         let mut state_adapter = [0u64; 4];
         for seg in segments {
-            hasher.absorb_into(&mut state_adapter, inputs[seg.clone()].iter().copied());
+            StatefulHasher::<F, [u64; 4]>::absorb_into(
+                &hasher,
+                &mut state_adapter,
+                inputs[seg.clone()].iter().copied(),
+            );
         }
 
         // Test via manual chaining
@@ -221,11 +227,15 @@ mod tests {
         let unzipped_input: [[F; 16]; 4] = array::from_fn(|i| parallel_input.map(|x| x[i]));
 
         let mut state_parallel = [[0u64; 4]; 4];
-        hasher.absorb_into(&mut state_parallel, parallel_input);
+        StatefulHasher::<[F; 4], [[u64; 4]; 4]>::absorb_into(
+            &hasher,
+            &mut state_parallel,
+            parallel_input,
+        );
 
         let per_lane: [[u64; 4]; 4] = array::from_fn(|lane| {
             let mut s = [0u64; 4];
-            hasher.absorb_into(&mut s, unzipped_input[lane]);
+            StatefulHasher::<F, [u64; 4]>::absorb_into(&hasher, &mut s, unzipped_input[lane]);
             s
         });
         let per_lane_transposed: [[u64; 4]; 4] = array::from_fn(|i| per_lane.map(|x| x[i]));

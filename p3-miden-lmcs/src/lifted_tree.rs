@@ -142,8 +142,8 @@ where
     where
         PF: PackedValue<Value = F>,
         PD: PackedValue<Value = D>,
-        H: StatefulHasher<F, [D; WIDTH], [D; DIGEST_ELEMS]>
-            + StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
+        H: StatefulHasher<F, [D; DIGEST_ELEMS], State = [D; WIDTH]>
+            + StatefulHasher<PF, [PD; DIGEST_ELEMS], State = [PD; WIDTH]>
             + Sync,
         C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>
             + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
@@ -301,8 +301,8 @@ where
     PF: PackedValue,
     PD: PackedValue,
     M: Matrix<PF::Value>,
-    H: StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
-        + StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
+    H: StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>
+        + StatefulHasher<PF, [PD; DIGEST_ELEMS], State = [PD; WIDTH]>
         + Sync,
 {
     const { assert!(PF::WIDTH.is_power_of_two()) };
@@ -365,8 +365,8 @@ fn absorb_matrix<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     PF: PackedValue,
     PD: PackedValue,
     M: Matrix<PF::Value>,
-    H: StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
-        + StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
+    H: StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>
+        + StatefulHasher<PF, [PD; DIGEST_ELEMS], State = [PD; WIDTH]>
         + Sync,
 {
     let height = matrix.height();
@@ -388,7 +388,7 @@ fn absorb_matrix<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
             .for_each(|(packed_idx, states_chunk)| {
                 let mut packed_state: [PD; WIDTH] = PD::pack_columns(states_chunk);
                 let row_idx = packed_idx * PF::WIDTH;
-                let row = matrix.vertically_packed_row(row_idx);
+                let row = matrix.vertically_packed_row::<PF>(row_idx);
                 sponge.absorb_into(&mut packed_state, row);
                 PD::unpack_columns(&packed_state, states_chunk);
             });

@@ -30,126 +30,120 @@ impl<Inner> SerializingStatefulSponge<Inner> {
 }
 
 // -----------------------------------------------------------------------------
-// Scalar implementations: F -> binary
+// Scalar implementations: F -> [B; OUT]
+// The digest type [B; OUT] distinguishes these from parallel implementations.
 // -----------------------------------------------------------------------------
 
 // Scalar field -> u8 based inner
-impl<F, Inner, const WIDTH: usize, const OUT: usize> StatefulHasher<F, [u8; WIDTH], [u8; OUT]>
-    for SerializingStatefulSponge<Inner>
+impl<F, Inner, const OUT: usize> StatefulHasher<F, [u8; OUT]> for SerializingStatefulSponge<Inner>
 where
     F: Field,
-    Inner: StatefulHasher<u8, [u8; WIDTH], [u8; OUT]>,
+    Inner: StatefulHasher<u8, [u8; OUT]>,
 {
-    fn absorb_into<I>(&self, state: &mut [u8; WIDTH], input: I)
-    where
-        I: IntoIterator<Item = F>,
-    {
+    type State = Inner::State;
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = F>) {
         self.inner.absorb_into(state, F::into_byte_stream(input));
     }
 
-    fn squeeze(&self, state: &[u8; WIDTH]) -> [u8; OUT] {
+    fn squeeze(&self, state: &Self::State) -> [u8; OUT] {
         self.inner.squeeze(state)
     }
 }
 
 // Scalar field -> u32 based inner
-impl<F, Inner, const WIDTH: usize, const OUT: usize> StatefulHasher<F, [u32; WIDTH], [u32; OUT]>
-    for SerializingStatefulSponge<Inner>
+impl<F, Inner, const OUT: usize> StatefulHasher<F, [u32; OUT]> for SerializingStatefulSponge<Inner>
 where
     F: Field,
-    Inner: StatefulHasher<u32, [u32; WIDTH], [u32; OUT]>,
+    Inner: StatefulHasher<u32, [u32; OUT]>,
 {
-    fn absorb_into<I>(&self, state: &mut [u32; WIDTH], input: I)
-    where
-        I: IntoIterator<Item = F>,
-    {
+    type State = Inner::State;
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = F>) {
         self.inner.absorb_into(state, F::into_u32_stream(input));
     }
 
-    fn squeeze(&self, state: &[u32; WIDTH]) -> [u32; OUT] {
+    fn squeeze(&self, state: &Self::State) -> [u32; OUT] {
         self.inner.squeeze(state)
     }
 }
 
 // Scalar field -> u64 based inner
-impl<F, Inner, const WIDTH: usize, const OUT: usize> StatefulHasher<F, [u64; WIDTH], [u64; OUT]>
-    for SerializingStatefulSponge<Inner>
+impl<F, Inner, const OUT: usize> StatefulHasher<F, [u64; OUT]> for SerializingStatefulSponge<Inner>
 where
     F: Field,
-    Inner: StatefulHasher<u64, [u64; WIDTH], [u64; OUT]>,
+    Inner: StatefulHasher<u64, [u64; OUT]>,
 {
-    fn absorb_into<I>(&self, state: &mut [u64; WIDTH], input: I)
-    where
-        I: IntoIterator<Item = F>,
-    {
+    type State = Inner::State;
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = F>) {
         self.inner.absorb_into(state, F::into_u64_stream(input));
     }
 
-    fn squeeze(&self, state: &[u64; WIDTH]) -> [u64; OUT] {
+    fn squeeze(&self, state: &Self::State) -> [u64; OUT] {
         self.inner.squeeze(state)
     }
 }
 
 // -----------------------------------------------------------------------------
-// Parallel implementations: [F; M] -> [binary; M]
+// Parallel implementations: [F; M] -> [[B; M]; OUT]
+// The digest type [[B; M]; OUT] is structurally different from [B; OUT],
+// which prevents coherence conflicts with scalar implementations.
 // -----------------------------------------------------------------------------
 
 // Parallel [F; M] -> [u8; M] based inner
-impl<F, Inner, const WIDTH: usize, const OUT: usize, const M: usize>
-    StatefulHasher<[F; M], [[u8; M]; WIDTH], [[u8; M]; OUT]> for SerializingStatefulSponge<Inner>
+impl<F, Inner, const M: usize, const OUT: usize> StatefulHasher<[F; M], [[u8; M]; OUT]>
+    for SerializingStatefulSponge<Inner>
 where
     F: Field,
-    Inner: StatefulHasher<[u8; M], [[u8; M]; WIDTH], [[u8; M]; OUT]>,
+    Inner: StatefulHasher<[u8; M], [[u8; M]; OUT]>,
 {
-    fn absorb_into<I>(&self, state: &mut [[u8; M]; WIDTH], input: I)
-    where
-        I: IntoIterator<Item = [F; M]>,
-    {
+    type State = Inner::State;
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = [F; M]>) {
         self.inner
             .absorb_into(state, F::into_parallel_byte_streams(input));
     }
 
-    fn squeeze(&self, state: &[[u8; M]; WIDTH]) -> [[u8; M]; OUT] {
+    fn squeeze(&self, state: &Self::State) -> [[u8; M]; OUT] {
         self.inner.squeeze(state)
     }
 }
 
 // Parallel [F; M] -> [u32; M] based inner
-impl<F, Inner, const WIDTH: usize, const OUT: usize, const M: usize>
-    StatefulHasher<[F; M], [[u32; M]; WIDTH], [[u32; M]; OUT]> for SerializingStatefulSponge<Inner>
+impl<F, Inner, const M: usize, const OUT: usize> StatefulHasher<[F; M], [[u32; M]; OUT]>
+    for SerializingStatefulSponge<Inner>
 where
     F: Field,
-    Inner: StatefulHasher<[u32; M], [[u32; M]; WIDTH], [[u32; M]; OUT]>,
+    Inner: StatefulHasher<[u32; M], [[u32; M]; OUT]>,
 {
-    fn absorb_into<I>(&self, state: &mut [[u32; M]; WIDTH], input: I)
-    where
-        I: IntoIterator<Item = [F; M]>,
-    {
+    type State = Inner::State;
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = [F; M]>) {
         self.inner
             .absorb_into(state, F::into_parallel_u32_streams(input));
     }
 
-    fn squeeze(&self, state: &[[u32; M]; WIDTH]) -> [[u32; M]; OUT] {
+    fn squeeze(&self, state: &Self::State) -> [[u32; M]; OUT] {
         self.inner.squeeze(state)
     }
 }
 
 // Parallel [F; M] -> [u64; M] based inner
-impl<F, Inner, const WIDTH: usize, const OUT: usize, const M: usize>
-    StatefulHasher<[F; M], [[u64; M]; WIDTH], [[u64; M]; OUT]> for SerializingStatefulSponge<Inner>
+impl<F, Inner, const M: usize, const OUT: usize> StatefulHasher<[F; M], [[u64; M]; OUT]>
+    for SerializingStatefulSponge<Inner>
 where
     F: Field,
-    Inner: StatefulHasher<[u64; M], [[u64; M]; WIDTH], [[u64; M]; OUT]>,
+    Inner: StatefulHasher<[u64; M], [[u64; M]; OUT]>,
 {
-    fn absorb_into<I>(&self, state: &mut [[u64; M]; WIDTH], input: I)
-    where
-        I: IntoIterator<Item = [F; M]>,
-    {
+    type State = Inner::State;
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = [F; M]>) {
         self.inner
             .absorb_into(state, F::into_parallel_u64_streams(input));
     }
 
-    fn squeeze(&self, state: &[[u64; M]; WIDTH]) -> [[u64; M]; OUT] {
+    fn squeeze(&self, state: &Self::State) -> [[u64; M]; OUT] {
         self.inner.squeeze(state)
     }
 }
@@ -227,6 +221,7 @@ mod tests {
         SerializingStatefulSponge<
             StatefulSponge<MockBinaryPermutation<u64, WIDTH>, WIDTH, RATE, OUT>,
         >: Alignable<F, u64>,
+        [u64; WIDTH]: Default,
     {
         let inner = StatefulSponge::<_, WIDTH, RATE, OUT>::new(
             MockBinaryPermutation::<u64, WIDTH>::default(),
@@ -241,9 +236,13 @@ mod tests {
             let input: Vec<F> = (1..=input_len).map(|i| F::from_usize(i)).collect();
 
             let mut state_unpadded = [0u64; WIDTH];
-            hasher.absorb_into(&mut state_unpadded, input.iter().copied());
+            StatefulHasher::<F, [u64; OUT]>::absorb_into(
+                &hasher,
+                &mut state_unpadded,
+                input.iter().copied(),
+            );
             let output_unpadded: [u64; OUT] =
-                StatefulHasher::<F, _, _>::squeeze(&hasher, &state_unpadded);
+                StatefulHasher::<F, [u64; OUT]>::squeeze(&hasher, &state_unpadded);
 
             let remainder = input_len % alignment;
             let zeros_needed = if remainder == 0 {
@@ -255,9 +254,13 @@ mod tests {
             padded_input.extend(core::iter::repeat_n(F::ZERO, zeros_needed));
 
             let mut state_padded = [0u64; WIDTH];
-            hasher.absorb_into(&mut state_padded, padded_input.iter().copied());
+            StatefulHasher::<F, [u64; OUT]>::absorb_into(
+                &hasher,
+                &mut state_padded,
+                padded_input.iter().copied(),
+            );
             let output_padded: [u64; OUT] =
-                StatefulHasher::<F, _, _>::squeeze(&hasher, &state_padded);
+                StatefulHasher::<F, [u64; OUT]>::squeeze(&hasher, &state_padded);
 
             assert_eq!(output_unpadded, output_padded);
         }

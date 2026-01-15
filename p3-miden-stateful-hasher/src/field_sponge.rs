@@ -29,16 +29,16 @@ impl<P, const WIDTH: usize, const RATE: usize, const OUT: usize>
     }
 }
 
-impl<P, T, const WIDTH: usize, const RATE: usize, const OUT: usize>
-    StatefulHasher<T, [T; WIDTH], [T; OUT]> for StatefulSponge<P, WIDTH, RATE, OUT>
+impl<P, T, const WIDTH: usize, const RATE: usize, const OUT: usize> StatefulHasher<T, [T; OUT]>
+    for StatefulSponge<P, WIDTH, RATE, OUT>
 where
     T: Default + Clone,
     P: CryptographicPermutation<[T; WIDTH]>,
+    [T; WIDTH]: Default,
 {
-    fn absorb_into<I>(&self, state: &mut [T; WIDTH], input: I)
-    where
-        I: IntoIterator<Item = T>,
-    {
+    type State = [T; WIDTH];
+
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = T>) {
         const { assert!(OUT < WIDTH) }
         let mut input = input.into_iter();
 
@@ -58,7 +58,7 @@ where
         }
     }
 
-    fn squeeze(&self, state: &[T; WIDTH]) -> [T; OUT] {
+    fn squeeze(&self, state: &Self::State) -> [T; OUT] {
         const { assert!(OUT < WIDTH) }
         core::array::from_fn(|i| state[i].clone())
     }
@@ -107,7 +107,10 @@ mod tests {
     }
 
     /// Verifies implicit zero-padding equals explicit zeros.
-    fn test_alignment_semantic<const WIDTH: usize, const RATE: usize, const OUT: usize>() {
+    fn test_alignment_semantic<const WIDTH: usize, const RATE: usize, const OUT: usize>()
+    where
+        [u64; WIDTH]: Default,
+    {
         let sponge = StatefulSponge::<_, WIDTH, RATE, OUT>::new(
             MockBinaryPermutation::<u64, WIDTH>::default(),
         );

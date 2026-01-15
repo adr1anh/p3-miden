@@ -60,8 +60,8 @@ where
     PF: PackedValue + Default,
     PD: PackedValue + Default,
     PF::Value: Serialize + DeserializeOwned,
-    H: StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
-        + StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
+    H: StatefulHasher<PF, [PD; DIGEST_ELEMS], State = [PD; WIDTH]>
+        + StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>
         + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>

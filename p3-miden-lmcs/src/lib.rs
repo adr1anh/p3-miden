@@ -154,7 +154,7 @@ impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize>
     where
         PF: PackedValue + Default,
         PD: PackedValue + Default,
-        H: StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>,
+        H: StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>,
         C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>,
     {
         // Verify that the number of opened rows matches the number of matrix dimensions
@@ -208,8 +208,8 @@ impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize> Mmcs<PF::Value
 where
     PF: PackedValue + Default,
     PD: PackedValue + Default,
-    H: StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
-        + StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
+    H: StatefulHasher<PF, [PD; DIGEST_ELEMS], State = [PD; WIDTH]>
+        + StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>
         + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>

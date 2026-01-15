@@ -39,14 +39,30 @@ pub use serializing_sponge::*;
 /// Types implementing `StatefulHasher` typically also implement `Alignable`
 /// to expose their alignment characteristics. Callers needing alignment
 /// information should require `H: StatefulHasher<...> + Alignable<...>`.
-pub trait StatefulHasher<Item, State, Out>: Clone {
+pub trait StatefulHasher<Item, Out>: Clone {
+    /// The internal state type that evolves during absorption.
+    type State;
+
     /// Absorb elements into the state with overwrite-mode and zero-padding semantics if applicable.
-    fn absorb_into<I>(&self, state: &mut State, input: I)
-    where
-        I: IntoIterator<Item = Item>;
+    fn absorb_into(&self, state: &mut Self::State, input: impl IntoIterator<Item = Item>);
 
     /// Squeeze an output from the current state.
-    fn squeeze(&self, state: &State) -> Out;
+    fn squeeze(&self, state: &Self::State) -> Out;
+
+    /// One-shot hash of multiple row slices.
+    ///
+    /// Creates a fresh state, absorbs all rows, and squeezes the result.
+    fn hash_rows<'a>(&self, rows: impl IntoIterator<Item = &'a [Item]>) -> Out
+    where
+        Item: Copy + 'a,
+        Self::State: Default,
+    {
+        let mut state = Self::State::default();
+        for row in rows {
+            self.absorb_into(&mut state, row.iter().copied());
+        }
+        self.squeeze(&state)
+    }
 }
 
 /// Defines alignment for stateful hashers.
