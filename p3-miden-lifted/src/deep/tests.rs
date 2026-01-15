@@ -16,7 +16,7 @@ use super::DeepParams;
 use super::interpolate::PointQuotients;
 use super::prover::DeepPoly;
 use super::verifier::DeepOracle;
-use crate::tests::{EF, F, RATE, base_lmcs, challenger};
+use crate::tests::{EF, F, RATE, test_challenger, test_lmcs};
 use crate::utils::{MatrixGroupEvals, bit_reversed_coset_points};
 
 // ============================================================================
@@ -27,7 +27,7 @@ use crate::utils::{MatrixGroupEvals, bit_reversed_coset_points};
 #[test]
 fn deep_quotient_end_to_end() {
     let rng = &mut SmallRng::seed_from_u64(42);
-    let lmcs = base_lmcs();
+    let lmcs = test_lmcs();
 
     // Parameters
     let log_blowup: usize = 2;
@@ -79,7 +79,7 @@ fn deep_quotient_end_to_end() {
         .collect();
 
     // Step 3: Prover constructs DeepPoly (handles observe, grind, sample internally)
-    let mut prover_challenger = challenger();
+    let mut prover_challenger = test_challenger();
     prover_challenger.observe(commitment);
     let (deep_poly, deep_proof) = DeepPoly::new(
         &params,
@@ -92,7 +92,7 @@ fn deep_quotient_end_to_end() {
     );
 
     // Step 4: Verifier constructs DeepOracle with same transcript state
-    let mut verifier_challenger = challenger();
+    let mut verifier_challenger = test_challenger();
     verifier_challenger.observe(commitment);
     let deep_oracle = DeepOracle::new(
         &params,

@@ -8,7 +8,7 @@ use crate::fri::{FriFold, FriParams};
 use crate::pcs::config::PcsConfig;
 use crate::pcs::prover::open;
 use crate::pcs::verifier::verify;
-use crate::tests::{EF, F, RATE, base_lmcs, challenger, fri_mmcs, random_lde_matrix};
+use crate::tests::{EF, F, RATE, random_lde_matrix, test_challenger, test_fri_mmcs, test_lmcs};
 use p3_challenger::CanObserve;
 use p3_commit::Mmcs;
 use p3_field::Field;
@@ -25,8 +25,8 @@ use rand::{Rng, SeedableRng};
 #[test]
 fn test_pcs_open_verify_roundtrip() {
     let rng = &mut SmallRng::seed_from_u64(42);
-    let lmcs = base_lmcs();
-    let mmcs = fri_mmcs();
+    let lmcs = test_lmcs();
+    let mmcs = test_fri_mmcs();
 
     let config = PcsConfig {
         fri: FriParams {
@@ -70,7 +70,7 @@ fn test_pcs_open_verify_roundtrip() {
     let eval_points = [z1, z2];
 
     // Prover
-    let mut prover_challenger = challenger();
+    let mut prover_challenger = test_challenger();
     prover_challenger.observe(commitment);
 
     let proof = open::<F, EF, _, _, _, _, 2>(
@@ -83,7 +83,7 @@ fn test_pcs_open_verify_roundtrip() {
     );
 
     // Verifier
-    let mut verifier_challenger = challenger();
+    let mut verifier_challenger = test_challenger();
     verifier_challenger.observe(commitment);
 
     let result = verify::<F, EF, _, _, _, 2>(

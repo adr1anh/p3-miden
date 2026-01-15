@@ -1,6 +1,6 @@
 [package]
-name = "p3-miden-lifted"
-description = "Lifted Matrix Commitment Scheme (LMCS) implementation with FRI-based PCS."
+name = "p3-miden-lmcs"
+description = "Lifted Matrix Commitment Scheme (LMCS) for matrices with power-of-two heights."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,9 +9,7 @@ readme.workspace = true
 homepage.workspace = true
 
 [dependencies]
-p3-challenger.workspace = true
 p3-commit.workspace = true
-p3-dft.workspace = true
 p3-field.workspace = true
 p3-matrix.workspace = true
 p3-miden-stateful-hasher.workspace = true
@@ -25,15 +23,10 @@ thiserror.workspace = true
 
 [dev-dependencies]
 p3-baby-bear.workspace = true
-p3-dft.workspace = true
-p3-fri.workspace = true
 p3-goldilocks.workspace = true
-p3-interpolation.workspace = true
 p3-keccak.workspace = true
 p3-merkle-tree.workspace = true
 p3-miden-dev-utils.workspace = true
-p3-miden-fri.workspace = true
-p3-miden-lmcs.workspace = true
 
 criterion.workspace = true
 
@@ -41,17 +34,9 @@ criterion.workspace = true
 parallel = ["p3-maybe-rayon/parallel"]
 
 [[bench]]
-name = "fri_fold"
+name = "merkle_commit"
 harness = false
 
 [[bench]]
-name = "deep_quotient"
-harness = false
-
-[[bench]]
-name = "pcs"
-harness = false
-
-[[bench]]
-name = "fri_comparison"
+name = "lmcs_vs_mmcs"
 harness = false

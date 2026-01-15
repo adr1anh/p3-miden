@@ -1,7 +1,13 @@
-//! Lifted Merkle tree commitment scheme for matrices with power-of-two heights.
+//! Lifted Matrix Commitment Scheme (LMCS) for matrices with power-of-two heights.
 //!
-//! This module provides a Merkle tree commitment scheme optimized for matrices that store
+//! This crate provides a Merkle tree commitment scheme optimized for matrices that store
 //! polynomial evaluations in **bit-reversed order** over multiplicative cosets.
+//!
+//! # Main Types
+//!
+//! - [`MerkleTreeLmcs`]: Non-hiding lifted MMCS
+//! - [`MerkleTreeHidingLmcs`]: Hiding variant with random salt per leaf
+//! - [`LiftedMerkleTree`]: The underlying Merkle tree data structure
 //!
 //! # Mathematical Foundation
 //!
@@ -62,6 +68,10 @@
 //! This equivalence follows from the bit-reversal identity: for `r = N/n = 2^k`,
 //! `bitrev_N(i) mod n = bitrev_n(i >> k)`.
 
+#![no_std]
+
+extern crate alloc;
+
 use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
@@ -79,7 +89,7 @@ mod hiding_lmcs;
 mod lifted_tree;
 
 pub use hiding_lmcs::MerkleTreeHidingLmcs;
-pub use lifted_tree::{LiftedMerkleTree, build_leaf_states_upsampled};
+pub use lifted_tree::LiftedMerkleTree;
 
 /// Lifted MMCS built on top of [`LiftedMerkleTree`].
 ///

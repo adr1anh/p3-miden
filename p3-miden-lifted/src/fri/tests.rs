@@ -9,7 +9,7 @@ use rand::{Rng, SeedableRng};
 use super::prover::FriPolys;
 use super::verifier::FriOracle;
 use super::*;
-use crate::tests::{EF, F, challenger, fri_mmcs, random_lde_matrix};
+use crate::tests::{EF, F, random_lde_matrix, test_challenger, test_fri_mmcs};
 
 // ============================================================================
 // Integration tests
@@ -23,7 +23,7 @@ use crate::tests::{EF, F, challenger, fri_mmcs, random_lde_matrix};
 /// 3. Verifies random query indices
 fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
     let mut rng = SmallRng::seed_from_u64(42);
-    let mmcs = fri_mmcs();
+    let mmcs = test_fri_mmcs();
 
     let params = FriParams {
         log_blowup: 2,
@@ -37,12 +37,12 @@ fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
     let lde_size = evals.len();
 
     // Prover: run commit phase (grinds per-round internally)
-    let mut prover_challenger = challenger();
+    let mut prover_challenger = test_challenger();
     let (fri_polys, fri_proof) =
         FriPolys::<F, EF, _>::new(&params, &mmcs, &evals, &mut prover_challenger);
 
     // Verifier: replay challenger to get oracle with betas
-    let mut verifier_challenger = challenger();
+    let mut verifier_challenger = test_challenger();
     let fri_oracle = FriOracle::new(
         &fri_proof,
         &mut verifier_challenger,
@@ -76,7 +76,7 @@ fn test_fri_commit_verify_arity4() {
 #[test]
 fn test_fri_verify_wrong_eval() {
     let mut rng = SmallRng::seed_from_u64(42);
-    let mmcs = fri_mmcs();
+    let mmcs = test_fri_mmcs();
 
     let log_poly_degree = 8;
     let log_blowup = 2;
@@ -93,11 +93,11 @@ fn test_fri_verify_wrong_eval() {
     let log_lde_size = log_poly_degree + log_blowup;
     let lde_size = 1 << log_lde_size;
 
-    let mut prover_challenger = challenger();
+    let mut prover_challenger = test_challenger();
     let (fri_polys, fri_proof) =
         FriPolys::<F, EF, _>::new(&params, &mmcs, &evals, &mut prover_challenger);
 
-    let mut verifier_challenger = challenger();
+    let mut verifier_challenger = test_challenger();
     let fri_oracle = FriOracle::new(
         &fri_proof,
         &mut verifier_challenger,
@@ -129,7 +129,7 @@ fn test_fri_verify_wrong_eval() {
 #[test]
 fn test_fri_verify_wrong_beta() {
     let mut rng = SmallRng::seed_from_u64(42);
-    let mmcs = fri_mmcs();
+    let mmcs = test_fri_mmcs();
 
     let log_poly_degree = 8;
     let log_blowup = 2;
@@ -149,12 +149,12 @@ fn test_fri_verify_wrong_beta() {
     let lde_size = 1 << log_lde_size;
 
     // Prover 1: generate FRI proof (grinds per-round internally)
-    let mut prover1_challenger = challenger();
+    let mut prover1_challenger = test_challenger();
     let (fri_polys1, fri_proof) =
         FriPolys::<F, EF, _>::new(&params, &mmcs, &evals1, &mut prover1_challenger);
 
     // Prover 2: generate different FRI proof (different commitments = different betas)
-    let mut prover2_challenger = challenger();
+    let mut prover2_challenger = test_challenger();
     let _ = FriPolys::<F, EF, _>::new(&params, &mmcs, &evals2, &mut prover2_challenger);
 
     // Verifier: use prover1's proof structure but prover2's challenger state
@@ -191,7 +191,7 @@ fn test_fri_verify_wrong_beta() {
 #[test]
 fn test_final_polynomial_correctness() {
     let mut rng = SmallRng::seed_from_u64(123);
-    let mmcs = fri_mmcs();
+    let mmcs = test_fri_mmcs();
 
     let log_poly_degree = 8;
     let log_blowup = 2;
@@ -206,7 +206,7 @@ fn test_final_polynomial_correctness() {
 
     let evals = random_lde_matrix(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
 
-    let mut chal = challenger();
+    let mut chal = test_challenger();
     let (_, fri_proof) = FriPolys::<F, EF, _>::new(&params, &mmcs, &evals, &mut chal);
 
     // Verify final polynomial has correct degree

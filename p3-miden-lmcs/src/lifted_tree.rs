@@ -286,7 +286,14 @@ where
 /// - `P::WIDTH` is a power of two.
 ///
 /// Panics in debug builds if preconditions are violated.
-pub fn build_leaf_states_upsampled<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
+pub(crate) fn build_leaf_states_upsampled<
+    PF,
+    PD,
+    M,
+    H,
+    const WIDTH: usize,
+    const DIGEST_ELEMS: usize,
+>(
     matrices: &[M],
     sponge: &H,
 ) -> Vec<[PD::Value; WIDTH]>
@@ -517,7 +524,7 @@ mod tests {
             let leaves_lifted = build_leaves_upsampled(&matrices_upsampled, &sponge);
             assert_eq!(leaves, leaves_lifted);
 
-            let matrix_single = concatenate_matrices::<RATE>(&matrices_upsampled);
+            let matrix_single = concatenate_matrices::<_, RATE>(&matrices_upsampled);
             let leaves_single = build_leaves_single(&matrix_single, &sponge);
             assert_eq!(leaves, leaves_single);
         }
