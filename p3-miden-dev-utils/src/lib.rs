@@ -67,6 +67,6 @@ pub use bench::{PARALLEL_STR, criterion_config, criterion_config_long};
 
 // Matrix utilities
 pub use matrix::{
-    concatenate_matrices, generate_flat_matrix, generate_matrices_from_specs, lift_matrix,
-    random_lde_matrix, total_elements, total_elements_flat,
+    concatenate_matrices, generate_flat_matrix, generate_matrices_from_specs, random_lde_matrix,
+    total_elements, total_elements_flat,
 };

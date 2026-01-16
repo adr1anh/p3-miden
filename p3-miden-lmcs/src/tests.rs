@@ -23,7 +23,7 @@ pub fn components() -> (Sponge, Compress) {
     let (_, sponge, compress) = bb::test_components();
     (sponge, compress)
 }
-pub use p3_miden_dev_utils::matrix::{concatenate_matrices, lift_matrix};
+pub use p3_miden_dev_utils::matrix::concatenate_matrices;
 
 /// Common matrix group scenarios for testing lifting with varying heights.
 pub fn matrix_scenarios() -> Vec<Vec<(usize, usize)>> {

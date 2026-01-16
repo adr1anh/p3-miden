@@ -2,6 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::{array, mem};
 
+use crate::utils::PackedValueExt;
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -10,39 +11,6 @@ use p3_miden_stateful_hasher::StatefulHasher;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
-
-/// Extension trait for `PackedValue` providing columnar pack/unpack operations.
-///
-/// These methods perform transpose operations on packed data, useful for
-/// SIMD-parallelized Merkle tree construction.
-trait PackedValueExt: PackedValue {
-    /// Pack columns from `WIDTH` rows of scalar values.
-    ///
-    /// Given `WIDTH` rows of `N` scalar values, extract each column and pack it
-    /// into a single packed value. This performs a transpose operation.
-    #[inline]
-    #[must_use]
-    fn pack_columns<const N: usize>(rows: &[[Self::Value; N]]) -> [Self; N] {
-        assert_eq!(rows.len(), Self::WIDTH);
-        array::from_fn(|col| Self::from_fn(|lane| rows[lane][col]))
-    }
-
-    /// Unpack an array of packed values into `WIDTH` rows of scalar values.
-    ///
-    /// Given `N` packed values, extract each lane into a separate row of `N` scalars.
-    /// This performs a transpose operation, the inverse of `pack_columns`.
-    #[inline]
-    fn unpack_columns<const N: usize>(packed: &[Self; N], rows: &mut [[Self::Value; N]]) {
-        assert_eq!(rows.len(), Self::WIDTH);
-        #[allow(clippy::needless_range_loop)]
-        for lane in 0..Self::WIDTH {
-            rows[lane] = array::from_fn(|col| packed[col].as_slice()[lane]);
-        }
-    }
-}
-
-// Blanket implementation for all PackedValue types
-impl<T: PackedValue> PackedValueExt for T {}
 
 /// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///
@@ -352,11 +320,9 @@ where
 /// Semantics: given `states` of length `h = matrix.height()`, for each row index `r ∈ [0, h)`
 /// update `states[r]` by absorbing the matrix row `r` into that state. In the overall tree
 /// construction, callers ensure that `states` is the correct lifted view for the current matrix
-/// (either the “nearest-neighbor” duplication or the “modulo” duplication across the final
+/// (either the "nearest-neighbor" duplication or the "modulo" duplication across the final
 /// height). This helper performs exactly one absorption round for that matrix and returns with the
 /// states mutated; it does not change the lifting shape or squeeze digests.
-///
-/// The implementation may use scalar or SIMD packing internally depending on the matrix height.
 fn absorb_matrix<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     states: &mut [[PD::Value; WIDTH]],
     matrix: &M,
@@ -390,7 +356,7 @@ fn absorb_matrix<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
                 let row_idx = packed_idx * PF::WIDTH;
                 let row = matrix.vertically_packed_row::<PF>(row_idx);
                 sponge.absorb_into(&mut packed_state, row);
-                PD::unpack_columns(&packed_state, states_chunk);
+                PD::unpack_into(&packed_state, states_chunk);
             });
     }
 }
@@ -445,7 +411,7 @@ fn compress_uniform<
                 let right: [P; DIGEST_ELEMS] =
                     array::from_fn(|j| P::from_fn(|k| prev_layer[2 * (chunk_idx + k) + 1][j]));
                 let packed_digest = c.compress([left, right]);
-                P::unpack_columns(&packed_digest, digests_chunk);
+                P::unpack_into(&packed_digest, digests_chunk);
             });
     }
     next_digests
@@ -490,8 +456,9 @@ mod tests {
 
     use crate::tests::{
         DIGEST, F, P, RATE, Sponge, build_leaves_single, components, concatenate_matrices,
-        lift_matrix, matrix_scenarios,
+        matrix_scenarios,
     };
+    use crate::utils::upsample_matrix;
 
     fn build_leaves_upsampled(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
         let mut states = super::build_leaf_states_upsampled::<P, P, _, _, _, _>(matrices, sponge);
@@ -519,7 +486,7 @@ mod tests {
 
             let matrices_upsampled: Vec<_> = matrices
                 .iter()
-                .map(|m: &RowMajorMatrix<F>| lift_matrix(m, max_height))
+                .map(|m: &RowMajorMatrix<F>| upsample_matrix(m, max_height))
                 .collect();
             let leaves_lifted = build_leaves_upsampled(&matrices_upsampled, &sponge);
             assert_eq!(leaves, leaves_lifted);

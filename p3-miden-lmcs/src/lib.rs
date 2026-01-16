@@ -87,6 +87,7 @@ use thiserror::Error;
 
 mod hiding_lmcs;
 mod lifted_tree;
+pub mod utils;
 
 pub use hiding_lmcs::MerkleTreeHidingLmcs;
 pub use lifted_tree::LiftedMerkleTree;

@@ -4,10 +4,9 @@ use alloc::vec::Vec;
 
 use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing, TwoAdicField};
+use p3_matrix::Matrix;
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_matrix::{Dimensions, Matrix};
-use p3_util::log2_strict_usize;
 use rand::SeedableRng;
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
@@ -136,19 +135,4 @@ pub fn concatenate_matrices<F: Field + PrimeCharacteristicRing, const R: usize>(
         })
         .collect();
     RowMajorMatrix::new(concatenated_data, width)
-}
-
-/// Explicitly lift a matrix to the target height using nearest-neighbor upsampling.
-///
-/// Used for testing equivalence between incremental and explicit lifting.
-pub fn lift_matrix<F: Field>(matrix: &RowMajorMatrix<F>, max_height: usize) -> RowMajorMatrix<F> {
-    let Dimensions { height, width } = matrix.dimensions();
-    let log_scaling_factor = log2_strict_usize(max_height / height);
-    let data = (0..max_height)
-        .flat_map(|index| {
-            let mapped_index = index >> log_scaling_factor;
-            matrix.row(mapped_index).unwrap()
-        })
-        .collect();
-    RowMajorMatrix::new(data, width)
 }
