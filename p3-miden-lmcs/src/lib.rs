@@ -87,10 +87,12 @@ use thiserror::Error;
 
 mod hiding_lmcs;
 mod lifted_tree;
+pub mod proof;
 pub mod utils;
 
 pub use hiding_lmcs::MerkleTreeHidingLmcs;
 pub use lifted_tree::LiftedMerkleTree;
+pub use proof::{CompactProof, IndexedPath, MultiOpeningError, NodeIndex};
 
 /// Lifted MMCS built on top of [`LiftedMerkleTree`].
 ///
