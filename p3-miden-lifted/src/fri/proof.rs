@@ -2,16 +2,24 @@
 
 use alloc::vec::Vec;
 
-use p3_commit::{BatchOpening, Mmcs};
-use p3_field::Field;
+use p3_commit::BatchOpening;
+use p3_field::{ExtensionField, Field};
 
 /// FRI proof data including per-round grinding witnesses.
 ///
 /// Contains the FRI round commitments, final polynomial, and the proof-of-work
 /// witnesses for each folding round's beta challenge.
-pub struct FriProof<EF: Field, FriMmcs: Mmcs<EF>, Witness> {
+///
+/// Uses a single base-field MMCS for commitments. Extension field evaluations
+/// are flattened to base field before commitment and reconstructed after opening.
+pub struct FriProof<F, EF, Mmcs, Witness>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+    Mmcs: p3_commit::Mmcs<F>,
+{
     /// Merkle commitments for each folding round.
-    pub(super) commitments: Vec<FriMmcs::Commitment>,
+    pub(super) commitments: Vec<Mmcs::Commitment>,
 
     /// Coefficients of the final low-degree polynomial.
     pub(super) final_poly: Vec<EF>,
@@ -20,9 +28,14 @@ pub struct FriProof<EF: Field, FriMmcs: Mmcs<EF>, Witness> {
     pub(super) pow_witnesses: Vec<Witness>,
 }
 
-impl<EF: Field, FriMmcs: Mmcs<EF>, Witness> FriProof<EF, FriMmcs, Witness> {
+impl<F, EF, Mmcs, Witness> FriProof<F, EF, Mmcs, Witness>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+    Mmcs: p3_commit::Mmcs<F>,
+{
     /// Returns the Merkle commitments for each folding round.
-    pub fn commitments(&self) -> &[FriMmcs::Commitment] {
+    pub fn commitments(&self) -> &[Mmcs::Commitment] {
         &self.commitments
     }
 
@@ -41,13 +54,16 @@ impl<EF: Field, FriMmcs: Mmcs<EF>, Witness> FriProof<EF, FriMmcs, Witness> {
 ///
 /// Holds the batch openings for each FRI folding round that the verifier
 /// needs to check consistency during query verification.
-pub struct FriQuery<EF: Field, FriMmcs: Mmcs<EF>> {
-    pub(super) openings: Vec<BatchOpening<EF, FriMmcs>>,
+///
+/// Openings contain base field values. The verifier reconstructs extension
+/// field values after Merkle verification succeeds.
+pub struct FriQuery<F: Field, Mmcs: p3_commit::Mmcs<F>> {
+    pub(super) openings: Vec<BatchOpening<F, Mmcs>>,
 }
 
-impl<EF: Field, FriMmcs: Mmcs<EF>> FriQuery<EF, FriMmcs> {
+impl<F: Field, Mmcs: p3_commit::Mmcs<F>> FriQuery<F, Mmcs> {
     /// Returns the batch openings for each FRI folding round.
-    pub fn openings(&self) -> &[BatchOpening<EF, FriMmcs>] {
+    pub fn openings(&self) -> &[BatchOpening<F, Mmcs>] {
         &self.openings
     }
 }

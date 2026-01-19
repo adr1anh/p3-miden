@@ -5,7 +5,6 @@
 use alloc::vec::Vec;
 
 use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
-use p3_commit::Mmcs;
 use p3_field::{ExtensionField, FieldArray, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_util::log2_strict_usize;
@@ -22,15 +21,13 @@ use crate::utils::{MatrixGroupEvals, bit_reversed_coset_points};
 /// # Type Parameters
 /// - `F`: Base field (must be two-adic for FRI)
 /// - `EF`: Extension field for challenges and evaluations
-/// - `InputMmcs`: MMCS used to commit the input matrices
-/// - `FriMmcs`: MMCS used for FRI round commitments (typically `ExtensionMmcs<F, EF, _>`)
+/// - `Mmcs`: MMCS used for both input matrices and FRI round commitments
 /// - `M`: Matrix type for input matrices
 /// - `Challenger`: Fiat-Shamir challenger (must support grinding)
 /// - `N`: Number of evaluation points (compile-time constant)
 ///
 /// # Arguments
-/// - `input_mmcs`: The MMCS instance used for initial commitment
-/// - `fri_mmcs`: MMCS instance for FRI round commitments
+/// - `mmcs`: The MMCS instance used for commitments
 /// - `config`: PCS configuration (FRI params + DEEP params)
 /// - `eval_points`: Array of N out-of-domain evaluation points
 /// - `prover_data`: Prover data from the commitment phase (one per committed group)
@@ -38,28 +35,26 @@ use crate::utils::{MatrixGroupEvals, bit_reversed_coset_points};
 ///
 /// # Returns
 /// A `Proof` containing evaluations, grinding witnesses, and all opening proofs
-pub fn open<F, EF, InputMmcs, FriMmcs, M, Challenger, const N: usize>(
-    input_mmcs: &InputMmcs,
-    fri_mmcs: &FriMmcs,
+pub fn open<F, EF, Mmcs, M, Challenger, const N: usize>(
+    mmcs: &Mmcs,
     config: &PcsConfig,
     eval_points: [EF; N],
-    prover_data: Vec<&InputMmcs::ProverData<M>>,
+    prover_data: Vec<&Mmcs::ProverData<M>>,
     challenger: &mut Challenger,
-) -> Proof<F, EF, InputMmcs, FriMmcs, Challenger::Witness>
+) -> Proof<F, EF, Mmcs, Challenger::Witness>
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
-    InputMmcs: Mmcs<F>,
-    FriMmcs: Mmcs<EF>,
+    Mmcs: p3_commit::Mmcs<F>,
     M: Matrix<F>,
-    Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment> + GrindingChallenger,
+    Challenger: FieldChallenger<F> + CanObserve<Mmcs::Commitment> + GrindingChallenger,
 {
     // ─────────────────────────────────────────────────────────────────────────
     // Extract matrix structure from prover data
     // ─────────────────────────────────────────────────────────────────────────
     let matrices_groups: Vec<Vec<&M>> = prover_data
         .iter()
-        .map(|pd| input_mmcs.get_matrices(*pd))
+        .map(|pd| mmcs.get_matrices(*pd))
         .collect();
 
     // Determine LDE domain size from tallest matrix
@@ -93,7 +88,7 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     let (deep_poly, deep_proof) = DeepPoly::new(
         &config.deep,
-        input_mmcs,
+        mmcs,
         prover_data,
         &evals,
         &batched_evals,
@@ -107,7 +102,7 @@ where
     // The deep_poly contains evaluations on the LDE domain (size max_height).
     // FRI will prove that this polynomial is low-degree.
     let (fri_polys, fri_proof) =
-        FriPolys::<F, EF, _>::new(&config.fri, fri_mmcs, &deep_poly.deep_evals, challenger);
+        FriPolys::<F, EF, _>::new(&config.fri, mmcs, &deep_poly.deep_evals, challenger);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Grind for query sampling
@@ -124,14 +119,14 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // Generate query proofs
     // ─────────────────────────────────────────────────────────────────────────
-    let query_proofs: Vec<QueryProof<F, EF, InputMmcs, FriMmcs>> = query_indices
+    let query_proofs: Vec<QueryProof<F, Mmcs>> = query_indices
         .iter()
         .map(|&index| {
             // Open DeepPoly at this index
-            let deep_query = deep_poly.open(input_mmcs, index);
+            let deep_query = deep_poly.open(mmcs, index);
 
             // Open FRI rounds at this index
-            let fri_round_openings = fri_polys.open_query(&config.fri, fri_mmcs, index);
+            let fri_round_openings = fri_polys.open_query(&config.fri, mmcs, index);
 
             QueryProof {
                 input_openings: deep_query,

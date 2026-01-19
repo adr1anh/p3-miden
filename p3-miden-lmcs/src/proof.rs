@@ -66,7 +66,6 @@ impl NodeIndex {
     pub const fn right_child(self) -> Self {
         Self((self.0 << 1) | 1)
     }
-
 }
 
 /// A leaf with its authentication path.
@@ -505,9 +504,13 @@ mod tests {
 
         // Leaf 0 needs siblings at leaf(1) and leaf(2).parent(), but we also include leaf(3).
         let proof = CompactProof(
-            [(leaf(1), leaves[1]), (leaf(2).parent(), h23), (leaf(3), leaves[3])]
-                .into_iter()
-                .collect(),
+            [
+                (leaf(1), leaves[1]),
+                (leaf(2).parent(), h23),
+                (leaf(3), leaves[3]),
+            ]
+            .into_iter()
+            .collect(),
         );
         let result = proof.recompute_root(DEPTH, &[(0, leaves[0])], &c);
 

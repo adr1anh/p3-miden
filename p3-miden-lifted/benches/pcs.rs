@@ -83,7 +83,6 @@ macro_rules! bench_scenario {
 
             // Lifted PCS types
             type Lmcs = <S as LmcsScenario>::Lmcs;
-            type FriMmcs = ExtensionMmcs<F, EF, Lmcs>;
 
             let dft = Dft::default();
             let shift = F::GENERATOR;
@@ -179,7 +178,6 @@ macro_rules! bench_scenario {
                 // =============================================================
                 {
                     let lmcs: Lmcs = $lmcs_fn();
-                    let fri_mmcs: FriMmcs = ExtensionMmcs::new($lmcs_fn());
 
                     // Compute LDE matrices
                     let lde_groups: Vec<Vec<_>> = matrix_groups
@@ -232,9 +230,8 @@ macro_rules! bench_scenario {
 
                                 let prover_data_refs: Vec<_> =
                                     commits_and_data.iter().map(|(_, data)| data).collect();
-                                let proof = lifted_prover::open::<F, EF, _, _, _, Challenger, 2>(
+                                let proof = lifted_prover::open::<F, EF, _, _, Challenger, 2>(
                                     &lmcs,
-                                    &fri_mmcs,
                                     &config,
                                     [z1, z2],
                                     prover_data_refs,

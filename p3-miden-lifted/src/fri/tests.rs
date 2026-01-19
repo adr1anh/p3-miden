@@ -9,7 +9,7 @@ use rand::{Rng, SeedableRng};
 use super::prover::FriPolys;
 use super::verifier::FriOracle;
 use super::*;
-use crate::tests::{EF, F, random_lde_matrix, test_challenger, test_fri_mmcs};
+use crate::tests::{EF, F, random_lde_matrix, test_challenger, test_lmcs};
 
 // ============================================================================
 // Integration tests
@@ -23,7 +23,7 @@ use crate::tests::{EF, F, random_lde_matrix, test_challenger, test_fri_mmcs};
 /// 3. Verifies random query indices
 fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
     let mut rng = SmallRng::seed_from_u64(42);
-    let mmcs = test_fri_mmcs();
+    let mmcs = test_lmcs();
 
     let params = FriParams {
         log_blowup: 2,
@@ -76,7 +76,7 @@ fn test_fri_commit_verify_arity4() {
 #[test]
 fn test_fri_verify_wrong_eval() {
     let mut rng = SmallRng::seed_from_u64(42);
-    let mmcs = test_fri_mmcs();
+    let mmcs = test_lmcs();
 
     let log_poly_degree = 8;
     let log_blowup = 2;
@@ -129,7 +129,7 @@ fn test_fri_verify_wrong_eval() {
 #[test]
 fn test_fri_verify_wrong_beta() {
     let mut rng = SmallRng::seed_from_u64(42);
-    let mmcs = test_fri_mmcs();
+    let mmcs = test_lmcs();
 
     let log_poly_degree = 8;
     let log_blowup = 2;
@@ -191,7 +191,7 @@ fn test_fri_verify_wrong_beta() {
 #[test]
 fn test_final_polynomial_correctness() {
     let mut rng = SmallRng::seed_from_u64(123);
-    let mmcs = test_fri_mmcs();
+    let mmcs = test_lmcs();
 
     let log_poly_degree = 8;
     let log_blowup = 2;

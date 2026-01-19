@@ -8,7 +8,7 @@ use crate::fri::{FriFold, FriParams};
 use crate::pcs::config::PcsConfig;
 use crate::pcs::prover::open;
 use crate::pcs::verifier::verify;
-use crate::tests::{EF, F, RATE, random_lde_matrix, test_challenger, test_fri_mmcs, test_lmcs};
+use crate::tests::{EF, F, RATE, random_lde_matrix, test_challenger, test_lmcs};
 use p3_challenger::CanObserve;
 use p3_commit::Mmcs;
 use p3_field::Field;
@@ -25,8 +25,7 @@ use rand::{Rng, SeedableRng};
 #[test]
 fn test_pcs_open_verify_roundtrip() {
     let rng = &mut SmallRng::seed_from_u64(42);
-    let lmcs = test_lmcs();
-    let mmcs = test_fri_mmcs();
+    let mmcs = test_lmcs();
 
     let config = PcsConfig {
         fri: FriParams {
@@ -61,7 +60,7 @@ fn test_pcs_open_verify_roundtrip() {
     let matrices: Vec<RowMajorMatrix<F>> = vec![matrix];
 
     // Commit matrices
-    let (commitment, prover_data) = lmcs.commit(matrices.clone());
+    let (commitment, prover_data) = mmcs.commit(matrices.clone());
     let dims: Vec<_> = matrices.iter().map(|m| m.dimensions()).collect();
 
     // Evaluation points
@@ -73,8 +72,7 @@ fn test_pcs_open_verify_roundtrip() {
     let mut prover_challenger = test_challenger();
     prover_challenger.observe(commitment);
 
-    let proof = open::<F, EF, _, _, _, _, 2>(
-        &lmcs,
+    let proof = open::<F, EF, _, _, _, 2>(
         &mmcs,
         &config,
         eval_points,
@@ -86,14 +84,13 @@ fn test_pcs_open_verify_roundtrip() {
     let mut verifier_challenger = test_challenger();
     verifier_challenger.observe(commitment);
 
-    let result = verify::<F, EF, _, _, _, 2>(
-        &lmcs,
+    let result = verify::<F, EF, _, _, 2>(
+        &mmcs,
         &[(commitment, dims)],
         eval_points,
         &proof,
         &mut verifier_challenger,
         &config,
-        &mmcs,
     );
 
     assert!(result.is_ok(), "Verification should succeed");

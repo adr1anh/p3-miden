@@ -1,16 +1,17 @@
 use alloc::vec::Vec;
-use core::marker::PhantomData;
+use core::ops::Deref;
 
 use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
-use p3_commit::Mmcs;
 use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::extension::FlatMatrixView;
 use p3_maybe_rayon::prelude::*;
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
 
 use crate::fri::FriParams;
 use crate::fri::proof::{FriProof, FriQuery};
+
 // ============================================================================
 // Prover Data Structure
 // ============================================================================
@@ -20,10 +21,18 @@ use crate::fri::proof::{FriProof, FriQuery};
 /// Contains the data needed to answer queries (Merkle prover data).
 /// The proof data (commitments, final polynomial, pow witnesses) is returned
 /// separately as `FriProof` from the constructor.
-pub struct FriPolys<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> {
+///
+/// Uses a single base-field MMCS. Extension field evaluations are flattened
+/// to base field before commitment.
+pub struct FriPolys<F, EF, Mmcs>
+where
+    F: TwoAdicField,
+    EF: ExtensionField<F>,
+    Mmcs: p3_commit::Mmcs<F>,
+{
     /// Prover data for each folding round, used to open Merkle paths at query indices.
-    folded_evals_data: Vec<FriMmcs::ProverData<RowMajorMatrix<EF>>>,
-    _marker: PhantomData<F>,
+    /// Stores flattened base-field matrices (EF elements flattened to F via FlatMatrixView).
+    folded_evals_data: Vec<Mmcs::ProverData<FlatMatrixView<F, EF, RowMajorMatrix<EF>>>>,
 }
 
 // ============================================================================
@@ -59,16 +68,23 @@ pub struct FriPolys<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> {
 //   - Adjacent rows have s values that are negatives (for arity=2)
 //   - After folding, row i maps to row i in the halved domain
 
-impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, FriMmcs> {
+impl<F, EF, Mmcs> FriPolys<F, EF, Mmcs>
+where
+    F: TwoAdicField,
+    EF: ExtensionField<F>,
+    Mmcs: p3_commit::Mmcs<F>,
+{
     /// Execute the FRI commit phase.
     ///
     /// Iteratively folds the polynomial, committing to intermediate evaluations
     /// and sampling folding challenges until reaching the target degree.
     /// Grinds for proof-of-work before each beta challenge.
     ///
+    /// Extension field evaluations are flattened to base field before commitment.
+    ///
     /// ## Arguments
     ///
-    /// - `mmcs`: The MMCS for committing to folded evaluations
+    /// - `mmcs`: The base-field MMCS for committing to folded evaluations
     /// - `params`: FRI parameters (includes per-round proof_of_work_bits)
     /// - `evals`: Initial polynomial evaluations in bit-reversed order
     /// - `challenger`: Fiat-Shamir challenger for sampling β
@@ -79,13 +95,12 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
     /// final polynomial, and per-round grinding witnesses.
     pub fn new<Challenger>(
         params: &FriParams,
-        mmcs: &FriMmcs,
+        mmcs: &Mmcs,
         evals: &[EF],
         challenger: &mut Challenger,
-    ) -> (Self, FriProof<EF, FriMmcs, Challenger::Witness>)
+    ) -> (Self, FriProof<F, EF, Mmcs, Challenger::Witness>)
     where
-        EF: ExtensionField<F>,
-        Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment> + GrindingChallenger,
+        Challenger: FieldChallenger<F> + CanObserve<Mmcs::Commitment> + GrindingChallenger,
     {
         let log_arity = params.fold.log_arity();
         let arity = params.fold.arity();
@@ -124,14 +139,12 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
         let mut folded_evals = evals.to_vec();
         while domain_size > final_domain_size {
             // ─────────────────────────────────────────────────────────────────────
-            // Reshape into matrix: each row is one coset
+            // Reshape into matrix and wrap with FlatMatrixView for commitment
             // ─────────────────────────────────────────────────────────────────────
+            // FlatMatrixView presents EF matrix as F matrix without copying.
             let matrix = RowMajorMatrix::new(folded_evals, arity);
-
-            // ─────────────────────────────────────────────────────────────────────
-            // Commit to the folded evaluations
-            // ─────────────────────────────────────────────────────────────────────
-            let (commitment, prover_data) = mmcs.commit_matrix(matrix);
+            let flat_view = FlatMatrixView::new(matrix);
+            let (commitment, prover_data) = mmcs.commit_matrix(flat_view);
             challenger.observe(commitment.clone());
 
             // ─────────────────────────────────────────────────────────────────────
@@ -144,11 +157,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
             // ─────────────────────────────────────────────────────────────────────
             // Fold all rows: f(β) = interpolate coset evaluations at β
             // ─────────────────────────────────────────────────────────────────────
-            let matrix_view = mmcs.get_matrices(&prover_data)[0];
-
-            folded_evals = params
-                .fold
-                .fold_matrix(matrix_view.as_view(), &s_invs, beta);
+            // Get the underlying EF matrix from the FlatMatrixView via Deref for folding.
+            let flat_view_ref = mmcs.get_matrices(&prover_data)[0];
+            let ef_matrix: &RowMajorMatrix<EF> = flat_view_ref.deref();
+            folded_evals = params.fold.fold_matrix(ef_matrix.as_view(), &s_invs, beta);
             // No bit-reversal needed: folded evals maintain bit-reversed order
             // because s_invs are already bit-reversed to match
 
@@ -197,10 +209,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
         }
 
         (
-            Self {
-                folded_evals_data,
-                _marker: PhantomData,
-            },
+            Self { folded_evals_data },
             FriProof {
                 commitments,
                 final_poly,
@@ -213,12 +222,8 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> FriPolys<F, EF, 
     ///
     /// Returns Merkle openings for each folding round at the given query index.
     /// The index is progressively reduced by shifting off `log_arity` bits per round.
-    pub fn open_query(
-        &self,
-        params: &FriParams,
-        mmcs: &FriMmcs,
-        index: usize,
-    ) -> FriQuery<EF, FriMmcs> {
+    /// Openings contain base field values; the verifier reconstructs extension field.
+    pub fn open_query(&self, params: &FriParams, mmcs: &Mmcs, index: usize) -> FriQuery<F, Mmcs> {
         let log_arity = params.fold.log_arity();
         let mut current_index = index;
         let openings = self

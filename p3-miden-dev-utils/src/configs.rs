@@ -153,7 +153,6 @@ macro_rules! impl_poseidon2_config {
         field_name: $field_name:literal
     ) => {
         use p3_challenger::DuplexChallenger;
-        use p3_commit::ExtensionMmcs;
         use p3_field::Field;
         use p3_field::extension::BinomialExtensionField;
         use p3_merkle_tree::MerkleTreeMmcs;
@@ -216,9 +215,6 @@ macro_rules! impl_poseidon2_config {
         /// Scalar LMCS (no SIMD packing).
         pub type ScalarLmcs = MerkleTreeLmcs<F, F, Sponge, Compress, WIDTH, DIGEST>;
 
-        /// FRI MMCS for extension field elements.
-        pub type FriMmcs = ExtensionMmcs<F, EF, BaseLmcs>;
-
         /// Duplex challenger for Fiat-Shamir.
         pub type Challenger = DuplexChallenger<F, Perm, WIDTH, RATE>;
 
@@ -251,11 +247,6 @@ macro_rules! impl_poseidon2_config {
         pub fn base_lmcs() -> BaseLmcs {
             let (_, sponge, compress) = test_components();
             BaseLmcs::new(sponge, compress)
-        }
-
-        /// Create standard FRI MMCS for testing.
-        pub fn test_fri_mmcs() -> FriMmcs {
-            FriMmcs::new(base_lmcs())
         }
 
         // =====================================================================
