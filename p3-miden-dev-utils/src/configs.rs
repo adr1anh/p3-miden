@@ -156,7 +156,7 @@ macro_rules! impl_poseidon2_config {
         use p3_field::Field;
         use p3_field::extension::BinomialExtensionField;
         use p3_merkle_tree::MerkleTreeMmcs;
-        use p3_miden_lmcs::MerkleTreeLmcs;
+        use p3_miden_lmcs::LmcsMmcs;
         use p3_miden_stateful_hasher::StatefulSponge;
         use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
         use rand::SeedableRng;
@@ -210,10 +210,10 @@ macro_rules! impl_poseidon2_config {
         pub type ScalarMmcs = MerkleTreeMmcs<F, F, MmcsSponge, Compress, DIGEST>;
 
         /// Base LMCS (Lifted Matrix Commitment Scheme) over packed field.
-        pub type BaseLmcs = MerkleTreeLmcs<P, P, Sponge, Compress, WIDTH, DIGEST>;
+        pub type BaseLmcs = LmcsMmcs<P, P, Sponge, Compress, WIDTH, DIGEST>;
 
         /// Scalar LMCS (no SIMD packing).
-        pub type ScalarLmcs = MerkleTreeLmcs<F, F, Sponge, Compress, WIDTH, DIGEST>;
+        pub type ScalarLmcs = LmcsMmcs<F, F, Sponge, Compress, WIDTH, DIGEST>;
 
         /// Duplex challenger for Fiat-Shamir.
         pub type Challenger = DuplexChallenger<F, Perm, WIDTH, RATE>;

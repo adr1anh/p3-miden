@@ -9,7 +9,7 @@ use p3_miden_dev_utils::configs::goldilocks_poseidon2 as gl;
 use p3_miden_dev_utils::{
     BabyBearKeccak, BabyBearPoseidon2, BenchScenario, GoldilocksKeccak, GoldilocksPoseidon2,
 };
-use p3_miden_lmcs::MerkleTreeLmcs;
+use p3_miden_lmcs::LmcsMmcs;
 use p3_miden_stateful_hasher::{SerializingStatefulSponge, StatefulSponge};
 
 // =============================================================================
@@ -25,7 +25,7 @@ pub type GoldilocksLmcs = gl::BaseLmcs;
 
 type KeccakStatefulSponge = StatefulSponge<KeccakF, 25, 17, 4>;
 
-pub type BabyBearKeccakLmcs = MerkleTreeLmcs<
+pub type BabyBearKeccakLmcs = LmcsMmcs<
     bb_keccak::F,
     u64,
     SerializingStatefulSponge<KeccakStatefulSponge>,
@@ -34,7 +34,7 @@ pub type BabyBearKeccakLmcs = MerkleTreeLmcs<
     4,
 >;
 
-pub type GoldilocksKeccakLmcs = MerkleTreeLmcs<
+pub type GoldilocksKeccakLmcs = LmcsMmcs<
     gl_keccak::F,
     u64,
     SerializingStatefulSponge<KeccakStatefulSponge>,
@@ -84,7 +84,7 @@ impl LmcsScenario for BabyBearKeccak {
     fn lmcs() -> Self::Lmcs {
         let stateful = KeccakStatefulSponge::new(KeccakF {});
         let mmcs_sponge = bb_keccak::KeccakMmcsSponge::new(KeccakF {});
-        MerkleTreeLmcs::new(
+        LmcsMmcs::new(
             SerializingStatefulSponge::new(stateful),
             bb_keccak::KeccakCompress::new(mmcs_sponge),
         )
@@ -97,7 +97,7 @@ impl LmcsScenario for GoldilocksKeccak {
     fn lmcs() -> Self::Lmcs {
         let stateful = KeccakStatefulSponge::new(KeccakF {});
         let mmcs_sponge = gl_keccak::KeccakMmcsSponge::new(KeccakF {});
-        MerkleTreeLmcs::new(
+        LmcsMmcs::new(
             SerializingStatefulSponge::new(stateful),
             gl_keccak::KeccakCompress::new(mmcs_sponge),
         )

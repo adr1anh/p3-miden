@@ -4,6 +4,12 @@
 //! authentication paths are shared. This module provides compact proof
 //! representations that store each sibling only once.
 //!
+//! # Proof Types
+//!
+//! - [`Opening`]: Per-query row data with optional salt.
+//! - [`Proof`]: Unified multi-opening proof with openings and compact siblings.
+//! - [`CompactProof`]: Low-level compact Merkle siblings (deduplicated).
+//!
 //! # Usage
 //!
 //! **Prover** (has Merkle tree, creates compact proof):
@@ -20,9 +26,133 @@
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+use serde::{Deserialize, Serialize};
 
 use p3_symmetric::PseudoCompressionFunction;
 use thiserror::Error;
+
+// ============================================================================
+// High-Level Proof Types
+// ============================================================================
+
+/// Per-query row data with optional salt.
+///
+/// Groups the opened rows and salt for a single query index.
+///
+/// # Type Parameters
+///
+/// - `F`: Field element type.
+/// - `Salt`: Salt type. Use `()` for non-hiding, `[F; N]` for hiding with N salt elements.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "F: Serialize, Salt: Serialize",
+    deserialize = "F: Deserialize<'de>, Salt: Deserialize<'de>"
+))]
+pub struct Opening<F, Salt = ()> {
+    /// Opened rows: `rows[matrix_idx]` = row data for that matrix.
+    rows: Vec<Vec<F>>,
+    /// Salt for this leaf. Zero-sized when `Salt = ()`.
+    salt: Salt,
+}
+
+impl<F, Salt> Opening<F, Salt> {
+    /// Create a new opening from rows and salt.
+    #[inline]
+    pub fn new(rows: Vec<Vec<F>>, salt: Salt) -> Self {
+        Self { rows, salt }
+    }
+
+    /// Returns the opened rows (one per committed matrix).
+    #[inline]
+    pub fn rows(&self) -> &[Vec<F>] {
+        &self.rows
+    }
+
+    /// Returns the salt for this opening.
+    #[inline]
+    pub fn salt(&self) -> &Salt {
+        &self.salt
+    }
+}
+
+/// Unified multi-opening proof for LMCS with optional salt.
+///
+/// Contains openings (rows + salt per query) and compact Merkle siblings.
+/// The indices are **not** stored in the proof—they must be supplied by the
+/// verifier during verification. This design ensures the verifier controls
+/// which positions are being opened.
+///
+/// # Type Parameters
+///
+/// - `F`: Field element type.
+/// - `D`: Digest element type.
+/// - `DIGEST_ELEMS`: Number of elements in each digest.
+/// - `Salt`: Salt type. Use `()` for non-hiding, `[F; N]` for hiding with N salt elements.
+///
+/// # Structure
+///
+/// - `openings[query_idx]` contains the rows and salt for that query.
+/// - `siblings` is a [`CompactProof`] containing deduplicated Merkle siblings.
+///
+/// # Verification
+///
+/// The verifier supplies the indices and calls `verify()`, which:
+/// 1. Validates that the proof structure matches the expected dimensions
+/// 2. Recomputes the Merkle root from opened rows, salt, and siblings
+/// 3. Compares against the commitment
+/// 4. Returns references to the opened rows on success
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "F: Serialize, [D; DIGEST_ELEMS]: Serialize, Salt: Serialize",
+    deserialize = "F: Deserialize<'de>, [D; DIGEST_ELEMS]: Deserialize<'de>, Salt: Deserialize<'de>"
+))]
+pub struct Proof<F, D, const DIGEST_ELEMS: usize, Salt = ()> {
+    /// Openings: `openings[query_idx]` contains rows and salt for that query.
+    openings: Vec<Opening<F, Salt>>,
+    /// Compact Merkle siblings (deduplicated).
+    siblings: CompactProof<[D; DIGEST_ELEMS]>,
+}
+
+impl<F, D, const DIGEST_ELEMS: usize, Salt> Proof<F, D, DIGEST_ELEMS, Salt> {
+    /// Create a new proof from openings and compact siblings.
+    #[inline]
+    pub fn new(openings: Vec<Opening<F, Salt>>, siblings: CompactProof<[D; DIGEST_ELEMS]>) -> Self {
+        Self { openings, siblings }
+    }
+
+    /// Returns the openings (one per query).
+    #[inline]
+    pub fn openings(&self) -> &[Opening<F, Salt>] {
+        &self.openings
+    }
+
+    /// Returns the number of opened indices.
+    #[inline]
+    pub fn num_queries(&self) -> usize {
+        self.openings.len()
+    }
+
+    /// Recompute the Merkle root from opened leaves and sibling proof.
+    ///
+    /// Delegates to [`CompactProof::recompute_root`].
+    #[inline]
+    pub fn recompute_root<C>(
+        &self,
+        depth: usize,
+        leaves: &[(usize, [D; DIGEST_ELEMS])],
+        compress: &C,
+    ) -> Result<[D; DIGEST_ELEMS], CompactProofError>
+    where
+        [D; DIGEST_ELEMS]: Clone,
+        C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>,
+    {
+        self.siblings.recompute_root(depth, leaves, compress)
+    }
+}
+
+// ============================================================================
+// Low-Level Proof Structures
+// ============================================================================
 
 /// 1-based heap index for binary tree nodes.
 ///
@@ -32,7 +162,7 @@ use thiserror::Error;
 /// - Right child of node i is at 2*i + 1
 /// - Parent of node i is at i/2
 /// - Sibling of node i is at i XOR 1
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NodeIndex(u64);
 
 impl NodeIndex {
@@ -83,7 +213,8 @@ pub struct IndexedPath<H> {
 ///
 /// Each sibling hash is keyed by its NodeIndex, guaranteeing uniqueness
 /// and providing natural ordering for deterministic serialization.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "H: Serialize", deserialize = "H: Deserialize<'de>"))]
 pub struct CompactProof<H>(pub(crate) BTreeMap<NodeIndex, H>);
 
 impl<H: Clone> CompactProof<H> {
@@ -199,7 +330,7 @@ impl<H: Clone> CompactProof<H> {
         depth: usize,
         leaves: &[(usize, H)],
         compress: &C,
-    ) -> Result<H, MultiOpeningError>
+    ) -> Result<H, CompactProofError>
     where
         C: PseudoCompressionFunction<H, 2>,
     {
@@ -228,7 +359,7 @@ impl<H: Clone> CompactProof<H> {
         depth: usize,
         leaves: &[(usize, H)],
         compress: &C,
-    ) -> Result<Vec<IndexedPath<H>>, MultiOpeningError>
+    ) -> Result<Vec<IndexedPath<H>>, CompactProofError>
     where
         C: PseudoCompressionFunction<H, 2>,
     {
@@ -265,7 +396,7 @@ impl<H: Clone> PartialTree<H> {
         depth: usize,
         leaves: &[(usize, H)],
         proof: &CompactProof<H>,
-    ) -> Result<Self, MultiOpeningError> {
+    ) -> Result<Self, CompactProofError> {
         // Build leaf map, checking for duplicates.
         let mut nodes: BTreeMap<NodeIndex, H> = leaves
             .iter()
@@ -273,7 +404,7 @@ impl<H: Clone> PartialTree<H> {
             .collect();
 
         if nodes.len() != leaves.len() {
-            return Err(MultiOpeningError::DuplicateLeaf);
+            return Err(CompactProofError::DuplicateLeaf);
         }
 
         // Validate proof by traversing tree and counting sibling usage.
@@ -281,7 +412,7 @@ impl<H: Clone> PartialTree<H> {
 
         // All proof siblings must have been used.
         if used_count != proof.len() {
-            return Err(MultiOpeningError::UnusedSibling);
+            return Err(CompactProofError::UnusedSibling);
         }
 
         // Merge validated proof siblings into nodes.
@@ -300,7 +431,7 @@ impl<H: Clone> PartialTree<H> {
         max_depth: usize,
         leaves: &BTreeMap<NodeIndex, H>,
         proof: &CompactProof<H>,
-    ) -> Result<usize, MultiOpeningError> {
+    ) -> Result<usize, CompactProofError> {
         if leaves.contains_key(&idx) {
             return Ok(0);
         }
@@ -308,7 +439,7 @@ impl<H: Clone> PartialTree<H> {
             return Ok(1);
         }
         if current_depth >= max_depth {
-            return Err(MultiOpeningError::MissingSibling);
+            return Err(CompactProofError::MissingSibling);
         }
 
         let left = Self::validate_subtree(
@@ -373,7 +504,7 @@ impl<H: Clone> PartialTree<H> {
 
 /// Error type for multi-opening proof operations.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum MultiOpeningError {
+pub enum CompactProofError {
     /// Proof is missing required sibling hashes.
     #[error("proof is missing required sibling hashes")]
     MissingSibling,
@@ -494,7 +625,7 @@ mod tests {
         let proof = CompactProof([(leaf(1), leaves[1])].into_iter().collect());
         let result = proof.recompute_root(DEPTH, &[(0, leaves[0])], &c);
 
-        assert_eq!(result, Err(MultiOpeningError::MissingSibling));
+        assert_eq!(result, Err(CompactProofError::MissingSibling));
     }
 
     #[test]
@@ -514,7 +645,7 @@ mod tests {
         );
         let result = proof.recompute_root(DEPTH, &[(0, leaves[0])], &c);
 
-        assert_eq!(result, Err(MultiOpeningError::UnusedSibling));
+        assert_eq!(result, Err(CompactProofError::UnusedSibling));
     }
 
     #[test]
@@ -529,6 +660,6 @@ mod tests {
         );
         let result = proof.recompute_root(DEPTH, &[(0, leaves[0]), (0, [99])], &c);
 
-        assert_eq!(result, Err(MultiOpeningError::DuplicateLeaf));
+        assert_eq!(result, Err(CompactProofError::DuplicateLeaf));
     }
 }

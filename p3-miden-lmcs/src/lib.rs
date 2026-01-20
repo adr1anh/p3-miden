@@ -5,9 +5,41 @@
 //!
 //! # Main Types
 //!
-//! - [`MerkleTreeLmcs`]: Non-hiding lifted MMCS
-//! - [`MerkleTreeHidingLmcs`]: Hiding variant with random salt per leaf
+//! - [`LmcsConfig`]: Simple configuration holding cryptographic primitives (sponge + compression)
+//! - [`LmcsMmcs`]: MMCS-compatible wrapper with full type parameters (for FRI integration)
 //! - [`LiftedMerkleTree`]: The underlying Merkle tree data structure
+//! - [`Proof`]: Multi-opening proof with opened rows and compact Merkle siblings
+//!
+//! # API Overview
+//!
+//! ## Direct Usage (Simple)
+//!
+//! ```ignore
+//! use p3_miden_lmcs::LmcsConfig;
+//!
+//! // Config captures F, D, H, C, WIDTH, DIGEST, SALT (default 0 for non-hiding)
+//! let config = LmcsConfig::<F, D, _, _, WIDTH, DIGEST>::new(sponge, compress);
+//!
+//! // Build tree - only packed types needed in turbofish
+//! let tree = config.build_tree::<PF, PD, _>(matrices);
+//! let root = tree.root();
+//! let proof = tree.open_multi(&indices);
+//! let rows = config.verify(&root, &dims, &indices, &proof)?;
+//!
+//! // For hiding commitment with salt, specify SALT in the config type
+//! let hiding_config = LmcsConfig::<F, D, _, _, WIDTH, DIGEST, 4>::new(sponge, compress);
+//! let tree = hiding_config.build_tree_hiding::<PF, PD, _>(matrices, &mut rng);
+//! ```
+//!
+//! ## MMCS Integration (for FRI)
+//!
+//! ```ignore
+//! use p3_miden_lmcs::LmcsMmcs;
+//! use p3_commit::Mmcs;
+//!
+//! let mmcs = LmcsMmcs::<P, P, Sponge, Compress, WIDTH, DIGEST>::new(sponge, compress);
+//! let (commitment, prover_data) = mmcs.commit(matrices);
+//! ```
 //!
 //! # Mathematical Foundation
 //!
@@ -72,58 +104,80 @@
 
 extern crate alloc;
 
+mod lifted_tree;
+mod mmcs;
+pub mod proof;
+pub mod utils;
+
 use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
 
-use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::PackedValue;
 use p3_matrix::{Dimensions, Matrix};
 use p3_miden_stateful_hasher::StatefulHasher;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 use p3_util::log2_strict_usize;
-use serde::{Deserialize, Serialize};
+use rand::Rng;
+use rand::distr::{Distribution, StandardUniform};
 use thiserror::Error;
 
-mod hiding_lmcs;
-mod lifted_tree;
-pub mod proof;
-pub mod utils;
+// ============================================================================
+// Public Re-exports
+// ============================================================================
 
-pub use hiding_lmcs::MerkleTreeHidingLmcs;
-pub use lifted_tree::LiftedMerkleTree;
-pub use proof::{CompactProof, IndexedPath, MultiOpeningError, NodeIndex};
+pub use lifted_tree::{LiftedHidingMerkleTree, LiftedMerkleTree};
+pub use mmcs::{HidingLmcsMmcs, LmcsMmcs};
+pub use proof::{CompactProof, CompactProofError, IndexedPath, NodeIndex, Opening, Proof};
 
-/// Lifted MMCS built on top of [`LiftedMerkleTree`].
+// ============================================================================
+// Configuration
+// ============================================================================
+
+/// Configuration for Lifted Matrix Commitment Scheme (LMCS).
 ///
-/// Matrices of different heights are aligned to the tallest height via nearest-neighbor
-/// upsampling. For a matrix of height `n` lifted to `N`, each original row is duplicated
-/// contiguously `r = N / n` times, and the lifted index map is `i ↦ floor(i / r)` (with `r` a
-/// power of two). This produces blocks of identical rows.
+/// Holds the cryptographic primitives needed for committing to matrices
+/// and verifying openings. This type is typically constructed once and
+/// reused for multiple commit/verify operations.
 ///
-/// Conceptually, each matrix is virtually extended vertically to height `N` (width unchanged)
-/// and the leaf at index `i` absorbs the `i`-th row from each extended matrix.
+/// # Type Parameters
 ///
-/// Equivalent single-matrix view: the scheme is equivalent to lifting every matrix to height `N`,
-/// padding each horizontally with zeros to a multiple of the hasher's padding width, and
-/// concatenating them side-by-side into one matrix. The Merkle tree and verification behavior are
-/// identical to committing to and opening that single concatenated matrix.
+/// - `F`: Field element type (scalar) for matrix data.
+/// - `D`: Digest element type (scalar) for hash outputs.
+/// - `H`: Stateful hasher/sponge type for hashing matrix rows.
+/// - `C`: 2-to-1 compression function type for building tree nodes.
+/// - `WIDTH`: State width for the hasher.
+/// - `DIGEST`: Number of elements in a digest.
+///
+/// # Example
+///
+/// ```ignore
+/// use p3_miden_lmcs::LmcsConfig;
+///
+/// let config = LmcsConfig::<F, D, _, _, WIDTH, DIGEST>::new(sponge, compress);
+///
+/// // Build tree using config builder (only packed types needed)
+/// let tree = config.build_tree::<PF, PD, _>(matrices);
+/// let root = tree.root();
+/// let proof = tree.open_multi(&indices);
+/// ```
+///
+/// For MMCS trait integration, use [`LmcsMmcs`](crate::LmcsMmcs) which wraps
+/// this config with the additional type parameters required by the trait.
 #[derive(Copy, Clone, Debug)]
-pub struct MerkleTreeLmcs<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize> {
-    pub(crate) sponge: H,
-    pub(crate) compress: C,
-    _phantom: PhantomData<(PF, PD)>,
+pub struct LmcsConfig<F, D, H, C, const WIDTH: usize, const DIGEST: usize, const SALT: usize = 0> {
+    /// Stateful sponge for hashing matrix rows into leaf digests.
+    pub sponge: H,
+    /// 2-to-1 compression function for building internal tree nodes.
+    pub compress: C,
+    _phantom: PhantomData<(F, D)>,
 }
 
-impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize>
-    MerkleTreeLmcs<PF, PD, H, C, WIDTH, DIGEST_ELEMS>
+impl<F, D, H, C, const WIDTH: usize, const DIGEST: usize, const SALT: usize>
+    LmcsConfig<F, D, H, C, WIDTH, DIGEST, SALT>
 {
-    /// Create a new lifted Merkle tree commitment scheme.
-    ///
-    /// # Arguments
-    ///
-    /// - `sponge`: Stateful sponge for hashing matrix rows into leaf digests.
-    /// - `compress`: 2-to-1 compression function for building internal tree nodes.
+    /// Create a new LMCS configuration.
+    #[inline]
     pub const fn new(sponge: H, compress: C) -> Self {
         Self {
             sponge,
@@ -131,158 +185,239 @@ impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize>
             _phantom: PhantomData,
         }
     }
+}
 
-    /// Recompute the Merkle root from opened rows and an authentication path.
+impl<F, D, H, C, const WIDTH: usize, const DIGEST: usize, const SALT: usize>
+    LmcsConfig<F, D, H, C, WIDTH, DIGEST, SALT>
+where
+    F: Default + Copy + PartialEq,
+    D: Default + Copy + PartialEq + Send + Sync,
+    H: StatefulHasher<F, [D; DIGEST], State = [D; WIDTH]>,
+    C: PseudoCompressionFunction<[D; DIGEST], 2>,
+{
+    /// Verify a multi-opening proof and return references to the opened rows.
     ///
-    /// Used internally during verification to reconstruct the root hash from:
-    /// - `rows`: the opened matrix rows at the given index
-    /// - `index`: the leaf index that was opened
-    /// - `dimensions`: the dimensions of each committed matrix
-    /// - `proof`: the Merkle authentication path (sibling digests)
-    /// - `salt`: optional salt row that was absorbed after the matrix rows
+    /// This unified verify function handles both non-hiding (`SALT = 0`) and
+    /// hiding (`SALT > 0`) proofs based on the struct's `SALT` parameter.
     ///
-    /// This absorbs the rows (and optional salt) into a fresh sponge state, squeezes to
-    /// get the leaf digest, then follows the authentication path up to the root.
+    /// # Arguments
+    ///
+    /// - `commitment`: The commitment (root hash) to verify against.
+    /// - `dimensions`: Dimensions of each committed matrix.
+    /// - `indices`: The indices being opened (supplied by verifier).
+    /// - `proof`: The multi-opening proof.
+    ///
+    /// # Returns
+    ///
+    /// On success, returns `Ok(rows)` where `rows[query_idx][matrix_idx]` is a
+    /// slice of the opened row data.
     ///
     /// # Errors
-    /// Returns `LmcsError` if any validation fails (wrong dimensions, out of bounds index, etc.).
-    fn compute_root(
+    ///
+    /// Returns `Err` if verification fails (root mismatch, wrong dimensions, etc.).
+    pub fn verify<'a>(
         &self,
-        rows: &[Vec<PF::Value>],
-        index: usize,
+        commitment: &Hash<F, D, DIGEST>,
         dimensions: &[Dimensions],
-        proof: &[[PD::Value; DIGEST_ELEMS]],
-        salt: Option<&[PF::Value]>,
-    ) -> Result<Hash<PF::Value, PD::Value, DIGEST_ELEMS>, LmcsError>
-    where
-        PF: PackedValue + Default,
-        PD: PackedValue + Default,
-        H: StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>,
-        C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>,
-    {
-        // Verify that the number of opened rows matches the number of matrix dimensions
-        if dimensions.len() != rows.len() {
+        indices: &[usize],
+        proof: &'a Proof<F, D, DIGEST, [F; SALT]>,
+    ) -> Result<Vec<Vec<&'a [F]>>, LmcsError> {
+        // Validate proof structure
+        if indices.len() != proof.num_queries() {
+            return Err(LmcsError::WrongBatchSize);
+        }
+
+        if dimensions.is_empty() {
             return Err(LmcsError::WrongBatchSize);
         }
 
         let final_height = dimensions.last().unwrap().height;
-        // Verify that the leaf index is within the tree bounds
-        if index >= final_height {
-            return Err(LmcsError::IndexOutOfBounds);
-        }
+        let depth = log2_strict_usize(final_height);
 
-        let expected_proof_len = log2_strict_usize(final_height);
-        // Verify that the authentication path has the correct length for the tree height
-        if proof.len() != expected_proof_len {
-            return Err(LmcsError::WrongProofLen);
-        }
-
-        let mut state = [PD::Value::default(); WIDTH];
-        for (idx, (row, dimension)) in zip(rows, dimensions).enumerate() {
-            if row.len() != dimension.width {
-                return Err(LmcsError::WrongWidth { matrix: idx });
+        // Validate all indices are in bounds
+        for &index in indices {
+            if index >= final_height {
+                return Err(LmcsError::IndexOutOfBounds);
             }
-            self.sponge.absorb_into(&mut state, row.iter().copied());
         }
 
-        if let Some(salt) = salt {
-            self.sponge.absorb_into(&mut state, salt.iter().copied());
+        // Compute leaf digests for each opened index
+        let leaves: Vec<(usize, [D; DIGEST])> = indices
+            .iter()
+            .zip(proof.openings().iter())
+            .map(|(&index, opening)| {
+                let digest = compute_leaf_digest(
+                    &self.sponge,
+                    opening.rows(),
+                    dimensions.iter().map(|d| d.width),
+                    opening.salt(),
+                )?;
+                Ok((index, digest))
+            })
+            .collect::<Result<_, LmcsError>>()?;
+
+        // Recompute root from leaves and siblings
+        let computed_root = proof
+            .recompute_root(depth, &leaves, &self.compress)
+            .map_err(|_| LmcsError::RootMismatch)?;
+
+        // Compare against commitment
+        if Hash::from(computed_root) != *commitment {
+            return Err(LmcsError::RootMismatch);
         }
 
-        let mut digest = self.sponge.squeeze(&state);
+        // Return references to opened rows
+        let result = proof
+            .openings()
+            .iter()
+            .map(|opening| opening.rows().iter().map(|r| r.as_slice()).collect())
+            .collect();
 
-        let mut current_index = index;
-        for sibling in proof {
-            let (left, right) = if current_index & 1 == 0 {
-                (digest, *sibling)
-            } else {
-                (*sibling, digest)
-            };
-            digest = self.compress.compress([left, right]);
-            current_index >>= 1;
-        }
-
-        Ok(digest.into())
+        Ok(result)
     }
-}
 
-impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize> Mmcs<PF::Value>
-    for MerkleTreeLmcs<PF, PD, H, C, WIDTH, DIGEST_ELEMS>
-where
-    PF: PackedValue + Default,
-    PD: PackedValue + Default,
-    H: StatefulHasher<PF, [PD; DIGEST_ELEMS], State = [PD; WIDTH]>
-        + StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>
-        + Sync,
-    C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>
-        + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
-        + Sync,
-    [PD::Value; DIGEST_ELEMS]: Serialize + for<'de> Deserialize<'de>,
-{
-    type ProverData<M> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST_ELEMS>;
-    type Commitment = Hash<PF::Value, PD::Value, DIGEST_ELEMS>;
-    type Proof = Vec<[PD::Value; DIGEST_ELEMS]>;
-    type Error = LmcsError;
-
-    fn commit<M: Matrix<PF::Value>>(
+    /// Build a lifted Merkle tree from matrices.
+    ///
+    /// This is a convenience method that encapsulates the hasher, compression function,
+    /// and const parameters, requiring only the packed value types and matrix type.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `PF`: Packed field element type (use `F` for scalar, `F::Packing` for SIMD).
+    /// - `PD`: Packed digest element type (use `D` for scalar, `D::Packing` for SIMD).
+    /// - `M`: Matrix type implementing `Matrix<F>`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = LmcsConfig::<F, D, _, _, WIDTH, DIGEST>::new(sponge, compress);
+    /// let tree = config.build_tree::<PF, PD, _>(matrices);
+    /// let root = tree.root();
+    /// ```
+    pub fn build_tree<PF, PD, M>(
         &self,
-        inputs: Vec<M>,
-    ) -> (Self::Commitment, Self::ProverData<M>) {
-        let tree = LiftedMerkleTree::new_with_optional_salt::<PF, PD, H, C, WIDTH>(
+        leaves: Vec<M>,
+    ) -> LiftedHidingMerkleTree<F, D, M, DIGEST, SALT>
+    where
+        PF: PackedValue<Value = F> + Default,
+        PD: PackedValue<Value = D> + Default,
+        F: Send + Sync,
+        M: Matrix<F>,
+        H: StatefulHasher<PF, [PD; DIGEST], State = [PD; WIDTH]> + Sync,
+        C: PseudoCompressionFunction<[PD; DIGEST], 2> + Sync,
+    {
+        const { assert!(SALT == 0, "SALT must be 0; use `build_tree_hiding` instead") }
+
+        LiftedHidingMerkleTree::build::<PF, PD, H, C, WIDTH>(
             &self.sponge,
             &self.compress,
-            inputs,
+            leaves,
             None,
-        );
-        let root = tree.root();
-
-        (root, tree)
+        )
     }
 
-    fn open_batch<M: Matrix<PF::Value>>(
+    /// Build a hiding lifted Merkle tree with randomly generated salt.
+    ///
+    /// This is a convenience method that encapsulates the hasher, compression function,
+    /// and const parameters, requiring only the packed value types and matrix type.
+    /// The salt size is determined by the config's `SALT` parameter.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `PF`: Packed field element type (use `F` for scalar, `F::Packing` for SIMD).
+    /// - `PD`: Packed digest element type (use `D` for scalar, `D::Packing` for SIMD).
+    /// - `M`: Matrix type implementing `Matrix<F>`.
+    /// - `R`: Random number generator type.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = LmcsConfig::<F, D, _, _, WIDTH, DIGEST, 4>::new(sponge, compress);
+    /// let tree = config.build_tree_hiding::<PF, PD, _>(matrices, &mut rng);
+    /// let root = tree.root();
+    /// ```
+    pub fn build_tree_hiding<PF, PD, M>(
         &self,
-        index: usize,
-        tree: &Self::ProverData<M>,
-    ) -> BatchOpening<PF::Value, Self> {
-        let final_height = tree.height();
-        assert!(
-            index < final_height,
-            "index {index} out of range {final_height}"
-        );
+        leaves: Vec<M>,
+        rng: &mut impl Rng,
+    ) -> LiftedHidingMerkleTree<F, D, M, DIGEST, SALT>
+    where
+        StandardUniform: Distribution<F>,
+        PF: PackedValue<Value = F> + Default,
+        PD: PackedValue<Value = D> + Default,
+        F: Send + Sync,
+        M: Matrix<F>,
+        H: StatefulHasher<PF, [PD; DIGEST], State = [PD; WIDTH]> + Sync,
+        C: PseudoCompressionFunction<[PD; DIGEST], 2> + Sync,
+    {
+        use p3_matrix::dense::RowMajorMatrix;
 
-        let opened_rows = tree.rows(index);
+        const { assert!(SALT > 0, "SALT must be > 0; use `build_tree` instead") }
 
-        let proof = tree.authentication_path(index);
+        // Determine tree height from the tallest matrix
+        let tree_height = leaves.last().map(|m| m.height()).unwrap_or(0);
 
-        BatchOpening::new(opened_rows, proof)
-    }
+        // Generate salt matrix only when SALT > 0
+        let salt = RowMajorMatrix::rand(rng, tree_height, SALT);
 
-    fn get_matrices<'a, M: Matrix<PF::Value>>(&self, tree: &'a Self::ProverData<M>) -> Vec<&'a M> {
-        // Return references to the originally committed matrices in original order.
-        tree.leaves.iter().collect()
-    }
-
-    fn verify_batch(
-        &self,
-        commit: &Self::Commitment,
-        dimensions: &[Dimensions],
-        index: usize,
-        batch_opening: BatchOpeningRef<'_, PF::Value, Self>,
-    ) -> Result<(), Self::Error> {
-        let (opened_values, opening_proof) = batch_opening.unpack();
-
-        let expected_root =
-            self.compute_root(opened_values, index, dimensions, opening_proof, None)?;
-
-        if &expected_root == commit {
-            Ok(())
-        } else {
-            Err(LmcsError::RootMismatch)
-        }
+        LiftedHidingMerkleTree::build::<PF, PD, H, C, WIDTH>(
+            &self.sponge,
+            &self.compress,
+            leaves,
+            Some(salt),
+        )
     }
 }
 
-/// Errors that can occur during Merkle verification.
+// ============================================================================
+// Verification Helpers
+// ============================================================================
+
+/// Compute leaf digest from rows and salt.
+///
+/// This is the shared implementation used by both [`LmcsConfig::verify`]
+/// and [`LmcsMmcs::verify_batch`].
+///
+/// # Arguments
+///
+/// - `sponge`: The stateful hasher for absorbing row data.
+/// - `rows`: Opened rows (one per committed matrix).
+/// - `widths`: Expected width for each row.
+/// - `salt`: Salt elements (empty slice for non-hiding).
+///
+/// # Errors
+///
+/// Returns `Err` if any row width doesn't match the corresponding expected width.
+fn compute_leaf_digest<F, D, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
+    sponge: &H,
+    rows: &[Vec<F>],
+    widths: impl IntoIterator<Item = usize>,
+    salt: &[F],
+) -> Result<[D; DIGEST_ELEMS], LmcsError>
+where
+    F: Default + Copy,
+    D: Default + Copy,
+    H: StatefulHasher<F, [D; DIGEST_ELEMS], State = [D; WIDTH]>,
+{
+    let mut state = [D::default(); WIDTH];
+    for (idx, (row, width)) in zip(rows, widths).enumerate() {
+        if row.len() != width {
+            return Err(LmcsError::WrongWidth { matrix: idx });
+        }
+        sponge.absorb_into(&mut state, row.iter().copied());
+    }
+
+    // Absorb salt (no-op when salt is empty)
+    sponge.absorb_into(&mut state, salt.iter().copied());
+
+    Ok(sponge.squeeze(&state))
+}
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during LMCS operations.
 #[derive(Debug, Error)]
 pub enum LmcsError {
     /// Number of opened rows doesn't match number of committed matrices.

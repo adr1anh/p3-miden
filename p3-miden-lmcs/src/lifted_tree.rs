@@ -2,6 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::{array, mem};
 
+use crate::proof;
 use crate::utils::PackedValueExt;
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
@@ -14,9 +15,13 @@ use serde::{Deserialize, Serialize};
 
 /// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///
+/// # Type Parameters
+///
 /// * `F` – scalar field element type used in both matrices and digests.
+/// * `D` – digest element type.
 /// * `M` – matrix type. Must implement [`Matrix<F>`].
-/// * `DIGEST_ELEMS` – number of `F` elements in one digest.
+/// * `DIGEST_ELEMS` – number of elements in one digest.
+/// * `SALT_ELEMS` – number of salt elements per leaf (0 = non-hiding, >0 = hiding).
 ///
 /// Unlike the standard `MerkleTree`, this uniform variant requires:
 /// - **All matrix heights must be powers of two**
@@ -45,7 +50,7 @@ use serde::{Deserialize, Serialize};
 /// This generally shouldn't be used directly. If you're using a Merkle tree as an MMCS,
 /// see the MMCS wrapper types.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize> {
+pub struct LiftedHidingMerkleTree<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize = 0> {
     /// All leaf matrices in insertion order.
     ///
     /// Matrices must be sorted by height (shortest to tallest) and all heights must be
@@ -61,51 +66,37 @@ pub struct LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize> {
     ///
     /// Every inner vector holds contiguous digests. Higher layers are built by
     /// compressing pairs from the previous layer.
-    ///
-    /// Serialization requires that `[F; DIGEST_ELEMS]` implements `Serialize` and
-    /// `Deserialize`. This is automatically satisfied when `F` is a fixed-size type.
-    #[serde(
-        bound(serialize = "[D; DIGEST_ELEMS]: Serialize"),
-        bound(deserialize = "[D; DIGEST_ELEMS]: Deserialize<'de>")
-    )]
+    #[serde(bound(
+        serialize = "[D; DIGEST_ELEMS]: Serialize",
+        deserialize = "[D; DIGEST_ELEMS]: Deserialize<'de>"
+    ))]
     pub(crate) digest_layers: Vec<Vec<[D; DIGEST_ELEMS]>>,
 
+    /// Salt matrix for hiding commitment. Each row contains `SALT_ELEMS` random field elements.
+    /// `None` when `SALT_ELEMS = 0` (non-hiding mode).
     pub(crate) salt: Option<RowMajorMatrix<F>>,
 }
 
-impl<F, D, M, const DIGEST_ELEMS: usize> LiftedMerkleTree<F, D, M, DIGEST_ELEMS>
+/// Type alias for non-hiding lifted Merkle tree (`SALT_ELEMS = 0`).
+///
+/// This is the default configuration for most use cases. Use [`LiftedHidingMerkleTree`]
+/// with `SALT_ELEMS > 0` when hiding commitment is needed.
+pub type LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize> =
+    LiftedHidingMerkleTree<F, D, M, DIGEST_ELEMS, 0>;
+
+impl<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
+    LiftedHidingMerkleTree<F, D, M, DIGEST_ELEMS, SALT_ELEMS>
 where
-    F: Clone + Send + Sync,
+    F: Copy + Default + Send + Sync,
+    D: Copy + PartialEq + Send + Sync,
     M: Matrix<F>,
 {
-    /// Build a uniform tree from matrices with power-of-two heights, with optional salt for hiding.
-    ///
-    /// - `h`: stateful sponge used for incremental hashing of matrix rows.
-    /// - `c`: 2-to-1 compression function used on digests.
-    /// - `leaves`: matrices to commit. Must be non-empty, sorted by height (shortest to tallest),
-    ///   and all heights must be powers of two.
-    /// - `salt`: optional salt matrix absorbed into each leaf state prior to squeezing. When provided,
-    ///   must have height equal to the final number of leaves. The width determines the number of
-    ///   salt elements per leaf row.
-    ///
-    /// Matrices are processed from shortest to tallest. For each matrix, per-leaf sponge states are
-    /// maintained and lifted to the final height across matrices. Once all matrices have been
-    /// absorbed (including optional salt), this constructor squeezes the final leaf digests and
-    /// builds the upper Merkle layers.
-    ///
-    /// For a public hiding variant that automatically generates random salt, see
-    /// [`MerkleTreeHidingLmcs`](super::MerkleTreeHidingLmcs).
-    ///
-    /// # Panics
-    /// - If `leaves` is empty.
-    /// - If matrices are not sorted by non-decreasing height.
-    /// - If any matrix height is not a power of two.
-    /// - If `salt` is provided but its height doesn't equal the final leaf count.
-    pub(crate) fn new_with_optional_salt<PF, PD, H, C, const WIDTH: usize>(
+    /// Internal builder for creating trees with optional salt.
+    pub(crate) fn build<PF, PD, H, C, const WIDTH: usize>(
         h: &H,
         c: &C,
         leaves: Vec<M>,
-        salt: Option<RowMajorMatrix<PF::Value>>,
+        salt: Option<RowMajorMatrix<F>>,
     ) -> Self
     where
         PF: PackedValue<Value = F>,
@@ -123,17 +114,18 @@ where
         let mut leaf_states: Vec<[PD::Value; WIDTH]> =
             build_leaf_states_upsampled::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h);
 
-        // Optionally absorb salt rows into the states prior to squeezing.
-        if let Some(salt_matrix) = salt.as_ref() {
-            let tree_height = leaf_states.len();
-            assert_eq!(salt_matrix.height(), tree_height, "salt height mismatch");
-            // Fold the salt matrix rows into the states.
-            absorb_matrix::<PF, PD, _, H, WIDTH, DIGEST_ELEMS>(&mut leaf_states, salt_matrix, h);
+        // Absorb salt into states using SIMD-parallelized path (no-op when salt is None)
+        if let Some(ref salt_matrix) = salt {
+            debug_assert_eq!(salt_matrix.height(), leaf_states.len());
+            debug_assert_eq!(salt_matrix.width(), SALT_ELEMS);
+            absorb_matrix::<PF, PD, _, _, WIDTH, DIGEST_ELEMS>(&mut leaf_states, salt_matrix, h);
         }
 
         // Squeeze the final digests from the states
-        let leaf_digests: Vec<[PD::Value; DIGEST_ELEMS]> =
-            leaf_states.iter().map(|state| h.squeeze(state)).collect();
+        let leaf_digests: Vec<[PD::Value; DIGEST_ELEMS]> = leaf_states
+            .into_par_iter()
+            .map(|state| h.squeeze(&state))
+            .collect();
 
         // Build digest layers by repeatedly compressing until we reach the root
         let mut digest_layers = vec![leaf_digests];
@@ -157,10 +149,7 @@ where
 
     /// Return the root digest of the tree.
     #[must_use]
-    pub fn root(&self) -> Hash<F, D, DIGEST_ELEMS>
-    where
-        D: Copy,
-    {
+    pub fn root(&self) -> Hash<F, D, DIGEST_ELEMS> {
         self.digest_layers.last().unwrap()[0].into()
     }
 
@@ -206,10 +195,7 @@ where
     /// Does not include the root digest (since the path terminates there).
     ///
     /// - `index`: the leaf index for which to extract the authentication path.
-    pub fn authentication_path(&self, index: usize) -> Vec<[D; DIGEST_ELEMS]>
-    where
-        D: Copy,
-    {
+    pub fn authentication_path(&self, index: usize) -> Vec<[D; DIGEST_ELEMS]> {
         let mut layers = Vec::with_capacity(self.digest_layers.len().saturating_sub(1));
         let mut layer_index = index;
         for layer in &self.digest_layers {
@@ -223,18 +209,102 @@ where
         layers
     }
 
-    /// Extract the salt row for the given leaf index, if salt was used during commitment.
+    /// Extract authentication paths for multiple indices at once.
     ///
-    /// Returns `None` if this tree was constructed without salt (non-hiding variant).
-    /// Returns `Some(salt_row)` containing the random field elements absorbed at the specified leaf.
+    /// This is more efficient than calling [`authentication_path`](Self::authentication_path)
+    /// multiple times when opening multiple leaves. The paths can be further deduplicated
+    /// into a [`CompactProof`](crate::CompactProof) for serialization.
     ///
-    /// - `index`: the leaf index for which to extract the salt row.
-    pub fn salt(&self, index: usize) -> Option<Vec<F>> {
-        self.salt.as_ref().map(|salt| {
-            salt.row_slice(index)
-                .expect("index must be valid for salt matrix")
-                .to_vec()
-        })
+    /// Returns a vector of `(index, path)` pairs in the same order as the input indices.
+    pub fn authentication_paths(&self, indices: &[usize]) -> Vec<(usize, Vec<[D; DIGEST_ELEMS]>)> {
+        indices
+            .iter()
+            .map(|&index| (index, self.authentication_path(index)))
+            .collect()
+    }
+
+    /// Extract the salt for the given leaf index.
+    ///
+    /// Returns the salt array for the specified leaf. When `SALT_ELEMS = 0`, returns
+    /// a zero-sized array. When `SALT_ELEMS > 0`, the tree must have been constructed
+    /// with salt (enforced by `build_tree` and `build_tree_hiding` compile-time assertions).
+    ///
+    /// # Panics
+    ///
+    /// Panics at runtime if `SALT_ELEMS > 0` but the tree was constructed without salt.
+    /// This indicates a bug in tree construction (bypassing the safe constructors).
+    ///
+    /// - `index`: the leaf index for which to extract the salt.
+    pub fn salt(&self, index: usize) -> [F; SALT_ELEMS] {
+        match &self.salt {
+            Some(salt_matrix) => {
+                let row = salt_matrix.row_slice(index).expect("index must be valid");
+                // Tree construction guarantees salt width == SALT_ELEMS
+                array::from_fn(|i| row[i])
+            }
+            None => {
+                // For SALT_ELEMS == 0, this returns an empty array.
+                // For SALT_ELEMS > 0, this should never be reached if using safe constructors.
+                assert!(
+                    SALT_ELEMS == 0,
+                    "tree constructed without salt but SALT_ELEMS > 0 (use build_tree_hiding)"
+                );
+                [F::default(); SALT_ELEMS]
+            }
+        }
+    }
+
+    /// Open multiple indices at once, returning a compact proof.
+    ///
+    /// The proof contains openings (rows + salt per query) and deduplicated Merkle siblings.
+    /// Indices do not need to be sorted.
+    ///
+    /// # Arguments
+    ///
+    /// - `indices`: Leaf indices to open (must all be less than tree height).
+    ///
+    /// # Returns
+    ///
+    /// A [`Proof`](proof::Proof) containing openings and compact siblings.
+    pub fn open_multi(
+        &self,
+        indices: &[usize],
+    ) -> proof::Proof<F, D, DIGEST_ELEMS, [F; SALT_ELEMS]> {
+        let final_height = self.height();
+        let depth = log2_strict_usize(final_height);
+
+        // Collect rows and paths for each index
+        let indexed_paths: Vec<_> = indices
+            .iter()
+            .map(|&index| {
+                assert!(
+                    index < final_height,
+                    "index {index} out of range {final_height}"
+                );
+                let leaf_digest = self.digest_layers[0][index];
+                let path = self.authentication_path(index);
+                proof::IndexedPath {
+                    index,
+                    leaf: leaf_digest,
+                    path,
+                }
+            })
+            .collect();
+
+        // Build compact proof from paths
+        let siblings = proof::CompactProof::from_paths(depth, indexed_paths);
+
+        // Build Opening instances for each query
+        let openings = indices
+            .iter()
+            .map(|&idx| {
+                let rows = self.rows(idx);
+                let salt = self.salt(idx);
+                proof::Opening::new(rows, salt)
+            })
+            .collect();
+
+        proof::Proof::new(openings, siblings)
     }
 }
 
