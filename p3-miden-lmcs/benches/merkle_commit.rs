@@ -20,12 +20,13 @@ mod utils;
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use p3_commit::{ExtensionMmcs, Mmcs};
 use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::extension::FlatMatrixView;
 use p3_miden_dev_utils::{
     LOG_HEIGHTS, PARALLEL_STR, RELATIVE_SPECS, criterion_config, generate_matrices_from_specs,
     total_elements,
 };
+use p3_miden_lmcs::{Lmcs, LmcsTree};
 use rand::SeedableRng;
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
@@ -67,43 +68,51 @@ where
                 |b, groups| {
                     b.iter(|| {
                         for matrices in groups {
-                            black_box(lmcs.commit(matrices.clone()));
+                            let tree = lmcs.build_tree(matrices.clone());
+                            black_box(tree.root());
                         }
                     });
                 },
             );
         }
 
-        // ExtensionMmcs with width-2 matrix (simulates FRI arity-2 commit)
+        // Extension field matrix with width-2 (simulates FRI arity-2 commit)
+        // Uses FlatMatrixView to convert EF matrix to base field view
         {
             let lmcs = S::lmcs();
-            let ext_mmcs = ExtensionMmcs::<S::F, S::EF, _>::new(lmcs);
 
             let rng = &mut SmallRng::seed_from_u64(p3_miden_dev_utils::BENCH_SEED);
             let ext_matrix = RowMajorMatrix::<S::EF>::rand(rng, n_leaves, 2);
 
             group.bench_with_input(
-                BenchmarkId::from_parameter("ext_mmcs/arity2"),
+                BenchmarkId::from_parameter("ext/arity2"),
                 &ext_matrix,
                 |b, matrix| {
-                    b.iter(|| black_box(ext_mmcs.commit_matrix(matrix.clone())));
+                    b.iter(|| {
+                        let flat = FlatMatrixView::new(matrix.clone());
+                        let tree = lmcs.build_tree(vec![flat]);
+                        black_box(tree.root())
+                    });
                 },
             );
         }
 
-        // ExtensionMmcs with width-4 matrix (simulates FRI arity-4 commit)
+        // Extension field matrix with width-4 (simulates FRI arity-4 commit)
         {
             let lmcs = S::lmcs();
-            let ext_mmcs = ExtensionMmcs::<S::F, S::EF, _>::new(lmcs);
 
             let rng = &mut SmallRng::seed_from_u64(p3_miden_dev_utils::BENCH_SEED);
             let ext_matrix = RowMajorMatrix::<S::EF>::rand(rng, n_leaves, 4);
 
             group.bench_with_input(
-                BenchmarkId::from_parameter("ext_mmcs/arity4"),
+                BenchmarkId::from_parameter("ext/arity4"),
                 &ext_matrix,
                 |b, matrix| {
-                    b.iter(|| black_box(ext_mmcs.commit_matrix(matrix.clone())));
+                    b.iter(|| {
+                        let flat = FlatMatrixView::new(matrix.clone());
+                        let tree = lmcs.build_tree(vec![flat]);
+                        black_box(tree.root())
+                    });
                 },
             );
         }

@@ -8,31 +8,34 @@
 //!
 //! - [`Opening`]: Per-query row data with optional salt.
 //! - [`Proof`]: Unified multi-opening proof with openings and compact siblings.
-//! - [`CompactProof`]: Low-level compact Merkle siblings (deduplicated).
 //!
 //! # Usage
 //!
 //! **Prover** (has Merkle tree, creates compact proof):
 //! ```ignore
-//! let paths = [(0, leaf0, path0), (2, leaf2, path2)];
-//! let proof = CompactProof::from_paths(depth, paths);
+//! // Collect siblings during tree traversal (see LiftedMerkleTree::open_multi)
+//! let siblings: Vec<Hash> = collect_required_siblings(&tree, &indices);
+//! let proof = Proof::new(openings, siblings);
 //! ```
 //!
 //! **Verifier** (checks proof against commitment):
 //! ```ignore
-//! let root = proof.recompute_root(depth, [(0, leaf0), (2, leaf2)], &compress)?;
+//! let root = proof.recompute_root(depth, &[(0, leaf0), (2, leaf2)], &compress)?;
 //! assert_eq!(root, committed_root);
 //! ```
 
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
-use p3_symmetric::PseudoCompressionFunction;
-use thiserror::Error;
+use p3_matrix::Dimensions;
+use p3_miden_stateful_hasher::StatefulHasher;
+use p3_symmetric::{Hash, PseudoCompressionFunction};
+use p3_util::log2_strict_usize;
+
+use crate::{LmcsError, compute_leaf_digest};
 
 // ============================================================================
-// High-Level Proof Types
+// Public Types
 // ============================================================================
 
 /// Per-query row data with optional salt.
@@ -42,37 +45,17 @@ use thiserror::Error;
 /// # Type Parameters
 ///
 /// - `F`: Field element type.
-/// - `Salt`: Salt type. Use `()` for non-hiding, `[F; N]` for hiding with N salt elements.
+/// - `SALT_ELEMS`: Number of salt elements. Use `0` for non-hiding, `N` for hiding with N salt elements.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "F: Serialize, Salt: Serialize",
-    deserialize = "F: Deserialize<'de>, Salt: Deserialize<'de>"
+    serialize = "F: Serialize, [F; SALT_ELEMS]: Serialize",
+    deserialize = "F: Deserialize<'de>, [F; SALT_ELEMS]: Deserialize<'de>"
 ))]
-pub struct Opening<F, Salt = ()> {
+pub struct Opening<F, const SALT_ELEMS: usize = 0> {
     /// Opened rows: `rows[matrix_idx]` = row data for that matrix.
-    rows: Vec<Vec<F>>,
-    /// Salt for this leaf. Zero-sized when `Salt = ()`.
-    salt: Salt,
-}
-
-impl<F, Salt> Opening<F, Salt> {
-    /// Create a new opening from rows and salt.
-    #[inline]
-    pub fn new(rows: Vec<Vec<F>>, salt: Salt) -> Self {
-        Self { rows, salt }
-    }
-
-    /// Returns the opened rows (one per committed matrix).
-    #[inline]
-    pub fn rows(&self) -> &[Vec<F>] {
-        &self.rows
-    }
-
-    /// Returns the salt for this opening.
-    #[inline]
-    pub fn salt(&self) -> &Salt {
-        &self.salt
-    }
+    pub(crate) rows: Vec<Vec<F>>,
+    /// Salt for this leaf. Zero-sized when `SALT_ELEMS = 0`.
+    pub(crate) salt: [F; SALT_ELEMS],
 }
 
 /// Unified multi-opening proof for LMCS with optional salt.
@@ -87,12 +70,21 @@ impl<F, Salt> Opening<F, Salt> {
 /// - `F`: Field element type.
 /// - `D`: Digest element type.
 /// - `DIGEST_ELEMS`: Number of elements in each digest.
-/// - `Salt`: Salt type. Use `()` for non-hiding, `[F; N]` for hiding with N salt elements.
+/// - `SALT_ELEMS`: Number of salt elements. Use `0` for non-hiding, `N` for hiding with N salt elements.
 ///
 /// # Structure
 ///
 /// - `openings[query_idx]` contains the rows and salt for that query.
-/// - `siblings` is a [`CompactProof`] containing deduplicated Merkle siblings.
+/// - `siblings` contains sibling hashes in **canonical order** (see below).
+///
+/// # Canonical Sibling Order
+///
+/// Siblings are ordered for level-by-level verification from leaves to root.
+/// At each level, pairs are processed left-to-right. For pair `(2i, 2i+1)`:
+/// - If both nodes are known from opened leaves: no sibling needed.
+/// - If exactly one is known: the next sibling in the vector is the missing one.
+///
+/// This deterministic ordering makes verification trivial to audit.
 ///
 /// # Verification
 ///
@@ -103,418 +95,217 @@ impl<F, Salt> Opening<F, Salt> {
 /// 4. Returns references to the opened rows on success
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "F: Serialize, [D; DIGEST_ELEMS]: Serialize, Salt: Serialize",
-    deserialize = "F: Deserialize<'de>, [D; DIGEST_ELEMS]: Deserialize<'de>, Salt: Deserialize<'de>"
+    serialize = "F: Serialize, [D; DIGEST_ELEMS]: Serialize, [F; SALT_ELEMS]: Serialize",
+    deserialize = "F: Deserialize<'de>, [D; DIGEST_ELEMS]: Deserialize<'de>, [F; SALT_ELEMS]: Deserialize<'de>"
 ))]
-pub struct Proof<F, D, const DIGEST_ELEMS: usize, Salt = ()> {
+pub struct Proof<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize = 0> {
     /// Openings: `openings[query_idx]` contains rows and salt for that query.
-    openings: Vec<Opening<F, Salt>>,
-    /// Compact Merkle siblings (deduplicated).
-    siblings: CompactProof<[D; DIGEST_ELEMS]>,
+    pub(crate) openings: Vec<Opening<F, SALT_ELEMS>>,
+    /// Merkle siblings in canonical order (left-to-right, bottom-to-top).
+    pub(crate) siblings: Vec<[D; DIGEST_ELEMS]>,
 }
 
-impl<F, D, const DIGEST_ELEMS: usize, Salt> Proof<F, D, DIGEST_ELEMS, Salt> {
-    /// Create a new proof from openings and compact siblings.
-    #[inline]
-    pub fn new(openings: Vec<Opening<F, Salt>>, siblings: CompactProof<[D; DIGEST_ELEMS]>) -> Self {
-        Self { openings, siblings }
-    }
-
-    /// Returns the openings (one per query).
-    #[inline]
-    pub fn openings(&self) -> &[Opening<F, Salt>] {
-        &self.openings
-    }
-
-    /// Returns the number of opened indices.
-    #[inline]
-    pub fn num_queries(&self) -> usize {
-        self.openings.len()
-    }
-
-    /// Recompute the Merkle root from opened leaves and sibling proof.
+impl<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
+    Proof<F, D, DIGEST_ELEMS, SALT_ELEMS>
+{
+    /// Verify a multi-opening proof against a commitment.
     ///
-    /// Delegates to [`CompactProof::recompute_root`].
-    #[inline]
-    pub fn recompute_root<C>(
-        &self,
-        depth: usize,
-        leaves: &[(usize, [D; DIGEST_ELEMS])],
-        compress: &C,
-    ) -> Result<[D; DIGEST_ELEMS], CompactProofError>
-    where
-        [D; DIGEST_ELEMS]: Clone,
-        C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>,
-    {
-        self.siblings.recompute_root(depth, leaves, compress)
-    }
-}
-
-// ============================================================================
-// Low-Level Proof Structures
-// ============================================================================
-
-/// 1-based heap index for binary tree nodes.
-///
-/// Uses the standard binary heap indexing where:
-/// - Root is at index 1
-/// - Left child of node i is at 2*i
-/// - Right child of node i is at 2*i + 1
-/// - Parent of node i is at i/2
-/// - Sibling of node i is at i XOR 1
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct NodeIndex(u64);
-
-impl NodeIndex {
-    /// The root node index.
-    pub const ROOT: Self = Self(1);
-
-    /// Create a NodeIndex for a leaf at the given position (0-based) in a tree of given depth.
-    ///
-    /// Leaves in a tree of depth `d` occupy indices `2^d` to `2^(d+1) - 1`.
-    #[inline]
-    pub const fn from_leaf(leaf_idx: usize, depth: usize) -> Self {
-        Self((1u64 << depth) + leaf_idx as u64)
-    }
-
-    #[inline]
-    pub const fn sibling(self) -> Self {
-        Self(self.0 ^ 1)
-    }
-
-    #[inline]
-    pub const fn parent(self) -> Self {
-        Self(self.0 >> 1)
-    }
-
-    #[inline]
-    pub const fn left_child(self) -> Self {
-        Self(self.0 << 1)
-    }
-
-    #[inline]
-    pub const fn right_child(self) -> Self {
-        Self((self.0 << 1) | 1)
-    }
-}
-
-/// A leaf with its authentication path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IndexedPath<H> {
-    /// The leaf index.
-    pub index: usize,
-    /// The leaf hash.
-    pub leaf: H,
-    /// Authentication path (sibling hashes from leaf to root).
-    pub path: Vec<H>,
-}
-
-/// Compact multi-opening proof with labeled siblings.
-///
-/// Each sibling hash is keyed by its NodeIndex, guaranteeing uniqueness
-/// and providing natural ordering for deterministic serialization.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "H: Serialize", deserialize = "H: Deserialize<'de>"))]
-pub struct CompactProof<H>(pub(crate) BTreeMap<NodeIndex, H>);
-
-impl<H: Clone> CompactProof<H> {
-    /// Create an empty proof.
-    #[inline]
-    pub fn new() -> Self {
-        Self(BTreeMap::new())
-    }
-
-    /// Returns the number of sibling hashes.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Returns `true` if the proof contains no sibling hashes.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Create a compact proof from authentication paths.
-    ///
-    /// Paths can be provided in any order. Only the minimal set of required
-    /// siblings is included (siblings that can be computed from opened leaves
-    /// are excluded).
+    /// Validates the proof structure, computes leaf digests from opened rows,
+    /// recomputes the Merkle root, and compares against the commitment.
     ///
     /// # Arguments
-    /// - `depth`: Tree depth (number of levels from leaves to root).
-    /// - `paths`: Iterator of [`IndexedPath`] values.
     ///
-    /// # Panics (debug builds only)
-    /// - If any path length doesn't match `depth`.
-    /// - If paths contain inconsistent sibling hashes.
-    ///
-    /// # Note
-    /// This is a prover-side function with trusted input from the Merkle tree.
-    /// Debug assertions verify consistency but are elided in release builds.
-    pub fn from_paths<I>(depth: usize, paths: I) -> Self
-    where
-        I: IntoIterator<Item = IndexedPath<H>>,
-        H: PartialEq,
-    {
-        use alloc::collections::BTreeSet;
-
-        let paths_vec: Vec<_> = paths.into_iter().collect();
-
-        // Compute which siblings are required (not derivable from opened leaves).
-        // Walk up from leaves, tracking known nodes. Siblings of known nodes that
-        // aren't themselves known are required.
-        let mut known: BTreeSet<NodeIndex> = paths_vec
-            .iter()
-            .map(|p| NodeIndex::from_leaf(p.index, depth))
-            .collect();
-        let mut required: BTreeSet<NodeIndex> = BTreeSet::new();
-
-        while !known.is_empty() && !known.contains(&NodeIndex::ROOT) {
-            let mut parents = BTreeSet::new();
-            for &node in &known {
-                let sibling = node.sibling();
-                if !known.contains(&sibling) {
-                    required.insert(sibling);
-                }
-                parents.insert(node.parent());
-            }
-            known = parents;
-        }
-
-        // Collect siblings from paths that are in the required set.
-        let mut siblings: BTreeMap<NodeIndex, H> = BTreeMap::new();
-
-        for IndexedPath { index, path, .. } in &paths_vec {
-            debug_assert_eq!(path.len(), depth, "path length must equal depth");
-
-            let mut current = NodeIndex::from_leaf(*index, depth);
-            for sibling_hash in path {
-                let sibling = current.sibling();
-                if required.contains(&sibling) {
-                    debug_assert!(
-                        !siblings.contains_key(&sibling) || &siblings[&sibling] == sibling_hash,
-                        "inconsistent sibling hash"
-                    );
-                    siblings
-                        .entry(sibling)
-                        .or_insert_with(|| sibling_hash.clone());
-                }
-                current = current.parent();
-            }
-        }
-
-        Self(siblings)
-    }
-
-    /// Recompute the Merkle root from opened leaves and sibling proof.
-    ///
-    /// # Security Model
-    ///
-    /// ⚠ **CRITICAL**: This function computes a root hash from the provided proof.
-    /// A malicious proof can produce ANY hash. The caller MUST compare the returned
-    /// root against a trusted commitment to detect tampering.
-    ///
-    /// # Arguments
-    /// - `depth`: Tree depth (number of levels from leaves to root).
-    /// - `leaves`: Slice of `(leaf_index, leaf_hash)` pairs (any order).
-    /// - `compress`: 2-to-1 compression function.
-    ///
-    /// # Errors
-    /// - `MissingSibling` - Proof is missing required sibling hashes
-    /// - `UnusedSibling` - Proof contains sibling hashes that weren't needed
-    /// - `DuplicateLeaf` - Same leaf index provided multiple times
-    pub fn recompute_root<C>(
-        &self,
-        depth: usize,
-        leaves: &[(usize, H)],
-        compress: &C,
-    ) -> Result<H, CompactProofError>
-    where
-        C: PseudoCompressionFunction<H, 2>,
-    {
-        let mut tree = PartialTree::new(depth, leaves, self)?;
-        Ok(tree.get(NodeIndex::ROOT, compress))
-    }
-
-    /// Expand the proof to full authentication paths.
-    ///
-    /// Reconstructs the complete authentication path for each leaf.
-    ///
-    /// # Arguments
-    /// - `depth`: Tree depth.
-    /// - `leaves`: Slice of `(leaf_index, leaf_hash)` pairs.
-    /// - `compress`: 2-to-1 compression function.
+    /// - `sponge`: Stateful hasher for computing leaf digests.
+    /// - `compress`: 2-to-1 compression function for tree nodes.
+    /// - `commitment`: The committed root hash to verify against.
+    /// - `dimensions`: Dimensions of committed matrices (width and height).
+    /// - `indices`: Leaf indices that were opened.
     ///
     /// # Returns
-    /// Vector of `IndexedPath` in the same order as input `leaves`.
+    ///
+    /// On success, returns references to opened rows for each query index.
+    /// `result[query_idx][matrix_idx]` is the row slice for that query/matrix.
     ///
     /// # Errors
-    /// - `MissingSibling` - Proof is missing required sibling hashes
-    /// - `UnusedSibling` - Proof contains sibling hashes that weren't needed
-    /// - `DuplicateLeaf` - Same leaf index provided multiple times
-    pub fn to_paths<C>(
-        &self,
-        depth: usize,
-        leaves: &[(usize, H)],
+    ///
+    /// - `WrongBatchSize`: Number of indices doesn't match proof's query count,
+    ///   or dimensions is empty.
+    /// - `IndexOutOfBounds`: An index exceeds the tree height.
+    /// - `WrongWidth`: A row's width doesn't match its matrix's dimension.
+    /// - `RootMismatch`: Recomputed root doesn't match commitment.
+    pub fn verify<'a, H, C, const WIDTH: usize>(
+        &'a self,
+        sponge: &H,
         compress: &C,
-    ) -> Result<Vec<IndexedPath<H>>, CompactProofError>
+        commitment: &Hash<F, D, DIGEST_ELEMS>,
+        dimensions: &[Dimensions],
+        indices: &[usize],
+    ) -> Result<Vec<Vec<&'a [F]>>, LmcsError>
     where
-        C: PseudoCompressionFunction<H, 2>,
+        F: Default + Copy + PartialEq,
+        D: Default + Copy + PartialEq,
+        H: StatefulHasher<F, [D; DIGEST_ELEMS], State = [D; WIDTH]>,
+        C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>,
     {
-        let mut tree = PartialTree::new(depth, leaves, self)?;
-        Ok(leaves
+        // Validate proof structure
+        if indices.is_empty() || indices.len() != self.openings.len() {
+            return Err(LmcsError::WrongBatchSize);
+        }
+
+        let final_height = dimensions.last().ok_or(LmcsError::WrongBatchSize)?.height;
+        let depth = log2_strict_usize(final_height);
+
+        // Collect (index, digest) pairs, sorted and deduplicated
+        let nodes: Vec<(usize, [D; DIGEST_ELEMS])> = {
+            let mut nodes: Vec<(usize, [D; DIGEST_ELEMS])> = indices
+                .iter()
+                .zip(self.openings.iter())
+                .map(|(&index, opening)| {
+                    if index >= (1 << depth) {
+                        return Err(LmcsError::IndexOutOfBounds);
+                    }
+                    let digest = compute_leaf_digest::<F, D, H, WIDTH, DIGEST_ELEMS>(
+                        sponge,
+                        &opening.rows,
+                        dimensions.iter().map(|d| d.width),
+                        &opening.salt,
+                    )?;
+                    Ok((index, digest))
+                })
+                .collect::<Result<_, _>>()?;
+
+            nodes.sort_by_key(|(idx, _)| *idx);
+
+            for ((idx_a, hash_a), (idx_b, hash_b)) in nodes.iter().zip(nodes.iter().skip(1)) {
+                if idx_a == idx_b && hash_a != hash_b {
+                    return Err(LmcsError::ConflictingLeaf);
+                }
+            }
+
+            nodes.dedup_by_key(|(idx, _)| *idx);
+            nodes
+        };
+
+        // Recompute root from known leaves and proof siblings
+        let computed_root = recompute_root_in_place(nodes, &self.siblings, compress, depth)
+            .ok_or(LmcsError::InvalidProof)?;
+
+        // Compare against commitment
+        if Hash::from(computed_root) != *commitment {
+            return Err(LmcsError::RootMismatch);
+        }
+
+        // Return references to opened rows
+        Ok(self
+            .openings
             .iter()
-            .map(|(idx, _)| tree.path(*idx, compress))
+            .map(|opening| opening.rows.iter().map(|r| r.as_slice()).collect())
             .collect())
     }
 }
 
-/// A validated partial Merkle tree built from leaves and proof siblings.
+/// Recompute the Merkle root from known leaf hashes and a sibling proof.
 ///
-/// # Security
+/// # Arguments
 ///
-/// Construction is the trust boundary: `new()` validates that the proof
-/// contains exactly the required siblings (no missing, no extras).
-/// After construction, `root()` and `path()` operate on trusted state.
-struct PartialTree<H> {
-    depth: usize,
-    nodes: BTreeMap<NodeIndex, H>,
+/// - `leaf_nodes`: Vector of `(leaf_position, leaf_hash)` pairs, **sorted by position**.
+/// - `proof_siblings`: Sibling hashes in **canonical order** (left-to-right, bottom-to-top).
+/// - `compress`: 2-to-1 compression function for combining sibling pairs.
+/// - `tree_depth`: Depth of the tree (number of levels from leaves to root).
+///
+/// # Binary Tree Position Arithmetic
+///
+/// For a node at position `p` in a binary tree level:
+/// - **Sibling position**: `p ^ 1` (XOR with 1 flips the least significant bit)
+///   - If `p = 4` (binary `100`), sibling is `5` (binary `101`)
+///   - If `p = 5` (binary `101`), sibling is `4` (binary `100`)
+/// - **Is left child**: `p & 1 == 0` (left children have even positions)
+/// - **Parent position**: `p >> 1` (right-shift divides by 2)
+///   - Children at positions 4 and 5 both have parent at position 2
+///
+/// # Algorithm
+///
+/// We process the tree level-by-level, from leaves (level 0) up to the root:
+///
+/// ```text
+/// Level 2 (root):        [0]              <- final output
+///                       /   \
+/// Level 1:           [0]     [1]          <- after 2nd iteration
+///                   /   \   /   \
+/// Level 0 (leaves): [0] [1] [2] [3]       <- input leaf positions
+/// ```
+///
+/// At each level, we iterate through known nodes left-to-right. For each node:
+/// 1. Check if its sibling is also known (would be the next node if positions are adjacent)
+/// 2. If sibling is known, use it; otherwise consume next sibling from proof
+/// 3. Order the pair correctly (left child first) and compress to get parent hash
+/// 4. The parent's position is half the child's position (integer division)
+///
+/// After processing all levels, we should have exactly one node at position 0 (the root).
+///
+/// # Security Properties
+///
+/// - **COMPLETENESS**: Returns `None` if any required sibling is missing from proof.
+/// - **SOUNDNESS**: Returns `None` if proof contains extra unused siblings.
+/// - **CANONICAL ORDER**: Siblings must be provided in exact left-to-right, bottom-to-top order.
+fn recompute_root_in_place<H: Clone, C: PseudoCompressionFunction<H, 2>>(
+    leaf_nodes: Vec<(usize, H)>,
+    proof_siblings: &[H],
+    compress: &C,
+    tree_depth: usize,
+) -> Option<H> {
+    // We alternate between two vectors: one holds the current level's nodes (children),
+    // the other accumulates the next level's nodes (parents). After each level, we swap them.
+    let mut children = leaf_nodes;
+    let mut parents = Vec::new();
+    let mut siblings = proof_siblings.iter();
+
+    // Process each level from leaves (level 0) up to root (level tree_depth)
+    for _level in 0..tree_depth {
+        let mut children_iter = children.iter().peekable();
+
+        while let Some((child_position, child_hash)) = children_iter.next() {
+            let sibling_position = child_position ^ 1;
+
+            // Get sibling hash: either from known nodes (if next in sorted list) or from proof.
+            // When both children are known, the proof omits that sibling since it's redundant.
+            let sibling_hash = match children_iter.next_if(|(pos, _)| *pos == sibling_position) {
+                Some((_, hash)) => hash.clone(),
+                None => siblings.next()?.clone(),
+            };
+
+            // Determine left/right ordering: left child has even position (bit 0 = 0)
+            let child_is_left = child_position & 1 == 0;
+            let (left_hash, right_hash) = if child_is_left {
+                (child_hash.clone(), sibling_hash)
+            } else {
+                (sibling_hash, child_hash.clone())
+            };
+
+            let parent_hash = compress.compress([left_hash, right_hash]);
+            let parent_position = child_position >> 1;
+            parents.push((parent_position, parent_hash));
+        }
+
+        // Swap: parents become children for the next iteration
+        core::mem::swap(&mut children, &mut parents);
+        parents.clear();
+    }
+
+    // Security: all proof siblings must be consumed (no unused data in proof)
+    if siblings.next().is_some() {
+        return None;
+    }
+
+    // Invariant: after `depth` iterations of pos >> 1, all valid leaf positions
+    // in [0, 2^depth) converge to exactly one node at position 0.
+    let (_, root_hash) = children.into_iter().next().unwrap();
+    Some(root_hash)
 }
 
-impl<H: Clone> PartialTree<H> {
-    /// Validate proof and build partial tree.
-    ///
-    /// # Security
-    ///
-    /// This is the trust boundary. Validates that:
-    /// - No duplicate leaf indices
-    /// - Proof contains exactly the siblings needed to compute the root
-    /// - No missing siblings, no unused siblings
-    fn new(
-        depth: usize,
-        leaves: &[(usize, H)],
-        proof: &CompactProof<H>,
-    ) -> Result<Self, CompactProofError> {
-        // Build leaf map, checking for duplicates.
-        let mut nodes: BTreeMap<NodeIndex, H> = leaves
-            .iter()
-            .map(|(idx, hash)| (NodeIndex::from_leaf(*idx, depth), hash.clone()))
-            .collect();
-
-        if nodes.len() != leaves.len() {
-            return Err(CompactProofError::DuplicateLeaf);
-        }
-
-        // Validate proof by traversing tree and counting sibling usage.
-        let used_count = Self::validate_subtree(NodeIndex::ROOT, 0, depth, &nodes, proof)?;
-
-        // All proof siblings must have been used.
-        if used_count != proof.len() {
-            return Err(CompactProofError::UnusedSibling);
-        }
-
-        // Merge validated proof siblings into nodes.
-        nodes.extend(proof.0.iter().map(|(k, v)| (*k, v.clone())));
-
-        Ok(Self { depth, nodes })
-    }
-
-    /// Validate that a subtree can be computed from leaves and proof.
-    ///
-    /// Returns the count of proof siblings used in this subtree.
-    /// Returns `Err(MissingSibling)` if any required node is missing.
-    fn validate_subtree(
-        idx: NodeIndex,
-        current_depth: usize,
-        max_depth: usize,
-        leaves: &BTreeMap<NodeIndex, H>,
-        proof: &CompactProof<H>,
-    ) -> Result<usize, CompactProofError> {
-        if leaves.contains_key(&idx) {
-            return Ok(0);
-        }
-        if proof.0.contains_key(&idx) {
-            return Ok(1);
-        }
-        if current_depth >= max_depth {
-            return Err(CompactProofError::MissingSibling);
-        }
-
-        let left = Self::validate_subtree(
-            idx.left_child(),
-            current_depth + 1,
-            max_depth,
-            leaves,
-            proof,
-        )?;
-        let right = Self::validate_subtree(
-            idx.right_child(),
-            current_depth + 1,
-            max_depth,
-            leaves,
-            proof,
-        )?;
-        Ok(left + right)
-    }
-
-    /// Get or compute a node's hash (memoized).
-    ///
-    /// Tree is already validated, so this cannot fail.
-    fn get<C: PseudoCompressionFunction<H, 2>>(&mut self, idx: NodeIndex, compress: &C) -> H {
-        if let Some(h) = self.nodes.get(&idx) {
-            return h.clone();
-        }
-
-        // Compute from children.
-        let left = self.get(idx.left_child(), compress);
-        let right = self.get(idx.right_child(), compress);
-        let h = compress.compress([left, right]);
-        self.nodes.insert(idx, h.clone());
-        h
-    }
-
-    /// Build the authentication path for a leaf.
-    ///
-    /// Tree is already validated, so this cannot fail.
-    fn path<C: PseudoCompressionFunction<H, 2>>(
-        &mut self,
-        leaf_idx: usize,
-        compress: &C,
-    ) -> IndexedPath<H> {
-        let leaf_node = NodeIndex::from_leaf(leaf_idx, self.depth);
-        let leaf = self.nodes.get(&leaf_node).unwrap().clone();
-
-        let mut path = Vec::with_capacity(self.depth);
-        let mut current = leaf_node;
-
-        while current != NodeIndex::ROOT {
-            path.push(self.get(current.sibling(), compress));
-            current = current.parent();
-        }
-
-        IndexedPath {
-            index: leaf_idx,
-            leaf,
-            path,
-        }
-    }
-}
-
-/// Error type for multi-opening proof operations.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum CompactProofError {
-    /// Proof is missing required sibling hashes.
-    #[error("proof is missing required sibling hashes")]
-    MissingSibling,
-    /// Proof contains sibling hashes that weren't needed.
-    #[error("proof contains unused sibling hashes")]
-    UnusedSibling,
-    /// Duplicate leaf index provided.
-    #[error("duplicate leaf index provided")]
-    DuplicateLeaf,
-}
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -533,11 +324,11 @@ mod tests {
 
     /// Build test tree (depth 2, 4 leaves):
     /// ```text
-    ///        [root]         (index 1)
+    ///        [root]         (level 2)
     ///        /    \
-    ///     [h01]  [h23]      (indices 2, 3)
+    ///     [h01]  [h23]      (level 1, positions 0, 1)
     ///     /  \    /  \
-    ///   [0] [1] [2] [3]     (indices 4, 5, 6, 7)
+    ///   [0] [1] [2] [3]     (level 0, positions 0, 1, 2, 3)
     /// ```
     fn build_test_tree() -> ([[u64; 1]; 4], [u64; 1], [u64; 1], [u64; 1]) {
         let leaves = [[0u64; 1], [1], [2], [3]];
@@ -550,116 +341,106 @@ mod tests {
 
     const DEPTH: usize = 2;
 
-    /// Node index for leaf `i` in test tree.
-    const fn leaf(i: usize) -> NodeIndex {
-        NodeIndex::from_leaf(i, DEPTH)
-    }
-
     #[test]
-    fn roundtrip() {
-        let (leaves, h01, h23, root) = build_test_tree();
+    fn recompute_root_single_leaf() {
+        let (leaf_hashes, _h01, h23, root) = build_test_tree();
         let c = TestCompress;
 
-        let original_paths = [
-            IndexedPath {
-                index: 0,
-                leaf: leaves[0],
-                path: vec![leaves[1], h23],
-            },
-            IndexedPath {
-                index: 2,
-                leaf: leaves[2],
-                path: vec![leaves[3], h01],
-            },
-        ];
-        let proof = CompactProof::from_paths(DEPTH, original_paths.clone());
+        // Open leaf 0 only
+        let nodes = vec![(0, leaf_hashes[0])];
 
-        let expanded = proof
-            .to_paths(DEPTH, &[(0, leaves[0]), (2, leaves[2])], &c)
-            .unwrap();
-        assert_eq!(expanded[0].path, original_paths[0].path);
-        assert_eq!(expanded[1].path, original_paths[1].path);
+        // Canonical sibling order (left-to-right, bottom-to-top):
+        // Level 0: pair (0,1) - have 0, need 1
+        // Level 1: pair (0,1) - have h01, need h23
+        let siblings = [leaf_hashes[1], h23];
 
-        let computed_root = proof
-            .recompute_root(DEPTH, &[(0, leaves[0]), (2, leaves[2])], &c)
-            .unwrap();
-        assert_eq!(computed_root, root);
-    }
-
-    #[test]
-    fn all_leaves_empty_proof() {
-        let (leaves, _h01, _h23, root) = build_test_tree();
-        let c = TestCompress;
-
-        let proof = CompactProof::new();
-        let computed = proof
-            .recompute_root(
-                DEPTH,
-                &[
-                    (0, leaves[0]),
-                    (1, leaves[1]),
-                    (2, leaves[2]),
-                    (3, leaves[3]),
-                ],
-                &c,
-            )
-            .unwrap();
-
+        let computed = recompute_root_in_place(nodes, &siblings, &c, DEPTH).unwrap();
         assert_eq!(computed, root);
     }
 
     #[test]
-    fn single_leaf_tree() {
+    fn recompute_root_all_leaves_no_siblings() {
+        let (leaf_hashes, _h01, _h23, root) = build_test_tree();
         let c = TestCompress;
-        let proof = CompactProof::<[u64; 1]>::new();
-        let result = proof.recompute_root(0, &[(0, [42u64])], &c);
-        assert_eq!(result, Ok([42u64]));
+
+        // All leaves known - no siblings needed
+        let nodes = vec![
+            (0, leaf_hashes[0]),
+            (1, leaf_hashes[1]),
+            (2, leaf_hashes[2]),
+            (3, leaf_hashes[3]),
+        ];
+        let siblings: [_; 0] = [];
+
+        let computed = recompute_root_in_place(nodes, &siblings, &c, DEPTH).unwrap();
+        assert_eq!(computed, root);
     }
 
     #[test]
-    fn rejects_missing_sibling() {
-        let (leaves, _h01, _h23, _root) = build_test_tree();
+    fn recompute_root_single_node_tree() {
         let c = TestCompress;
 
-        // Leaf 0 needs siblings at nodes 5 (leaf 1) and 3 (h23), but we only provide leaf 1.
-        let proof = CompactProof([(leaf(1), leaves[1])].into_iter().collect());
-        let result = proof.recompute_root(DEPTH, &[(0, leaves[0])], &c);
+        // Depth 0 tree: single leaf at index 0 IS the root
+        let nodes = vec![(0, [42u64])];
+        let siblings: [_; 0] = [];
 
-        assert_eq!(result, Err(CompactProofError::MissingSibling));
+        let result = recompute_root_in_place(nodes, &siblings, &c, 0);
+        assert_eq!(result, Some([42u64]));
     }
 
     #[test]
-    fn rejects_unused_sibling() {
-        let (leaves, _h01, h23, _root) = build_test_tree();
+    fn recompute_root_adjacent_leaves() {
+        let (leaf_hashes, _h01, h23, root) = build_test_tree();
         let c = TestCompress;
 
-        // Leaf 0 needs siblings at leaf(1) and leaf(2).parent(), but we also include leaf(3).
-        let proof = CompactProof(
-            [
-                (leaf(1), leaves[1]),
-                (leaf(2).parent(), h23),
-                (leaf(3), leaves[3]),
-            ]
-            .into_iter()
-            .collect(),
-        );
-        let result = proof.recompute_root(DEPTH, &[(0, leaves[0])], &c);
+        // Open leaves 0 and 1 (same pair)
+        let nodes = vec![(0, leaf_hashes[0]), (1, leaf_hashes[1])];
 
-        assert_eq!(result, Err(CompactProofError::UnusedSibling));
+        // Level 0: pair (0,1) both known - no sibling needed
+        // Level 1: pair (0,1) - have h01, need h23
+        let siblings = [h23];
+
+        let computed = recompute_root_in_place(nodes, &siblings, &c, DEPTH).unwrap();
+        assert_eq!(computed, root);
     }
 
     #[test]
-    fn rejects_duplicate_leaf() {
-        let (leaves, _h01, h23, _root) = build_test_tree();
+    fn recompute_root_non_adjacent_leaves() {
+        let (leaf_hashes, _h01, _h23, root) = build_test_tree();
         let c = TestCompress;
 
-        let proof = CompactProof(
-            [(leaf(1), leaves[1]), (leaf(2).parent(), h23)]
-                .into_iter()
-                .collect(),
-        );
-        let result = proof.recompute_root(DEPTH, &[(0, leaves[0]), (0, [99])], &c);
+        // Open leaves 0 and 2 (different pairs)
+        let nodes = vec![(0, leaf_hashes[0]), (2, leaf_hashes[2])];
 
-        assert_eq!(result, Err(CompactProofError::DuplicateLeaf));
+        // Level 0: pair (0,1) - have 0, need 1; pair (2,3) - have 2, need 3
+        // Level 1: pair (0,1) - both computed (h01, h23), no sibling needed
+        let siblings = [leaf_hashes[1], leaf_hashes[3]];
+
+        let computed = recompute_root_in_place(nodes, &siblings, &c, DEPTH).unwrap();
+        assert_eq!(computed, root);
+    }
+
+    #[test]
+    fn recompute_root_missing_sibling_fails() {
+        let (leaf_hashes, _h01, _h23, _root) = build_test_tree();
+        let c = TestCompress;
+
+        let nodes = vec![(0, leaf_hashes[0])];
+        let siblings = [leaf_hashes[1]]; // Missing h23
+
+        let result = recompute_root_in_place(nodes, &siblings, &c, DEPTH);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn recompute_root_extra_sibling_fails() {
+        let (leaf_hashes, _h01, h23, _root) = build_test_tree();
+        let c = TestCompress;
+
+        let nodes = vec![(0, leaf_hashes[0])];
+        let siblings = [leaf_hashes[1], h23, [99]]; // Extra sibling
+
+        let result = recompute_root_in_place(nodes, &siblings, &c, DEPTH);
+        assert!(result.is_none());
     }
 }

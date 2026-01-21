@@ -3,7 +3,6 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_commit::{BatchOpeningRef, Mmcs};
 use p3_field::PrimeCharacteristicRing;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -12,7 +11,7 @@ use p3_miden_stateful_hasher::StatefulHasher;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
-use crate::{HidingLmcsMmcs, LiftedHidingMerkleTree, LmcsMmcs};
+use crate::{HidingLmcsConfig, LiftedMerkleTree, Lmcs, LmcsConfig};
 
 // ============================================================================
 // Re-exports from dev-utils (for external use)
@@ -21,15 +20,15 @@ use crate::{HidingLmcsMmcs, LiftedHidingMerkleTree, LmcsMmcs};
 pub use bb::{Compress, DIGEST, F, P, RATE, Sponge, WIDTH};
 pub use p3_miden_dev_utils::matrix::concatenate_matrices;
 
-/// Type alias for local LMCS MMCS (uses crate's own types to avoid cross-crate issues).
-pub type BaseLmcs = LmcsMmcs<P, P, Sponge, Compress, WIDTH, DIGEST>;
+/// Type alias for local LMCS config (uses crate's own types to avoid cross-crate issues).
+pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 
-/// Create a local LMCS MMCS using crate's own types.
+/// Create a local LMCS config using crate's own types.
 ///
 /// This avoids cross-crate type mismatches when running tests.
 pub fn lmcs() -> BaseLmcs {
     let (_, sponge, compress) = bb::test_components();
-    LmcsMmcs::new(sponge, compress)
+    LmcsConfig::new(sponge, compress)
 }
 
 /// Create sponge and compressor for Merkle tree tests.
@@ -74,16 +73,17 @@ fn commit_open_verify_roundtrip() {
         .map(|m: &RowMajorMatrix<F>| m.dimensions())
         .collect();
 
-    let (commitment, tree) = lmcs.commit(matrices);
+    let tree = lmcs.build_tree(matrices);
+    let commitment = tree.root();
     let final_height = dims.last().unwrap().height;
-    let index = final_height - 1; // valid index within range
 
-    let opening = lmcs.open_batch(index, &tree);
-    let opening_ref: BatchOpeningRef<'_, F, _> = (&opening).into();
-    assert!(
-        lmcs.verify_batch(&commitment, &dims, index, opening_ref)
-            .is_ok()
-    );
+    // Open and verify using multi-opening API
+    let indices = [final_height - 1];
+    let proof = tree.open_multi(&indices);
+    let opened_rows = lmcs.verify(&commitment, &dims, &indices, &proof).unwrap();
+
+    assert_eq!(opened_rows.len(), 1);
+    assert_eq!(opened_rows[0].len(), dims.len());
 }
 
 #[test]
@@ -98,18 +98,16 @@ fn multi_opening_roundtrip() {
     ];
     let dims: Vec<_> = matrices.iter().map(|m| m.dimensions()).collect();
 
-    let (commitment, tree) = lmcs.commit(matrices);
+    let tree = lmcs.build_tree(matrices);
+    let commitment = tree.root();
     let final_height = dims.last().unwrap().height;
 
-    // Open multiple indices (opening methods are now on the tree)
+    // Open multiple indices
     let indices = [0, 5, 10, final_height - 1];
     let proof = tree.open_multi(&indices);
 
     // Verify and get back opened rows
-    let opened_rows = lmcs
-        .config
-        .verify(&commitment, &dims, &indices, &proof)
-        .unwrap();
+    let opened_rows = lmcs.verify(&commitment, &dims, &indices, &proof).unwrap();
 
     // Check that we get the expected number of queries and matrices
     assert_eq!(opened_rows.len(), indices.len());
@@ -138,29 +136,32 @@ fn multi_opening_single_index() {
     let matrices = vec![RowMajorMatrix::rand(&mut rng, 8, 4)];
     let dims: Vec<_> = matrices.iter().map(|m| m.dimensions()).collect();
 
-    let (commitment, tree) = lmcs.commit(matrices);
+    let tree = lmcs.build_tree(matrices);
+    let commitment = tree.root();
 
     // Open a single index using multi-opening API
     let indices = [3];
     let proof = tree.open_multi(&indices);
 
-    let opened_rows = lmcs
-        .config
-        .verify(&commitment, &dims, &indices, &proof)
-        .unwrap();
+    let opened_rows = lmcs.verify(&commitment, &dims, &indices, &proof).unwrap();
     assert_eq!(opened_rows.len(), 1);
     assert_eq!(opened_rows[0].len(), 1);
 }
 
 /// Hiding tree type alias with SALT_ELEMS = 4.
-type HidingTree<M> = LiftedHidingMerkleTree<F, F, M, DIGEST, 4>;
+type HidingTree<M> = LiftedMerkleTree<F, F, M, DIGEST, 4>;
+
+/// Hiding config type alias with SALT_ELEMS = 4.
+type HidingConfig = HidingLmcsConfig<P, P, Sponge, Compress, SmallRng, WIDTH, DIGEST, 4>;
+
+/// Create a hiding LMCS config.
+fn hiding_lmcs(rng: SmallRng) -> HidingConfig {
+    let (_, sponge, compress) = bb::test_components();
+    HidingLmcsConfig::new(sponge, compress, rng)
+}
 
 #[test]
 fn hiding_commit_open_verify_roundtrip() {
-    let (_, sponge, compress) = bb::test_components();
-    // Config with SALT = 4 for hiding commitment
-    let config = crate::LmcsConfig::<F, F, _, _, WIDTH, DIGEST, 4>::new(sponge, compress);
-
     let mut rng = SmallRng::seed_from_u64(99);
     let matrices = vec![
         RowMajorMatrix::rand(&mut rng, 4, 3),
@@ -168,8 +169,11 @@ fn hiding_commit_open_verify_roundtrip() {
     ];
     let dims: Vec<_> = matrices.iter().map(|m| m.dimensions()).collect();
 
-    // Use config builder for hiding commitment
-    let tree: HidingTree<_> = config.build_tree_hiding::<P, P, _>(matrices, &mut rng);
+    // Create config with RNG for salt generation
+    let config = hiding_lmcs(rng);
+
+    // Use config builder for hiding commitment (RNG is internal to config)
+    let tree: HidingTree<_> = config.build_tree(matrices);
     let commitment = tree.root();
 
     // Open multiple indices (open_multi includes salt for SALT > 0)
@@ -181,7 +185,7 @@ fn hiding_commit_open_verify_roundtrip() {
 
     // Check structure
     assert_eq!(opened_rows.len(), indices.len());
-    assert_eq!(proof.openings().len(), indices.len());
+    assert_eq!(proof.openings.len(), indices.len());
 
     // Verify row contents
     for (query_idx, &leaf_idx) in indices.iter().enumerate() {
@@ -196,48 +200,8 @@ fn hiding_commit_open_verify_roundtrip() {
     }
 }
 
-/// Hiding MMCS type alias with SALT_ELEMS = 4.
-type HidingMmcs = HidingLmcsMmcs<P, P, Sponge, Compress, SmallRng, WIDTH, DIGEST, 4>;
-
-/// Create a hiding LMCS MMCS with the given RNG.
-fn hiding_lmcs(rng: SmallRng) -> HidingMmcs {
-    let (_, sponge, compress) = bb::test_components();
-    HidingLmcsMmcs::new(sponge, compress, rng)
-}
-
 #[test]
-fn hiding_mmcs_roundtrip() {
-    let rng = SmallRng::seed_from_u64(42);
-    let mmcs = hiding_lmcs(rng);
-
-    let mut rng = SmallRng::seed_from_u64(123);
-    let matrices = vec![
-        RowMajorMatrix::rand(&mut rng, 2, 3),
-        RowMajorMatrix::rand(&mut rng, 4, 5),
-        RowMajorMatrix::rand(&mut rng, 8, 7),
-    ];
-    let dims: Vec<_> = matrices
-        .iter()
-        .map(|m: &RowMajorMatrix<F>| m.dimensions())
-        .collect();
-
-    let (commitment, tree) = mmcs.commit(matrices);
-    let final_height = dims.last().unwrap().height;
-
-    // Test multiple indices
-    for index in [0, 3, final_height - 1] {
-        let opening = mmcs.open_batch(index, &tree);
-        let opening_ref: BatchOpeningRef<'_, F, _> = (&opening).into();
-        assert!(
-            mmcs.verify_batch(&commitment, &dims, index, opening_ref)
-                .is_ok(),
-            "verification failed for index {index}"
-        );
-    }
-}
-
-#[test]
-fn hiding_mmcs_different_salts_different_roots() {
+fn hiding_different_salts_different_roots() {
     // Commit the same data with different RNGs should produce different roots
     let matrices1 = vec![RowMajorMatrix::rand(
         &mut SmallRng::seed_from_u64(100),
@@ -246,11 +210,15 @@ fn hiding_mmcs_different_salts_different_roots() {
     )];
     let matrices2 = matrices1.clone();
 
-    let mmcs1 = hiding_lmcs(SmallRng::seed_from_u64(1));
-    let mmcs2 = hiding_lmcs(SmallRng::seed_from_u64(2));
+    // Create two configs with different RNGs
+    let config1 = hiding_lmcs(SmallRng::seed_from_u64(1));
+    let config2 = hiding_lmcs(SmallRng::seed_from_u64(2));
 
-    let (commitment1, _) = mmcs1.commit(matrices1);
-    let (commitment2, _) = mmcs2.commit(matrices2);
+    let tree1: HidingTree<_> = config1.build_tree(matrices1);
+    let tree2: HidingTree<_> = config2.build_tree(matrices2);
+
+    let commitment1 = tree1.root();
+    let commitment2 = tree2.root();
 
     // Different salt should produce different commitments
     assert_ne!(commitment1, commitment2);

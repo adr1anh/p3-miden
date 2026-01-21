@@ -30,6 +30,7 @@ use p3_miden_dev_utils::{
     LOG_HEIGHTS, PARALLEL_STR, RELATIVE_SPECS, criterion_config, generate_matrices_from_specs,
     total_elements,
 };
+use p3_miden_lmcs::{Lmcs, LmcsTree};
 use rand::distr::{Distribution, StandardUniform};
 use utils::LmcsScenario;
 
@@ -60,7 +61,7 @@ where
         let matrix_groups: Vec<Vec<RowMajorMatrix<S::F>>> =
             generate_matrices_from_specs(RELATIVE_SPECS, log_max_height);
 
-        // LMCS
+        // LMCS (using Lmcs trait API)
         let lmcs = S::lmcs();
         group.bench_with_input(
             BenchmarkId::from_parameter("lmcs"),
@@ -68,7 +69,8 @@ where
             |b, groups| {
                 b.iter(|| {
                     for matrices in groups {
-                        black_box(lmcs.commit(matrices.clone()));
+                        let tree = lmcs.build_tree(matrices.clone());
+                        black_box(tree.root());
                     }
                 });
             },

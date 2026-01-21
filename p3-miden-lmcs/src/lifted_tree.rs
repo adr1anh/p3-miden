@@ -50,7 +50,7 @@ use serde::{Deserialize, Serialize};
 /// This generally shouldn't be used directly. If you're using a Merkle tree as an MMCS,
 /// see the MMCS wrapper types.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct LiftedHidingMerkleTree<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize = 0> {
+pub struct LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize = 0> {
     /// All leaf matrices in insertion order.
     ///
     /// Matrices must be sorted by height (shortest to tallest) and all heights must be
@@ -77,15 +77,8 @@ pub struct LiftedHidingMerkleTree<F, D, M, const DIGEST_ELEMS: usize, const SALT
     pub(crate) salt: Option<RowMajorMatrix<F>>,
 }
 
-/// Type alias for non-hiding lifted Merkle tree (`SALT_ELEMS = 0`).
-///
-/// This is the default configuration for most use cases. Use [`LiftedHidingMerkleTree`]
-/// with `SALT_ELEMS > 0` when hiding commitment is needed.
-pub type LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize> =
-    LiftedHidingMerkleTree<F, D, M, DIGEST_ELEMS, 0>;
-
 impl<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
-    LiftedHidingMerkleTree<F, D, M, DIGEST_ELEMS, SALT_ELEMS>
+    LiftedMerkleTree<F, D, M, DIGEST_ELEMS, SALT_ELEMS>
 where
     F: Copy + Default + Send + Sync,
     D: Copy + PartialEq + Send + Sync,
@@ -213,7 +206,7 @@ where
     ///
     /// This is more efficient than calling [`authentication_path`](Self::authentication_path)
     /// multiple times when opening multiple leaves. The paths can be further deduplicated
-    /// into a [`CompactProof`](crate::CompactProof) for serialization.
+    /// into a [`Proof`](crate::Proof) for serialization.
     ///
     /// Returns a vector of `(index, path)` pairs in the same order as the input indices.
     pub fn authentication_paths(&self, indices: &[usize]) -> Vec<(usize, Vec<[D; DIGEST_ELEMS]>)> {
@@ -245,9 +238,9 @@ where
             None => {
                 // For SALT_ELEMS == 0, this returns an empty array.
                 // For SALT_ELEMS > 0, this should never be reached if using safe constructors.
-                assert!(
+                debug_assert!(
                     SALT_ELEMS == 0,
-                    "tree constructed without salt but SALT_ELEMS > 0 (use build_tree_hiding)"
+                    "tree constructed without salt but SALT_ELEMS > 0"
                 );
                 [F::default(); SALT_ELEMS]
             }
@@ -259,6 +252,10 @@ where
     /// The proof contains openings (rows + salt per query) and deduplicated Merkle siblings.
     /// Indices do not need to be sorted.
     ///
+    /// This implementation extracts required siblings directly from `digest_layers` in a single
+    /// level-by-level pass, avoiding the overhead of building full authentication paths and
+    /// deduplicating them afterward.
+    ///
     /// # Arguments
     ///
     /// - `indices`: Leaf indices to open (must all be less than tree height).
@@ -266,33 +263,53 @@ where
     /// # Returns
     ///
     /// A [`Proof`](proof::Proof) containing openings and compact siblings.
-    pub fn open_multi(
-        &self,
-        indices: &[usize],
-    ) -> proof::Proof<F, D, DIGEST_ELEMS, [F; SALT_ELEMS]> {
+    pub fn open_multi(&self, indices: &[usize]) -> proof::Proof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
+        use alloc::collections::BTreeSet;
+
         let final_height = self.height();
         let depth = log2_strict_usize(final_height);
 
-        // Collect rows and paths for each index
-        let indexed_paths: Vec<_> = indices
-            .iter()
-            .map(|&index| {
-                assert!(
-                    index < final_height,
-                    "index {index} out of range {final_height}"
-                );
-                let leaf_digest = self.digest_layers[0][index];
-                let path = self.authentication_path(index);
-                proof::IndexedPath {
-                    index,
-                    leaf: leaf_digest,
-                    path,
-                }
-            })
-            .collect();
+        // Validate indices
+        for &index in indices {
+            assert!(
+                index < final_height,
+                "index {index} out of range {final_height}"
+            );
+        }
 
-        // Build compact proof from paths
-        let siblings = proof::CompactProof::from_paths(depth, indexed_paths);
+        // Build compact siblings in canonical order (left-to-right, bottom-to-top).
+        // Start with leaf positions as "known".
+        let mut known: BTreeSet<usize> = indices.iter().copied().collect();
+        let mut siblings: Vec<[D; DIGEST_ELEMS]> = Vec::new();
+
+        // Walk up the tree level by level
+        for layer_idx in 0..depth {
+            let mut parents = BTreeSet::new();
+
+            // BTreeSet iterates in sorted order (left-to-right)
+            for &pos in &known {
+                let parent_pos = pos / 2;
+                if parents.contains(&parent_pos) {
+                    continue; // Already processed this pair
+                }
+
+                let left_pos = parent_pos * 2;
+                let right_pos = left_pos + 1;
+                let have_left = known.contains(&left_pos);
+                let have_right = known.contains(&right_pos);
+
+                // Add sibling hash if exactly one child is known
+                if have_left && !have_right {
+                    siblings.push(self.digest_layers[layer_idx][right_pos]);
+                } else if !have_left && have_right {
+                    siblings.push(self.digest_layers[layer_idx][left_pos]);
+                }
+
+                parents.insert(parent_pos);
+            }
+
+            known = parents;
+        }
 
         // Build Opening instances for each query
         let openings = indices
@@ -300,11 +317,11 @@ where
             .map(|&idx| {
                 let rows = self.rows(idx);
                 let salt = self.salt(idx);
-                proof::Opening::new(rows, salt)
+                proof::Opening { rows, salt }
             })
             .collect();
 
-        proof::Proof::new(openings, siblings)
+        proof::Proof { openings, siblings }
     }
 }
 
@@ -316,8 +333,8 @@ where
 /// Conceptually, each matrix is virtually extended to height `H` by repeating each row
 /// `L = H / h` times (width unchanged), and the leaf `r` absorbs the `r`-th row from each
 /// extended matrix in order. Each absorbed row is virtually padded with zeros to a multiple of the
-/// hasher's padding width for absorption; see [`LiftedMerkleTree`] docs for the equivalent
-/// single-matrix view.
+/// hasher's padding width for absorption; see [`LiftedMerkleTree`](crate::LiftedMerkleTree) docs
+/// for the equivalent single-matrix view.
 ///
 /// # Preconditions
 /// - `matrices` is non-empty and sorted by non-decreasing power-of-two heights.
