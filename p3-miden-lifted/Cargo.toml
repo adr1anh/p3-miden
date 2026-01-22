@@ -15,13 +15,10 @@ p3-dft.workspace = true
 p3-field.workspace = true
 p3-matrix.workspace = true
 p3-miden-lmcs.workspace = true
-p3-miden-stateful-hasher.workspace = true
 p3-maybe-rayon.workspace = true
-p3-symmetric.workspace = true
 p3-util.workspace = true
 
 rand.workspace = true
-serde = { workspace = true, features = ["alloc"] }
 thiserror.workspace = true
 
 [dev-dependencies]

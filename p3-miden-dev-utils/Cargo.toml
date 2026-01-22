@@ -21,9 +21,6 @@ p3-merkle-tree.workspace = true
 p3-miden-lmcs.workspace = true
 p3-miden-stateful-hasher.workspace = true
 p3-symmetric.workspace = true
-p3-util.workspace = true
-
-paste = "1"
 rand.workspace = true
 
 # Criterion only for std targets (not wasm32)
