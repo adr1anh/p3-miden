@@ -1,14 +1,12 @@
 use alloc::vec::Vec;
 use core::iter::zip;
-use core::marker::PhantomData;
 
 use super::DeepParams;
 use super::interpolate::PointQuotients;
 use super::utils::observe_evals;
-use crate::deep::proof::{DeepProof, DeepQuery};
+use crate::deep::proof::DeepProof;
 use crate::utils::{MatrixGroupEvals, PackedFieldExtensionExt};
 use p3_challenger::{FieldChallenger, GrindingChallenger};
-use p3_commit::Mmcs;
 use p3_field::{
     ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue, TwoAdicField, dot_product,
 };
@@ -19,20 +17,13 @@ use p3_maybe_rayon::prelude::*;
 ///
 /// Combines all polynomial evaluation claims into a single low-degree polynomial.
 /// See module documentation for the construction and soundness argument.
-pub struct DeepPoly<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>> {
-    /// References to the committed prover data for each matrix group.
-    input_matrices: Vec<&'a Commit::ProverData<M>>,
-
+pub struct DeepPoly<EF> {
     /// The DEEP quotient polynomial evaluated over the domain.
     /// `deep_evals[i]` is the evaluation at the i-th domain point (bit-reversed order).
     pub(crate) deep_evals: Vec<EF>,
-
-    _marker: PhantomData<F>,
 }
 
-impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
-    DeepPoly<'a, F, EF, M, Commit>
-{
+impl<EF> DeepPoly<EF> {
     /// Construct `Q(X)` from committed matrices and batched evaluations at N opening points.
     ///
     /// This method handles the complete transcript flow:
@@ -42,33 +33,44 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
     /// 4. Constructs the DEEP quotient polynomial
     ///
     /// # Arguments
-    /// - `c`: The MMCS used for commitment (extracts matrices from prover data)
-    /// - `quotient`: Precomputed `1/(zⱼ - X)` for all N opening points
-    /// - `batched_evals`: Evaluations at all N points, indexed as `evals[group_idx][point_idx]`
-    /// - `input_matrices`: References to committed matrix data
-    /// - `evals`: Evaluations transposed as `evals[point_idx][group_idx]` for transcript observation
-    /// - `challenger`: The Fiat-Shamir challenger
     /// - `params`: DEEP parameters (alignment and proof_of_work_bits)
+    /// - `matrices_groups`: References to committed matrices, grouped by commitment
+    /// - `evals`: Evaluations transposed as `evals[point_idx][group_idx]` for transcript observation
+    /// - `batched_evals`: Evaluations at all N points, indexed as `evals[group_idx][point_idx]`
+    /// - `quotient`: Precomputed `1/(zⱼ - X)` for all N opening points
+    /// - `challenger`: The Fiat-Shamir challenger
     ///
     /// # Returns
     /// Tuple of `(DeepPoly, DeepProof)` where `DeepProof` contains the grinding witness.
-    pub fn new<const N: usize, Challenger>(
+    pub fn new<F, M, const N: usize, Challenger>(
         params: &DeepParams,
-        c: &Commit,
-        input_matrices: Vec<&'a Commit::ProverData<M>>,
+        matrices_groups: &[Vec<&M>],
         evals: &[Vec<MatrixGroupEvals<EF>>],
         batched_evals: &[MatrixGroupEvals<FieldArray<EF, N>>],
         quotient: &PointQuotients<F, EF, N>,
         challenger: &mut Challenger,
     ) -> (Self, DeepProof<Challenger::Witness>)
     where
+        F: TwoAdicField,
+        EF: ExtensionField<F>,
+        M: Matrix<F>,
         Challenger: FieldChallenger<F> + GrindingChallenger,
     {
+        // Validate: one eval group per matrix group
         assert_eq!(
             batched_evals.len(),
-            input_matrices.len(),
-            "batched_evals and prover_data must have the same length"
+            matrices_groups.len(),
+            "batched_evals should have one group per matrix group"
         );
+
+        // Validate: each group's matrix count matches
+        for (evals_group, matrices) in zip(batched_evals, matrices_groups) {
+            assert_eq!(
+                evals_group.num_matrices(),
+                matrices.len(),
+                "batched_evals matrix count must match matrices count"
+            );
+        }
 
         // 1. Observe evaluations into transcript
         observe_evals::<F, EF, Challenger>(evals, challenger, params.alignment);
@@ -79,11 +81,6 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
         // 3. Sample DEEP challenges
         let challenge_columns: EF = challenger.sample_algebra_element();
         let challenge_points: EF = challenger.sample_algebra_element();
-
-        let matrices_groups: Vec<Vec<&M>> = input_matrices
-            .iter()
-            .map(|data| c.get_matrices(*data))
-            .collect();
 
         let w = F::Packing::WIDTH;
         let point_quotient = quotient.point_quotient();
@@ -106,7 +103,7 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
 
         // Compute -f_reduced(X) = -Σᵢ αⁱ · fᵢ(X) over the LDE domain.
         let mut neg_column_coeffs_iter = neg_column_coeffs.iter();
-        let neg_f_reduced = zip(&matrices_groups, &group_sizes)
+        let neg_f_reduced = zip(matrices_groups, &group_sizes)
             .map(|(matrices_group, &size)| {
                 let group_coeffs: Vec<&Vec<EF>> =
                     neg_column_coeffs_iter.by_ref().take(size).collect();
@@ -196,27 +193,12 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
                 });
         }
 
-        (
-            Self {
-                input_matrices,
-                deep_evals,
-                _marker: PhantomData,
-            },
-            DeepProof { pow_witness },
-        )
+        (Self { deep_evals }, DeepProof { pow_witness })
     }
 
-    /// Open the committed matrices at a query index.
-    ///
-    /// Returns a [`DeepQuery`] containing the Merkle openings needed by the verifier
-    /// to reconstruct `f_reduced(X)` at the queried domain point.
-    pub fn open(&self, c: &Commit, index: usize) -> DeepQuery<F, Commit> {
-        let openings = self
-            .input_matrices
-            .iter()
-            .map(|m| c.open_batch(index, m))
-            .collect();
-        DeepQuery { openings }
+    /// Consume self and return the DEEP quotient evaluations.
+    pub fn into_evals(self) -> Vec<EF> {
+        self.deep_evals
     }
 }
 

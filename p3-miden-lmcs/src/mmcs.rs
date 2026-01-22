@@ -30,11 +30,9 @@ where
     PF::Value: PartialEq,
     H: StatefulHasher<PF, [PD; DIGEST_ELEMS], State = [PD; WIDTH]>
         + StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>
-        + Clone
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>
         + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
-        + Clone
         + Sync,
     [PD::Value; DIGEST_ELEMS]: Serialize + for<'de> Deserialize<'de>,
 {
@@ -114,11 +112,9 @@ where
     StandardUniform: Distribution<PF::Value>,
     H: StatefulHasher<PF, [PD; DIGEST_ELEMS], State = [PD; WIDTH]>
         + StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>
-        + Clone
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>
         + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
-        + Clone
         + Sync,
     [PD::Value; DIGEST_ELEMS]: Serialize + for<'de> Deserialize<'de>,
     [PF::Value; SALT_ELEMS]: Serialize + for<'de> Deserialize<'de>,

@@ -1,9 +1,11 @@
 use alloc::vec::Vec;
 
-use crate::deep::{DeepProof, DeepQuery};
-use crate::fri::{FriProof, FriQuery};
-use crate::utils::MatrixGroupEvals;
 use p3_field::{ExtensionField, Field};
+use p3_miden_lmcs::Lmcs;
+
+use crate::deep::DeepProof;
+use crate::fri::FriProof;
+use crate::utils::MatrixGroupEvals;
 
 /// Complete PCS opening proof.
 ///
@@ -13,14 +15,14 @@ use p3_field::{ExtensionField, Field};
 /// - DEEP grinding witness
 /// - FRI proof with commitments, final polynomial, and per-round grinding witnesses
 /// - Query grinding witness
-/// - Query proofs with Merkle openings
+/// - Query proofs: compact multi-opening proofs for trace trees and FRI rounds
 ///
-/// Uses a single base-field MMCS for both input matrices and FRI round commitments.
-pub struct Proof<F, EF, Mmcs, Witness>
+/// Uses a single LMCS for both trace commitments and FRI round commitments.
+pub struct Proof<F, EF, L, Witness>
 where
     F: Field,
     EF: ExtensionField<F>,
-    Mmcs: p3_commit::Mmcs<F>,
+    L: Lmcs<F = F>,
 {
     /// Claimed evaluations at each opening point.
     /// Structure: `evals[point_idx][commit_idx][matrix_idx][col_idx]`
@@ -30,20 +32,25 @@ where
     pub(super) deep_proof: DeepProof<Witness>,
 
     /// FRI proof containing commitments, final polynomial, and per-round grinding witnesses.
-    pub(super) fri_proof: FriProof<F, EF, Mmcs, Witness>,
+    pub(super) fri_proof: FriProof<EF, L, Witness>,
 
     /// Proof-of-work witness for query sampling grinding.
     pub(super) query_pow_witness: Witness,
 
-    /// Query phase proofs, one per query index.
-    pub(super) query_proofs: Vec<QueryProof<F, Mmcs>>,
+    /// Compact multi-opening proofs for trace matrices at all query indices.
+    /// One proof per trace tree, each covering all query indices.
+    pub(super) trace_query_proofs: Vec<L::Proof>,
+
+    /// Compact multi-opening proofs for FRI rounds at all query indices.
+    /// One proof per FRI round, each covering all query indices for that round.
+    pub(super) fri_query_proofs: Vec<L::Proof>,
 }
 
-impl<F, EF, Mmcs, Witness> Proof<F, EF, Mmcs, Witness>
+impl<F, EF, L, Witness> Proof<F, EF, L, Witness>
 where
     F: Field,
     EF: ExtensionField<F>,
-    Mmcs: p3_commit::Mmcs<F>,
+    L: Lmcs<F = F>,
 {
     /// Returns the claimed evaluations at each opening point.
     ///
@@ -59,7 +66,7 @@ where
     }
 
     /// Returns the FRI proof with commitments, final polynomial, and per-round witnesses.
-    pub fn fri_proof(&self) -> &FriProof<F, EF, Mmcs, Witness> {
+    pub fn fri_proof(&self) -> &FriProof<EF, L, Witness> {
         &self.fri_proof
     }
 
@@ -68,33 +75,15 @@ where
         &self.query_pow_witness
     }
 
-    /// Returns the query phase proofs, one per query index.
-    pub fn query_proofs(&self) -> &[QueryProof<F, Mmcs>] {
-        &self.query_proofs
-    }
-}
-
-/// Proof for a single FRI query index.
-///
-/// Contains Merkle openings for both the input matrices (via DEEP)
-/// and each FRI folding round, allowing the verifier to check consistency.
-pub struct QueryProof<F: Field, Mmcs: p3_commit::Mmcs<F>> {
-    /// Openings of the input matrices at this query index
-    /// (one BatchOpening per committed matrix group)
-    pub(super) input_openings: DeepQuery<F, Mmcs>,
-
-    /// Openings for each FRI folding round
-    pub(super) fri_round_openings: FriQuery<F, Mmcs>,
-}
-
-impl<F: Field, Mmcs: p3_commit::Mmcs<F>> QueryProof<F, Mmcs> {
-    /// Returns the DEEP query containing input matrix openings.
-    pub fn input_openings(&self) -> &DeepQuery<F, Mmcs> {
-        &self.input_openings
+    /// Returns the compact multi-opening proofs for trace matrices.
+    /// One proof per trace tree, each covering all query indices.
+    pub fn trace_query_proofs(&self) -> &[L::Proof] {
+        &self.trace_query_proofs
     }
 
-    /// Returns the FRI query containing folding round openings.
-    pub fn fri_round_openings(&self) -> &FriQuery<F, Mmcs> {
-        &self.fri_round_openings
+    /// Returns the compact multi-opening proofs for FRI rounds.
+    /// One proof per FRI round, each covering all query indices for that round.
+    pub fn fri_query_proofs(&self) -> &[L::Proof] {
+        &self.fri_query_proofs
     }
 }

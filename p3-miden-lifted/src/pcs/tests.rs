@@ -10,10 +10,10 @@ use crate::pcs::prover::open;
 use crate::pcs::verifier::verify;
 use crate::tests::{EF, F, RATE, random_lde_matrix, test_challenger, test_lmcs};
 use p3_challenger::CanObserve;
-use p3_commit::Mmcs;
 use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
+use p3_miden_lmcs::{Lmcs, LmcsTree};
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -25,7 +25,7 @@ use rand::{Rng, SeedableRng};
 #[test]
 fn test_pcs_open_verify_roundtrip() {
     let rng = &mut SmallRng::seed_from_u64(42);
-    let mmcs = test_lmcs();
+    let lmcs = test_lmcs();
 
     let config = PcsConfig {
         fri: FriParams {
@@ -59,41 +59,48 @@ fn test_pcs_open_verify_roundtrip() {
     );
     let matrices: Vec<RowMajorMatrix<F>> = vec![matrix];
 
-    // Commit matrices
-    let (commitment, prover_data) = mmcs.commit(matrices.clone());
-    let dims: Vec<_> = matrices.iter().map(|m| m.dimensions()).collect();
+    // Commit matrices via LMCS
+    let tree = lmcs.build_tree(matrices);
+    let commitment = tree.root();
+    let dims: Vec<_> = tree.leaves().iter().map(|m| m.dimensions()).collect();
 
     // Evaluation points
     let z1: EF = rng.sample(StandardUniform);
     let z2: EF = rng.sample(StandardUniform);
     let eval_points = [z1, z2];
 
+    // Create slice of tree references for multi-tree API (single tree in this case)
+    let trace_trees: &[&_] = &[&tree];
+
     // Prover
     let mut prover_challenger = test_challenger();
-    prover_challenger.observe(commitment);
+    prover_challenger.observe(commitment.clone());
 
     let proof = open::<F, EF, _, _, _, 2>(
-        &mmcs,
+        &lmcs,
         &config,
         eval_points,
-        vec![&prover_data],
+        trace_trees,
         &mut prover_challenger,
     );
+
+    // Create commitments slice for multi-commitment API (single commitment in this case)
+    let commitments: &[_] = &[(commitment.clone(), dims)];
 
     // Verifier
     let mut verifier_challenger = test_challenger();
     verifier_challenger.observe(commitment);
 
     let result = verify::<F, EF, _, _, 2>(
-        &mmcs,
-        &[(commitment, dims)],
+        &lmcs,
+        commitments,
         eval_points,
         &proof,
         &mut verifier_challenger,
         &config,
     );
 
-    assert!(result.is_ok(), "Verification should succeed");
+    assert!(result.is_ok(), "Verification should succeed: {:?}", result);
     let verified_evals = result.unwrap();
     assert_eq!(verified_evals.len(), 2, "Should have 2 evaluation points");
 }

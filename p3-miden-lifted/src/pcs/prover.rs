@@ -7,10 +7,11 @@ use alloc::vec::Vec;
 use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
 use p3_field::{ExtensionField, FieldArray, TwoAdicField};
 use p3_matrix::Matrix;
+use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_util::log2_strict_usize;
 
 use super::config::PcsConfig;
-use super::proof::{Proof, QueryProof};
+use super::proof::Proof;
 use crate::deep::PointQuotients;
 use crate::deep::prover::DeepPoly;
 use crate::fri::prover::FriPolys;
@@ -21,46 +22,46 @@ use crate::utils::{MatrixGroupEvals, bit_reversed_coset_points};
 /// # Type Parameters
 /// - `F`: Base field (must be two-adic for FRI)
 /// - `EF`: Extension field for challenges and evaluations
-/// - `Mmcs`: MMCS used for both input matrices and FRI round commitments
+/// - `L`: LMCS used for both input matrix commitments and FRI round commitments
 /// - `M`: Matrix type for input matrices
 /// - `Challenger`: Fiat-Shamir challenger (must support grinding)
 /// - `N`: Number of evaluation points (compile-time constant)
 ///
 /// # Arguments
-/// - `mmcs`: The MMCS instance used for commitments
+/// - `lmcs`: The LMCS instance used for all commitments
 /// - `config`: PCS configuration (FRI params + DEEP params)
 /// - `eval_points`: Array of N out-of-domain evaluation points
-/// - `prover_data`: Prover data from the commitment phase (one per committed group)
+/// - `trace_trees`: References to committed trace trees (one per commitment round)
 /// - `challenger`: Mutable reference to the Fiat-Shamir challenger
 ///
 /// # Returns
 /// A `Proof` containing evaluations, grinding witnesses, and all opening proofs
-pub fn open<F, EF, Mmcs, M, Challenger, const N: usize>(
-    mmcs: &Mmcs,
+pub fn open<F, EF, L, M, Challenger, const N: usize>(
+    lmcs: &L,
     config: &PcsConfig,
     eval_points: [EF; N],
-    prover_data: Vec<&Mmcs::ProverData<M>>,
+    trace_trees: &[&L::Tree<M>],
     challenger: &mut Challenger,
-) -> Proof<F, EF, Mmcs, Challenger::Witness>
+) -> Proof<F, EF, L, Challenger::Witness>
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
-    Mmcs: p3_commit::Mmcs<F>,
+    L: Lmcs<F = F>,
     M: Matrix<F>,
-    Challenger: FieldChallenger<F> + CanObserve<Mmcs::Commitment> + GrindingChallenger,
+    Challenger: FieldChallenger<F> + CanObserve<L::Commitment> + GrindingChallenger,
 {
     // ─────────────────────────────────────────────────────────────────────────
-    // Extract matrix structure from prover data
+    // Extract matrix structure from trees (one group per trace tree)
     // ─────────────────────────────────────────────────────────────────────────
-    let matrices_groups: Vec<Vec<&M>> = prover_data
+    let matrices_groups: Vec<Vec<&M>> = trace_trees
         .iter()
-        .map(|pd| mmcs.get_matrices(*pd))
+        .map(|tree| tree.leaves().iter().collect())
         .collect();
 
-    // Determine LDE domain size from tallest matrix
-    let max_height = matrices_groups
+    // Determine LDE domain size from tallest matrix across all trees
+    let max_height = trace_trees
         .iter()
-        .flat_map(|g| g.iter().map(|m| m.height()))
+        .flat_map(|tree| tree.leaves().iter().map(|m| m.height()))
         .max()
         .expect("at least one matrix required");
     let log_n = log2_strict_usize(max_height);
@@ -88,8 +89,7 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     let (deep_poly, deep_proof) = DeepPoly::new(
         &config.deep,
-        mmcs,
-        prover_data,
+        &matrices_groups,
         &evals,
         &batched_evals,
         &quotient,
@@ -102,7 +102,7 @@ where
     // The deep_poly contains evaluations on the LDE domain (size max_height).
     // FRI will prove that this polynomial is low-degree.
     let (fri_polys, fri_proof) =
-        FriPolys::<F, EF, _>::new(&config.fri, mmcs, &deep_poly.deep_evals, challenger);
+        FriPolys::<F, EF, L>::new(&config.fri, lmcs, deep_poly.into_evals(), challenger);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Grind for query sampling
@@ -119,21 +119,14 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // Generate query proofs
     // ─────────────────────────────────────────────────────────────────────────
-    let query_proofs: Vec<QueryProof<F, Mmcs>> = query_indices
+    // Open input trees at all query indices at once (one proof per tree)
+    let trace_query_proofs: Vec<L::Proof> = trace_trees
         .iter()
-        .map(|&index| {
-            // Open DeepPoly at this index
-            let deep_query = deep_poly.open(mmcs, index);
-
-            // Open FRI rounds at this index
-            let fri_round_openings = fri_polys.open_query(&config.fri, mmcs, index);
-
-            QueryProof {
-                input_openings: deep_query,
-                fri_round_openings,
-            }
-        })
+        .map(|tree| tree.open_multi(&query_indices))
         .collect();
+
+    // Open all FRI rounds at all query indices at once (one proof per round)
+    let fri_query_proofs = fri_polys.open_queries(&config.fri, &query_indices);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Assemble and return proof
@@ -143,6 +136,7 @@ where
         deep_proof,
         fri_proof,
         query_pow_witness,
-        query_proofs,
+        trace_query_proofs,
+        fri_query_proofs,
     }
 }

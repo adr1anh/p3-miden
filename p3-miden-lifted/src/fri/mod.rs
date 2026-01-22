@@ -9,7 +9,7 @@ pub(crate) mod prover;
 pub(crate) mod verifier;
 
 pub use fold::FriFold;
-pub use proof::{FriProof, FriQuery};
+pub use proof::FriProof;
 pub use verifier::FriError;
 
 /// FRI protocol parameters.

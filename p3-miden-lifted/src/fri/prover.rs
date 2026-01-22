@@ -7,10 +7,20 @@ use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::extension::FlatMatrixView;
 use p3_maybe_rayon::prelude::*;
+use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
 
 use crate::fri::FriParams;
-use crate::fri::proof::{FriProof, FriQuery};
+use crate::fri::proof::FriProof;
+
+// ============================================================================
+// Type Aliases
+// ============================================================================
+
+/// Tree type for FRI folding rounds.
+///
+/// Stores extension field evaluations flattened to base field via `FlatMatrixView`.
+type FoldedTree<F, EF, L> = <L as Lmcs>::Tree<FlatMatrixView<F, EF, RowMajorMatrix<EF>>>;
 
 // ============================================================================
 // Prover Data Structure
@@ -18,21 +28,21 @@ use crate::fri::proof::{FriProof, FriQuery};
 
 /// Prover's state from the FRI commit phase.
 ///
-/// Contains the data needed to answer queries (Merkle prover data).
+/// Contains the data needed to answer queries (LMCS trees).
 /// The proof data (commitments, final polynomial, pow witnesses) is returned
 /// separately as `FriProof` from the constructor.
 ///
-/// Uses a single base-field MMCS. Extension field evaluations are flattened
+/// Uses a single base-field LMCS. Extension field evaluations are flattened
 /// to base field before commitment.
-pub struct FriPolys<F, EF, Mmcs>
+pub struct FriPolys<F, EF, L>
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
-    Mmcs: p3_commit::Mmcs<F>,
+    L: Lmcs<F = F>,
 {
-    /// Prover data for each folding round, used to open Merkle paths at query indices.
+    /// Trees for each folding round, used to open multiple query indices at once.
     /// Stores flattened base-field matrices (EF elements flattened to F via FlatMatrixView).
-    folded_evals_data: Vec<Mmcs::ProverData<FlatMatrixView<F, EF, RowMajorMatrix<EF>>>>,
+    folded_trees: Vec<FoldedTree<F, EF, L>>,
 }
 
 // ============================================================================
@@ -68,11 +78,11 @@ where
 //   - Adjacent rows have s values that are negatives (for arity=2)
 //   - After folding, row i maps to row i in the halved domain
 
-impl<F, EF, Mmcs> FriPolys<F, EF, Mmcs>
+impl<F, EF, L> FriPolys<F, EF, L>
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
-    Mmcs: p3_commit::Mmcs<F>,
+    L: Lmcs<F = F>,
 {
     /// Execute the FRI commit phase.
     ///
@@ -84,9 +94,9 @@ where
     ///
     /// ## Arguments
     ///
-    /// - `mmcs`: The base-field MMCS for committing to folded evaluations
+    /// - `lmcs`: The base-field LMCS for committing to folded evaluations
     /// - `params`: FRI parameters (includes per-round proof_of_work_bits)
-    /// - `evals`: Initial polynomial evaluations in bit-reversed order
+    /// - `evals`: Initial polynomial evaluations in bit-reversed order (takes ownership)
     /// - `challenger`: Fiat-Shamir challenger for sampling β
     ///
     /// ## Returns
@@ -95,18 +105,18 @@ where
     /// final polynomial, and per-round grinding witnesses.
     pub fn new<Challenger>(
         params: &FriParams,
-        mmcs: &Mmcs,
-        evals: &[EF],
+        lmcs: &L,
+        evals: Vec<EF>,
         challenger: &mut Challenger,
-    ) -> (Self, FriProof<F, EF, Mmcs, Challenger::Witness>)
+    ) -> (Self, FriProof<EF, L, Challenger::Witness>)
     where
-        Challenger: FieldChallenger<F> + CanObserve<Mmcs::Commitment> + GrindingChallenger,
+        Challenger: FieldChallenger<F> + CanObserve<L::Commitment> + GrindingChallenger,
     {
         let log_arity = params.fold.log_arity();
         let arity = params.fold.arity();
 
         let mut commitments = Vec::new();
-        let mut folded_evals_data = Vec::new();
+        let mut folded_trees = Vec::new();
         let mut pow_witnesses = Vec::new();
 
         let mut domain_size = evals.len();
@@ -136,7 +146,7 @@ where
         let mut s_invs: Vec<F> = g_inv.powers().take(num_rows).collect();
         reverse_slice_index_bits(&mut s_invs);
 
-        let mut folded_evals = evals.to_vec();
+        let mut folded_evals = evals;
         while domain_size > final_domain_size {
             // ─────────────────────────────────────────────────────────────────────
             // Reshape into matrix and wrap with FlatMatrixView for commitment
@@ -144,7 +154,8 @@ where
             // FlatMatrixView presents EF matrix as F matrix without copying.
             let matrix = RowMajorMatrix::new(folded_evals, arity);
             let flat_view = FlatMatrixView::new(matrix);
-            let (commitment, prover_data) = mmcs.commit_matrix(flat_view);
+            let tree = lmcs.build_tree(alloc::vec![flat_view]);
+            let commitment = tree.root();
             challenger.observe(commitment.clone());
 
             // ─────────────────────────────────────────────────────────────────────
@@ -158,14 +169,14 @@ where
             // Fold all rows: f(β) = interpolate coset evaluations at β
             // ─────────────────────────────────────────────────────────────────────
             // Get the underlying EF matrix from the FlatMatrixView via Deref for folding.
-            let flat_view_ref = mmcs.get_matrices(&prover_data)[0];
+            let flat_view_ref = &tree.leaves()[0];
             let ef_matrix: &RowMajorMatrix<EF> = flat_view_ref.deref();
             folded_evals = params.fold.fold_matrix(ef_matrix.as_view(), &s_invs, beta);
             // No bit-reversal needed: folded evals maintain bit-reversed order
             // because s_invs are already bit-reversed to match
 
             commitments.push(commitment);
-            folded_evals_data.push(prover_data);
+            folded_trees.push(tree);
 
             domain_size /= arity;
 
@@ -209,7 +220,7 @@ where
         }
 
         (
-            Self { folded_evals_data },
+            Self { folded_trees },
             FriProof {
                 commitments,
                 final_poly,
@@ -218,24 +229,27 @@ where
         )
     }
 
-    /// Open a specific query index across all FRI commit phase rounds.
+    /// Open multiple query indices across all FRI commit phase rounds at once.
     ///
-    /// Returns Merkle openings for each folding round at the given query index.
-    /// The index is progressively reduced by shifting off `log_arity` bits per round.
-    /// Openings contain base field values; the verifier reconstructs extension field.
-    pub fn open_query(&self, params: &FriParams, mmcs: &Mmcs, index: usize) -> FriQuery<F, Mmcs> {
+    /// Returns compact multi-opening proofs, one per FRI round.
+    /// Each round's indices are progressively reduced by shifting off `log_arity` bits.
+    /// Proofs contain base field values; the verifier reconstructs extension field.
+    pub fn open_queries(&self, params: &FriParams, indices: &[usize]) -> Vec<L::Proof> {
         let log_arity = params.fold.log_arity();
-        let mut current_index = index;
-        let openings = self
-            .folded_evals_data
+
+        // For each round, compute the corresponding indices (shifted from previous round)
+        self.folded_trees
             .iter()
-            .map(|prover_data| {
-                let row_index = current_index >> log_arity;
-                let opening = mmcs.open_batch(row_index, prover_data);
-                current_index = row_index;
-                opening
+            .enumerate()
+            .map(|(round, tree)| {
+                // Compute indices for this round: shift each index by log_arity * (round + 1)
+                // The +1 accounts for the initial fold from evaluation domain to first round
+                let round_indices: Vec<usize> = indices
+                    .iter()
+                    .map(|&idx| idx >> (log_arity * (round + 1)))
+                    .collect();
+                tree.open_multi(&round_indices)
             })
-            .collect();
-        FriQuery { openings }
+            .collect()
     }
 }

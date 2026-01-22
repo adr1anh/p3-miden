@@ -28,7 +28,7 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use p3_challenger::{CanObserve, FieldChallenger};
-use p3_commit::{ExtensionMmcs, Mmcs, Pcs};
+use p3_commit::{ExtensionMmcs, Pcs};
 use p3_dft::{Radix2DitParallel, TwoAdicSubgroupDft};
 use p3_field::Field;
 use p3_fri::{FriParameters, TwoAdicFriPcs};
@@ -42,6 +42,7 @@ use p3_miden_dev_utils::{
 use p3_miden_lifted::deep::DeepParams;
 use p3_miden_lifted::fri::{FriFold, FriParams};
 use p3_miden_lifted::pcs::{PcsConfig, prover as lifted_prover};
+use p3_miden_lmcs::Lmcs;
 use utils::LmcsScenario;
 
 // =============================================================================
@@ -69,7 +70,7 @@ const LOG_FINAL_DEGREE: usize = 8;
 /// The macro expands to a function that benchmarks both workspace and lifted PCS
 /// implementations for the given scenario type.
 macro_rules! bench_scenario {
-    ($scenario:ty, $lmcs_fn:expr) => {{
+    ($scenario:ty) => {{
         |c: &mut Criterion| {
             // Type aliases for this scenario
             type S = $scenario;
@@ -176,27 +177,27 @@ macro_rules! bench_scenario {
                 // =============================================================
                 // Lifted PCS benchmarks (arity 2 and 4)
                 // =============================================================
+                // Note: Lifted PCS uses a single tree for all matrices, so we
+                // flatten all matrix groups into a single tree for fair comparison.
                 {
-                    let lmcs: Lmcs = $lmcs_fn();
+                    let lmcs: Lmcs = S::lmcs();
 
-                    // Compute LDE matrices
-                    let lde_groups: Vec<Vec<_>> = matrix_groups
+                    // Compute LDE matrices and flatten into a single group (sorted by height)
+                    let mut all_lde_matrices: Vec<_> = matrix_groups
                         .iter()
-                        .map(|matrices| {
-                            matrices
-                                .iter()
-                                .map(|m| {
-                                    let lde = dft.coset_lde_batch(m.clone(), LOG_BLOWUP, shift);
-                                    lde.bit_reverse_rows().to_row_major_matrix()
-                                })
-                                .collect()
+                        .flat_map(|matrices| {
+                            matrices.iter().map(|m| {
+                                let lde = dft.coset_lde_batch(m.clone(), LOG_BLOWUP, shift);
+                                lde.bit_reverse_rows().to_row_major_matrix()
+                            })
                         })
                         .collect();
+                    // Sort by height (ascending) as required by LMCS
+                    all_lde_matrices.sort_by_key(|m| m.height());
 
-                    let commits_and_data: Vec<_> = lde_groups
-                        .iter()
-                        .map(|matrices| lmcs.commit(matrices.clone()))
-                        .collect();
+                    // Build a single LMCS tree with all matrices
+                    let tree = lmcs.build_tree(all_lde_matrices);
+                    let commitment = tree.root();
 
                     let base_challenger = S::challenger();
 
@@ -222,19 +223,17 @@ macro_rules! bench_scenario {
                         group.bench_function(BenchmarkId::from_parameter(name), |b| {
                             b.iter(|| {
                                 let mut challenger = base_challenger.clone();
-                                for (commitment, _) in &commits_and_data {
-                                    challenger.observe(*commitment);
-                                }
+                                challenger.observe(commitment.clone());
                                 let z1: EF = challenger.sample_algebra_element();
                                 let z2: EF = challenger.sample_algebra_element();
 
-                                let prover_data_refs: Vec<_> =
-                                    commits_and_data.iter().map(|(_, data)| data).collect();
+                                // Wrap single tree in slice for multi-tree API
+                                let trace_trees: &[&_] = &[&tree];
                                 let proof = lifted_prover::open::<F, EF, _, _, Challenger, 2>(
                                     &lmcs,
                                     &config,
                                     [z1, z2],
-                                    prover_data_refs,
+                                    trace_trees,
                                     &mut challenger,
                                 );
                                 black_box(proof)
@@ -254,14 +253,13 @@ macro_rules! bench_scenario {
 // =============================================================================
 
 fn bench_pcs(c: &mut Criterion) {
-    use p3_miden_dev_utils::configs::{baby_bear_poseidon2 as bb, goldilocks_poseidon2 as gl};
     use p3_miden_dev_utils::{BabyBearPoseidon2, GoldilocksPoseidon2};
 
     // BabyBear + Poseidon2
-    bench_scenario!(BabyBearPoseidon2, bb::base_lmcs)(c);
+    bench_scenario!(BabyBearPoseidon2)(c);
 
     // Goldilocks + Poseidon2
-    bench_scenario!(GoldilocksPoseidon2, gl::base_lmcs)(c);
+    bench_scenario!(GoldilocksPoseidon2)(c);
 }
 
 criterion_group! {

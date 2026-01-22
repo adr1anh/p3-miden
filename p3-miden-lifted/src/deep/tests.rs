@@ -4,10 +4,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_challenger::CanObserve;
-use p3_commit::Mmcs;
 use p3_field::FieldArray;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
+use p3_miden_lmcs::{Lmcs, LmcsTree};
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -58,14 +58,15 @@ fn deep_quotient_end_to_end() {
         .collect();
 
     // Step 1: Commit matrices via LMCS
-    let (commitment, prover_data) = lmcs.commit(matrices.clone());
-    let dims: Vec<_> = matrices.iter().map(|m| m.dimensions()).collect();
+    let tree = lmcs.build_tree(matrices);
+    let commitment = tree.root();
+    let dims: Vec<_> = tree.leaves().iter().map(|m| m.dimensions()).collect();
 
     // Step 2: Compute batched evaluations at both opening points
     let quotient = PointQuotients::<F, EF, 2>::new(FieldArray([z1, z2]), &coset_points);
 
-    let matrices_ref: Vec<&RowMajorMatrix<F>> = matrices.iter().collect();
-    let matrices_groups = [matrices_ref];
+    let matrices_ref: Vec<&RowMajorMatrix<F>> = tree.leaves().iter().collect();
+    let matrices_groups = vec![matrices_ref];
     let batched_evals = quotient.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
 
     // Transpose batched evals to per-point format: [point][group][matrix][col]
@@ -80,16 +81,18 @@ fn deep_quotient_end_to_end() {
 
     // Step 3: Prover constructs DeepPoly (handles observe, grind, sample internally)
     let mut prover_challenger = test_challenger();
-    prover_challenger.observe(commitment);
+    prover_challenger.observe(commitment.clone());
     let (deep_poly, deep_proof) = DeepPoly::new(
         &params,
-        &lmcs,
-        vec![&prover_data],
+        &matrices_groups,
         &evals,
         &batched_evals,
         &quotient,
         &mut prover_challenger,
     );
+
+    // Create commitments slice for multi-commitment API (single commitment in this case)
+    let commitments = vec![(commitment.clone(), dims)];
 
     // Step 4: Verifier constructs DeepOracle with same transcript state
     let mut verifier_challenger = test_challenger();
@@ -98,24 +101,26 @@ fn deep_quotient_end_to_end() {
         &params,
         [z1, z2],
         &evals,
-        vec![(commitment, dims)],
+        commitments,
         &mut verifier_challenger,
         &deep_proof,
     )
     .expect("DeepOracle construction should succeed");
 
-    // Step 5: Verify at random query indices
-    let sample_indices = [0, 1, n / 4, n / 2, n - 1];
-    for &index in &sample_indices {
-        // Prover opens at index
-        let deep_query = deep_poly.open(&lmcs, index);
+    // Step 5: Verify at multiple query indices
+    let sample_indices = vec![0, 1, n / 4, n / 2, n - 1];
 
-        // Verifier evaluates at index (also verifies Merkle proofs)
-        let verifier_eval = deep_oracle
-            .query(&lmcs, index, &deep_query)
-            .expect("Merkle verification should pass");
+    // Prover opens at all indices at once (one proof per tree)
+    let trace_query_proofs = vec![tree.open_multi(&sample_indices)];
 
+    // Verifier evaluates at all indices (also verifies Merkle proofs)
+    let verifier_evals = deep_oracle
+        .query(&lmcs, &sample_indices, &trace_query_proofs)
+        .expect("Merkle verification should pass");
+
+    for (i, &index) in sample_indices.iter().enumerate() {
         let prover_eval = deep_poly.deep_evals[index];
+        let verifier_eval = verifier_evals[i];
         assert_eq!(
             prover_eval, verifier_eval,
             "Prover and verifier disagree at index {index}"

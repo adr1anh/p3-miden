@@ -261,11 +261,9 @@ where
     PD: PackedValue + Default,
     H: StatefulHasher<PF::Value, [PD::Value; DIGEST], State = [PD::Value; WIDTH]>
         + StatefulHasher<PF, [PD; DIGEST], State = [PD; WIDTH]>
-        + Clone
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST], 2>
         + PseudoCompressionFunction<[PD; DIGEST], 2>
-        + Clone
         + Sync,
 {
     type F = PF::Value;
@@ -372,11 +370,9 @@ where
     StandardUniform: Distribution<PF::Value>,
     H: StatefulHasher<PF::Value, [PD::Value; DIGEST], State = [PD::Value; WIDTH]>
         + StatefulHasher<PF, [PD; DIGEST], State = [PD; WIDTH]>
-        + Clone
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST], 2>
         + PseudoCompressionFunction<[PD; DIGEST], 2>
-        + Clone
         + Sync,
 {
     type F = PF::Value;

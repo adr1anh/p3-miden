@@ -1,5 +1,7 @@
 //! Integration tests for FRI protocol commit/verify cycles.
 
+use alloc::vec::Vec;
+
 use p3_field::{PrimeCharacteristicRing, TwoAdicField};
 use p3_util::reverse_bits_len;
 use rand::distr::StandardUniform;
@@ -15,15 +17,15 @@ use crate::tests::{EF, F, random_lde_matrix, test_challenger, test_lmcs};
 // Integration tests
 // ============================================================================
 
-/// Test that commit_phase produces valid proofs that verify_query accepts.
+/// Test that commit_phase produces valid proofs that verify_queries accepts.
 ///
 /// This test:
 /// 1. Generates a random polynomial and computes its LDE
 /// 2. Runs the FRI commit phase to fold down to final polynomial
-/// 3. Verifies random query indices
+/// 3. Verifies batch of random query indices
 fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
     let mut rng = SmallRng::seed_from_u64(42);
-    let mmcs = test_lmcs();
+    let lmcs = test_lmcs();
 
     let params = FriParams {
         log_blowup: 2,
@@ -39,7 +41,7 @@ fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
     // Prover: run commit phase (grinds per-round internally)
     let mut prover_challenger = test_challenger();
     let (fri_polys, fri_proof) =
-        FriPolys::<F, EF, _>::new(&params, &mmcs, &evals, &mut prover_challenger);
+        FriPolys::<F, EF, _>::new(&params, &lmcs, evals.clone(), &mut prover_challenger);
 
     // Verifier: replay challenger to get oracle with betas
     let mut verifier_challenger = test_challenger();
@@ -50,16 +52,17 @@ fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
     )
     .expect("FRI oracle construction should succeed");
 
-    // Verify random queries
-    for _ in 0..3 {
-        let index: usize = rng.random_range(0..lde_size);
-        let initial_eval = evals[index];
-        let openings = fri_polys.open_query(&params, &mmcs, index);
+    // Generate batch of query indices
+    let query_indices: Vec<usize> = (0..3).map(|_| rng.random_range(0..lde_size)).collect();
+    let initial_evals: Vec<EF> = query_indices.iter().map(|&idx| evals[idx]).collect();
 
-        fri_oracle
-            .verify_query(&params, &mmcs, index, initial_eval, &openings)
-            .expect("verification should succeed");
-    }
+    // Open all query indices at once
+    let openings = fri_polys.open_queries(&params, &query_indices);
+
+    // Verify all queries at once
+    fri_oracle
+        .verify_queries(&lmcs, &params, &query_indices, &initial_evals, &openings)
+        .expect("verification should succeed");
 }
 
 #[test]
@@ -76,7 +79,7 @@ fn test_fri_commit_verify_arity4() {
 #[test]
 fn test_fri_verify_wrong_eval() {
     let mut rng = SmallRng::seed_from_u64(42);
-    let mmcs = test_lmcs();
+    let lmcs = test_lmcs();
 
     let log_poly_degree = 8;
     let log_blowup = 2;
@@ -95,7 +98,7 @@ fn test_fri_verify_wrong_eval() {
 
     let mut prover_challenger = test_challenger();
     let (fri_polys, fri_proof) =
-        FriPolys::<F, EF, _>::new(&params, &mmcs, &evals, &mut prover_challenger);
+        FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut prover_challenger);
 
     let mut verifier_challenger = test_challenger();
     let fri_oracle = FriOracle::new(
@@ -107,10 +110,13 @@ fn test_fri_verify_wrong_eval() {
 
     let index: usize = rng.random_range(0..lde_size);
     let wrong_eval: EF = rng.sample(StandardUniform); // Wrong!
-    let openings = fri_polys.open_query(&params, &mmcs, index);
+    let openings = fri_polys.open_queries(&params, &[index]);
 
-    let result = fri_oracle.verify_query(
-        &params, &mmcs, index, wrong_eval, // Should fail
+    let result = fri_oracle.verify_queries(
+        &lmcs,
+        &params,
+        &[index],
+        &[wrong_eval], // Should fail
         &openings,
     );
 
@@ -129,7 +135,7 @@ fn test_fri_verify_wrong_eval() {
 #[test]
 fn test_fri_verify_wrong_beta() {
     let mut rng = SmallRng::seed_from_u64(42);
-    let mmcs = test_lmcs();
+    let lmcs = test_lmcs();
 
     let log_poly_degree = 8;
     let log_blowup = 2;
@@ -151,11 +157,11 @@ fn test_fri_verify_wrong_beta() {
     // Prover 1: generate FRI proof (grinds per-round internally)
     let mut prover1_challenger = test_challenger();
     let (fri_polys1, fri_proof) =
-        FriPolys::<F, EF, _>::new(&params, &mmcs, &evals1, &mut prover1_challenger);
+        FriPolys::<F, EF, _>::new(&params, &lmcs, evals1.clone(), &mut prover1_challenger);
 
     // Prover 2: generate different FRI proof (different commitments = different betas)
     let mut prover2_challenger = test_challenger();
-    let _ = FriPolys::<F, EF, _>::new(&params, &mmcs, &evals2, &mut prover2_challenger);
+    let _ = FriPolys::<F, EF, _>::new(&params, &lmcs, evals2, &mut prover2_challenger);
 
     // Verifier: use prover1's proof structure but prover2's challenger state
     // This simulates a scenario where the verifier has incorrect transcript state
@@ -171,9 +177,9 @@ fn test_fri_verify_wrong_beta() {
 
     let index: usize = rng.random_range(0..lde_size);
     let initial_eval = evals1[index];
-    let openings = fri_polys1.open_query(&params, &mmcs, index);
+    let openings = fri_polys1.open_queries(&params, &[index]);
 
-    let result = wrong_oracle.verify_query(&params, &mmcs, index, initial_eval, &openings);
+    let result = wrong_oracle.verify_queries(&lmcs, &params, &[index], &[initial_eval], &openings);
 
     // Should fail because wrong betas produce wrong folding results
     assert!(
@@ -191,7 +197,7 @@ fn test_fri_verify_wrong_beta() {
 #[test]
 fn test_final_polynomial_correctness() {
     let mut rng = SmallRng::seed_from_u64(123);
-    let mmcs = test_lmcs();
+    let lmcs = test_lmcs();
 
     let log_poly_degree = 8;
     let log_blowup = 2;
@@ -207,7 +213,7 @@ fn test_final_polynomial_correctness() {
     let evals = random_lde_matrix(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
 
     let mut chal = test_challenger();
-    let (_, fri_proof) = FriPolys::<F, EF, _>::new(&params, &mmcs, &evals, &mut chal);
+    let (_, fri_proof) = FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut chal);
 
     // Verify final polynomial has correct degree
     let final_degree = 1 << log_final_degree;

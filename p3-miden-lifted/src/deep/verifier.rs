@@ -4,12 +4,12 @@ use core::marker::PhantomData;
 
 use super::DeepParams;
 use super::utils::{observe_evals, reduce_with_powers};
-use crate::deep::proof::{DeepProof, DeepQuery};
+use crate::deep::proof::DeepProof;
 use crate::utils::MatrixGroupEvals;
 use p3_challenger::{FieldChallenger, GrindingChallenger};
-use p3_commit::{BatchOpeningRef, Mmcs};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::Dimensions;
+use p3_miden_lmcs::{Lmcs, LmcsError};
 use p3_util::{log2_strict_usize, reverse_bits_len};
 use thiserror::Error;
 
@@ -32,9 +32,9 @@ use thiserror::Error;
 /// An alternative implementation could open rows padded with zeros to the alignment
 /// width, allowing the hasher to process fixed-size chunks. This implementation
 /// uses alignment > 1 to support such padding virtually (without materializing zeros).
-pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> {
-    /// Commitments with their associated matrix dimensions.
-    commitments: Vec<(Commit::Commitment, Vec<Dimensions>)>,
+pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
+    /// Trace commitments with their dimensions (one per trace tree).
+    commitments: Vec<(L::Commitment, Vec<Dimensions>)>,
 
     /// Reduced openings: pairs of `(zⱼ, f_reduced(zⱼ))` from the prover's claims.
     reduced_openings: Vec<(EF, EF)>,
@@ -52,7 +52,7 @@ pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> {
     _marker: PhantomData<F>,
 }
 
-impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, Commit> {
+impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L> {
     /// Construct by observing evaluations, checking PoW, and sampling challenges.
     ///
     /// This method handles the complete transcript flow:
@@ -65,7 +65,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
     /// - `proof`: DEEP proof containing PoW witness
     /// - `evals`: Claimed evaluations at each opening point
     /// - `eval_points`: The out-of-domain evaluation points
-    /// - `commitments`: Pairs `(commitment, dims)` for Merkle verification
+    /// - `commitments`: The trace commitments with their dimensions (one per trace tree)
     /// - `challenger`: The Fiat-Shamir challenger
     /// - `params`: DEEP parameters (alignment and proof_of_work_bits)
     ///
@@ -80,7 +80,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
         params: &DeepParams,
         eval_points: [EF; N],
         evals: &[Vec<MatrixGroupEvals<EF>>],
-        commitments: Vec<(Commit::Commitment, Vec<Dimensions>)>,
+        commitments: Vec<(L::Commitment, Vec<Dimensions>)>,
         challenger: &mut Challenger,
         proof: &DeepProof<Challenger::Witness>,
     ) -> Result<Self, DeepError>
@@ -99,12 +99,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
         let challenge_columns: EF = challenger.sample_algebra_element();
         let challenge_points: EF = challenger.sample_algebra_element();
 
-        let num_commits = commitments.len();
-
-        // Validate structure: evals_groups[commit][matrix][col] matches dims
+        // Validate structure: evals[point_idx] should have `commitments.len()` groups
         // Structure: evals[point_idx][commit_idx][matrix_idx][col_idx]
         for point_evals in evals {
-            if point_evals.len() != num_commits {
+            if point_evals.len() != commitments.len() {
                 return Err(DeepError::StructureMismatch);
             }
             for (eval_group, (_, dims)) in zip(point_evals, &commitments) {
@@ -143,48 +141,75 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
         })
     }
 
-    /// Verify Merkle openings and compute `Q(X)` at the queried domain point.
+    /// Verify Merkle openings and compute `Q(X)` at the queried domain points.
     ///
     /// Reduces opened row values via Horner to get `f_reduced(X)`, then computes
-    /// `Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) / (zⱼ - X)`.
+    /// `Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) / (zⱼ - X)` for each queried index.
+    ///
+    /// Returns a vector of DEEP evaluations, one per query index.
+    ///
+    /// # Arguments
+    ///
+    /// - `lmcs`: The LMCS instance for verification
+    /// - `indices`: Query indices in the evaluation domain
+    /// - `proofs`: Compact multi-opening proofs, one per trace tree
     pub fn query(
         &self,
-        c: &Commit,
-        index: usize,
-        proof: &DeepQuery<F, Commit>,
-    ) -> Result<EF, Commit::Error> {
-        for ((commit, dims), opening) in zip(&self.commitments, &proof.openings) {
-            c.verify_batch(commit, dims, index, opening.into())?;
-        }
-
-        let rows_iter = proof
-            .openings
-            .iter()
-            .flat_map(|opening| BatchOpeningRef::from(opening).opened_values)
-            .map(Vec::as_slice);
-
-        // Reconstruct the domain point X from the query index.
-        // The LDE domain is the coset gK in bit-reversed order where:
-        //   g = F::GENERATOR (coset shift, avoids subgroup)
-        //   K = <ω> with ω = primitive 2^log_n root of unity
-        // In bit-reversed order: X = g · ω^{bit_rev(index)}
-        let row_point = {
-            let max_height = self.commitments.last().unwrap().1.last().unwrap().height;
-            let log_max_height = log2_strict_usize(max_height);
-            let generator = F::two_adic_generator(log_max_height);
-            let shift = F::GENERATOR;
-            let index_bit_rev = reverse_bits_len(index, log_max_height);
-            shift * generator.exp_u64(index_bit_rev as u64)
-        };
-
-        let reduced_row = reduce_with_powers(rows_iter, self.challenge_columns, self.alignment);
-
-        let eval = zip(&self.reduced_openings, self.challenge_points.powers())
-            .map(|((point, reduced_eval), coeff_point)| {
-                coeff_point * (*reduced_eval - reduced_row) / (*point - row_point)
+        lmcs: &L,
+        indices: &[usize],
+        proofs: &[L::Proof],
+    ) -> Result<Vec<EF>, DeepError> {
+        // Verify each commitment's proof and collect opened rows
+        // all_opened_rows[commit_idx][query_idx] = Vec<&[F]> (rows for that commitment)
+        let all_opened_rows: Vec<Vec<Vec<&[F]>>> = zip(&self.commitments, proofs)
+            .map(|((commit, dims), p)| {
+                lmcs.verify(commit, dims, indices, p)
+                    .map_err(DeepError::LmcsError)
             })
-            .sum();
-        Ok(eval)
+            .collect::<Result<_, _>>()?;
+
+        // Compute max height across all commitments for domain reconstruction
+        let max_height = self
+            .commitments
+            .iter()
+            .flat_map(|(_, dims)| dims.iter().map(|d| d.height))
+            .max()
+            .unwrap();
+        let log_max_height = log2_strict_usize(max_height);
+        let generator = F::two_adic_generator(log_max_height);
+        let shift = F::GENERATOR;
+
+        // Compute DEEP evaluation for each query
+        let evals: Vec<EF> = indices
+            .iter()
+            .enumerate()
+            .map(|(query_idx, &index)| {
+                // Collect rows from all commitments for this query index
+                // Rows are combined in order: commitment 0's rows, then commitment 1's rows, etc.
+                let rows_iter = all_opened_rows
+                    .iter()
+                    .flat_map(|commit_rows| commit_rows[query_idx].iter().copied());
+
+                // Reconstruct the domain point X from the query index.
+                // The LDE domain is the coset gK in bit-reversed order where:
+                //   g = F::GENERATOR (coset shift, avoids subgroup)
+                //   K = <ω> with ω = primitive 2^log_n root of unity
+                // In bit-reversed order: X = g · ω^{bit_rev(index)}
+                let index_bit_rev = reverse_bits_len(index, log_max_height);
+                let row_point = shift * generator.exp_u64(index_bit_rev as u64);
+
+                let reduced_row =
+                    reduce_with_powers(rows_iter, self.challenge_columns, self.alignment);
+
+                zip(&self.reduced_openings, self.challenge_points.powers())
+                    .map(|((point, reduced_eval), coeff_point)| {
+                        coeff_point * (*reduced_eval - reduced_row) / (*point - row_point)
+                    })
+                    .sum()
+            })
+            .collect();
+
+        Ok(evals)
     }
 }
 
@@ -203,4 +228,7 @@ pub enum DeepError {
     /// Proof-of-work witness verification failed.
     #[error("invalid proof-of-work witness")]
     InvalidPowWitness,
+    /// LMCS verification failed.
+    #[error("LMCS error: {0}")]
+    LmcsError(#[from] LmcsError),
 }

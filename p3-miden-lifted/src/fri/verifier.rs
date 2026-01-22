@@ -23,17 +23,17 @@
 //! After each fold, we shift off `log_arity` bits, moving to the parent coset.
 
 use alloc::vec::Vec;
-use core::fmt;
 use core::iter::zip;
 
 use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::Dimensions;
+use p3_miden_lmcs::{Lmcs, LmcsError};
 use p3_util::reverse_bits_len;
 use thiserror::Error;
 
 use crate::fri::FriParams;
-use crate::fri::proof::{FriProof, FriQuery};
+use crate::fri::proof::FriProof;
 
 /// Verifier's oracle for FRI query verification.
 ///
@@ -41,27 +41,27 @@ use crate::fri::proof::{FriProof, FriQuery};
 /// the Fiat-Shamir transcript. The oracle can then verify queries against
 /// the committed polynomial.
 ///
-/// Uses a single base-field MMCS. Opened base field values are reconstructed
+/// Uses a single base-field LMCS. Opened base field values are reconstructed
 /// to extension field for folding verification.
-pub struct FriOracle<F, EF, Mmcs>
+pub struct FriOracle<F, EF, L>
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
-    Mmcs: p3_commit::Mmcs<F>,
+    L: Lmcs<F = F>,
 {
     /// Merkle commitments for each folding round.
-    commitments: Vec<Mmcs::Commitment>,
+    commitments: Vec<L::Commitment>,
     /// Folding challenges β for each round.
     betas: Vec<EF>,
     /// Coefficients of the final low-degree polynomial.
     final_poly: Vec<EF>,
 }
 
-impl<F, EF, Mmcs> FriOracle<F, EF, Mmcs>
+impl<F, EF, L> FriOracle<F, EF, L>
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
-    Mmcs: p3_commit::Mmcs<F>,
+    L: Lmcs<F = F>,
 {
     /// Create an oracle from FRI proof, checking per-round PoW witnesses.
     ///
@@ -78,13 +78,13 @@ where
     /// Returns `FriError::InvalidPowWitness` if any round's witness verification fails.
     /// Returns `FriError::InvalidProofStructure` if witness count doesn't match commitment count.
     pub fn new<Challenger>(
-        proof: &FriProof<F, EF, Mmcs, Challenger::Witness>,
+        proof: &FriProof<EF, L, Challenger::Witness>,
         challenger: &mut Challenger,
         proof_of_work_bits: usize,
-    ) -> Result<Self, FriError<Mmcs::Error>>
+    ) -> Result<Self, FriError>
     where
-        Mmcs::Commitment: Clone,
-        Challenger: FieldChallenger<F> + CanObserve<Mmcs::Commitment> + GrindingChallenger,
+        L::Commitment: Clone,
+        Challenger: FieldChallenger<F> + CanObserve<L::Commitment> + GrindingChallenger,
     {
         // Validate structure: witnesses count must match commitments count
         if proof.pow_witnesses.len() != proof.commitments.len() {
@@ -117,185 +117,130 @@ where
         })
     }
 
-    /// Verify a FRI query by checking all folding rounds.
+    /// Verify all FRI queries by checking all folding rounds in batch.
     ///
-    /// Two-phase verification:
-    /// 1. Verify all Merkle openings (base field) and collect opened rows
-    /// 2. Reconstruct extension field values and verify folding consistency
-    ///
-    /// The `log_max_degree` is derived from `num_rounds * log_folding_factor + log_final_degree`
-    /// where `log_final_degree = log(final_poly.len())`.
+    /// Two-phase verification for each round:
+    /// 1. Verify Merkle openings via LMCS batch verification
+    /// 2. Verify folding consistency for each query index
     ///
     /// ## Arguments
     ///
-    /// - `mmcs`: The base-field MMCS used for commitments
+    /// - `lmcs`: The base-field LMCS used for commitments
     /// - `params`: FRI parameters (blowup, folding factor)
-    /// - `index`: Query index in the initial domain (bit-reversed)
-    /// - `eval`: Initial evaluation f(x) at the queried point
-    /// - `query`: Query proof containing Merkle openings (base field values)
+    /// - `indices`: Query indices in the initial domain (bit-reversed)
+    /// - `initial_evals`: Initial evaluations f(x) at each queried point
+    /// - `round_proofs`: Compact multi-opening proofs, one per FRI round
     ///
     /// ## Errors
     ///
     /// Returns `FriError` if any verification check fails.
-    pub fn verify_query(
+    pub fn verify_queries(
         &self,
+        lmcs: &L,
         params: &FriParams,
-        mmcs: &Mmcs,
-        index: usize,
-        eval: EF,
-        query: &FriQuery<F, Mmcs>,
-    ) -> Result<(), FriError<Mmcs::Error>>
-    where
-        Mmcs::Error: fmt::Debug,
-    {
+        indices: &[usize],
+        initial_evals: &[EF],
+        round_proofs: &[L::Proof],
+    ) -> Result<(), FriError> {
         // Verify the proof has the expected structure
-        if query.openings.len() != self.commitments.len() {
+        if round_proofs.len() != self.commitments.len() {
             return Err(FriError::InvalidProofStructure);
         }
 
-        // Verify all Merkle openings (base field)
-        self.verify_openings(mmcs, params, index, query)?;
+        if indices.len() != initial_evals.len() {
+            return Err(FriError::InvalidProofStructure);
+        }
 
-        // Verify folding consistency (reconstructs EF from base field slices internally)
-        let flat_rows = query.openings.iter().map(|o| o.opened_values[0].as_slice());
-        self.verify_folding::<Mmcs::Error>(params, index, eval, flat_rows)?;
-
-        Ok(())
-    }
-
-    /// Verify all Merkle openings without processing contents.
-    ///
-    /// Checks that each opening is valid against its commitment.
-    /// Uses flattened dimensions (width * EF::DIMENSION) since data is stored as base field.
-    fn verify_openings(
-        &self,
-        mmcs: &Mmcs,
-        params: &FriParams,
-        mut index: usize,
-        query: &FriQuery<F, Mmcs>,
-    ) -> Result<(), FriError<Mmcs::Error>>
-    where
-        Mmcs::Error: fmt::Debug,
-    {
         let log_arity = params.fold.log_arity();
         let arity = params.fold.arity();
-        let mut num_rows = 1 << self.log_domain_size(params).saturating_sub(log_arity);
-
-        for (round_idx, (commitment, opening)) in
-            zip(&self.commitments, &query.openings).enumerate()
-        {
-            let row_index = index >> log_arity;
-
-            // Verify with flattened dimensions: each EF element is stored as EF::DIMENSION base elements
-            mmcs.verify_batch(
-                commitment,
-                &[Dimensions {
-                    width: arity * EF::DIMENSION,
-                    height: num_rows,
-                }],
-                row_index,
-                opening.into(),
-            )
-            .map_err(|e| FriError::MmcsError(e, round_idx))?;
-
-            index = row_index;
-            num_rows >>= log_arity;
-        }
-        Ok(())
-    }
-
-    /// Verify folding consistency given flattened base field rows.
-    ///
-    /// For each round:
-    /// 1. Reconstruct extension field values from base field slice
-    /// 2. Check that `eval` matches the expected position in the opened row
-    /// 3. Compute coset generator inverse s⁻¹
-    /// 4. Fold the coset evaluations: eval' = f(β) via interpolation
-    ///
-    /// Finally, check that the folded value matches the final polynomial.
-    fn verify_folding<'a, MmcsError: fmt::Debug>(
-        &self,
-        params: &FriParams,
-        mut index: usize,
-        mut eval: EF,
-        flat_rows: impl Iterator<Item = &'a [F]>,
-    ) -> Result<(), FriError<MmcsError>> {
-        let log_arity = params.fold.log_arity();
         let mut log_domain_size = self.log_domain_size(params);
+
+        // Track current indices and evals for each query
+        let mut current_indices: Vec<usize> = indices.to_vec();
+        let mut current_evals: Vec<EF> = initial_evals.to_vec();
 
         // Precompute g_inv once; we'll update it each round by raising to power arity
         let mut g_inv = F::two_adic_generator(log_domain_size).inverse();
 
-        for (&beta, flat_row) in zip(&self.betas, flat_rows) {
-            // Reconstruct extension field values from flattened base field
-            let row: Vec<EF> = EF::reconstitute_from_base(flat_row.to_vec());
-            // index = (row_index × arity) + position_in_coset
-            let position_in_coset = index & ((1 << log_arity) - 1);
-            let row_index = index >> log_arity;
+        // Verify each round
+        for (round_idx, (commitment, round_proof)) in
+            zip(&self.commitments, round_proofs).enumerate()
+        {
+            let num_rows = 1 << log_domain_size.saturating_sub(log_arity);
 
-            // ─────────────────────────────────────────────────────────────────
-            // Consistency check
-            // ─────────────────────────────────────────────────────────────────
-            // The evaluation we're carrying forward must match the opened value
-            // at the corresponding position within the coset.
-            if row[position_in_coset] != eval {
-                return Err(FriError::EvaluationMismatch {
-                    row_index,
-                    position: position_in_coset,
-                });
+            // Compute row indices for this round
+            let row_indices: Vec<usize> = current_indices
+                .iter()
+                .map(|&idx| idx >> log_arity)
+                .collect();
+
+            // Verify LMCS opening - dimensions are flattened (EF elements stored as F)
+            let dims = [Dimensions {
+                width: arity * EF::DIMENSION,
+                height: num_rows,
+            }];
+
+            let opened_rows = lmcs
+                .verify(commitment, &dims, &row_indices, round_proof)
+                .map_err(|e| FriError::LmcsError(e, round_idx))?;
+
+            // Verify folding consistency for each query
+            let beta = self.betas[round_idx];
+
+            for (query_idx, ((&current_idx, &row_idx), current_eval)) in current_indices
+                .iter()
+                .zip(row_indices.iter())
+                .zip(current_evals.iter_mut())
+                .enumerate()
+            {
+                // Get the opened row for this query (first matrix, since FRI only has one)
+                let flat_row = opened_rows[query_idx][0];
+
+                // Reconstruct extension field values from flattened base field
+                let row: Vec<EF> = EF::reconstitute_from_base(flat_row.to_vec());
+
+                // position_in_coset = current_idx & (arity - 1)
+                let position_in_coset = current_idx & ((1 << log_arity) - 1);
+
+                // Check that the evaluation matches the opened value
+                if row[position_in_coset] != *current_eval {
+                    return Err(FriError::EvaluationMismatch {
+                        row_index: row_idx,
+                        position: position_in_coset,
+                    });
+                }
+
+                // Compute coset generator inverse s⁻¹
+                let s_inv = {
+                    let log_num_rows = log_domain_size - log_arity;
+                    g_inv.exp_u64(reverse_bits_len(row_idx, log_num_rows) as u64)
+                };
+
+                // Fold: interpolate f on coset and evaluate at β
+                *current_eval = params.fold.fold_evals(&row, s_inv, beta);
             }
 
-            // ─────────────────────────────────────────────────────────────────
-            // Compute coset generator inverse s⁻¹
-            // ─────────────────────────────────────────────────────────────────
-            // Row `row_index` contains coset s·⟨ω⟩ where:
-            //   - ω is a primitive `arity`-th root of unity
-            //   - s = g^{bitrev(row_index, log_num_rows)} with g having order 2^log_domain_size
-            //
-            // So s_inv = g_inv^{bitrev(row_index, log_num_rows)}
-            let s_inv = {
-                let log_num_rows = log_domain_size - log_arity;
-                g_inv.exp_u64(reverse_bits_len(row_index, log_num_rows) as u64)
-            };
-
-            // ─────────────────────────────────────────────────────────────────
-            // Fold: interpolate f on coset and evaluate at β
-            // ─────────────────────────────────────────────────────────────────
-            // Given evaluations [f(s), f(−s), ...] (bit-reversed), compute f(β).
-            eval = params.fold.fold_evals(&row, s_inv, beta);
-
-            // Update for next round:
-            // - index becomes row_index
-            // - log_domain_size shrinks by log_arity
-            // - g_inv needs order 2^(log_domain_size - log_arity) = g_inv^arity
-            index = row_index;
+            // Update indices and domain size for next round
+            current_indices = row_indices;
             log_domain_size -= log_arity;
             g_inv = g_inv.exp_power_of_2(log_arity);
         }
 
-        // ─────────────────────────────────────────────────────────────────────
-        // Final polynomial check
-        // ─────────────────────────────────────────────────────────────────────
-        // After all folds, verify that `eval` equals p(x) where:
-        //   - p is the final low-degree polynomial
-        //   - x is the evaluation point corresponding to `index` in the FINAL domain
-        //
-        // The final domain has size 2^log_domain_size. The index refers to position
-        // in bit-reversed storage, so the actual point is:
-        //   x = g_final^{bitrev(index, log_domain_size)}
-        // where g_final generates the final domain.
-        let x_power = reverse_bits_len(index, log_domain_size) as u64;
-        let x = F::two_adic_generator(log_domain_size).exp_u64(x_power);
+        // Final polynomial check for each query
+        for (&index, &eval) in current_indices.iter().zip(current_evals.iter()) {
+            let x_power = reverse_bits_len(index, log_domain_size) as u64;
+            let x = F::two_adic_generator(log_domain_size).exp_u64(x_power);
 
-        // Evaluate final polynomial via Horner's method: p(x) = Σᵢ cᵢ·xⁱ
-        let final_eval = self
-            .final_poly
-            .iter()
-            .rev()
-            .fold(EF::ZERO, |acc, &coeff| acc * x + coeff);
+            // Evaluate final polynomial via Horner's method: p(x) = Σᵢ cᵢ·xⁱ
+            let final_eval = self
+                .final_poly
+                .iter()
+                .rev()
+                .fold(EF::ZERO, |acc, &coeff| acc * x + coeff);
 
-        if final_eval != eval {
-            return Err(FriError::FinalPolyMismatch);
+            if final_eval != eval {
+                return Err(FriError::FinalPolyMismatch);
+            }
         }
 
         Ok(())
@@ -319,10 +264,10 @@ where
 
 /// Errors that can occur during FRI verification.
 #[derive(Debug, Error)]
-pub enum FriError<MmcsError> {
-    /// Merkle verification failed.
-    #[error("Merkle verification failed at round {1}: {0:?}")]
-    MmcsError(MmcsError, usize),
+pub enum FriError {
+    /// LMCS verification failed.
+    #[error("LMCS verification failed at round {1}: {0}")]
+    LmcsError(LmcsError, usize),
     /// Proof structure doesn't match expected format.
     ///
     /// This includes wrong number of commitments, openings, betas, or final polynomial length.

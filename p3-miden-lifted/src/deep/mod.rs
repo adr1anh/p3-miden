@@ -35,7 +35,7 @@ mod utils;
 pub(crate) mod verifier;
 
 pub use interpolate::PointQuotients;
-pub use proof::{DeepProof, DeepQuery};
+pub use proof::DeepProof;
 pub use verifier::DeepError;
 
 /// DEEP quotient parameters.

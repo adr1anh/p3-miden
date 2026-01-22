@@ -20,7 +20,7 @@ pub mod prover;
 pub mod verifier;
 
 pub use config::PcsConfig;
-pub use proof::{Proof, QueryProof};
+pub use proof::Proof;
 pub use verifier::PcsError;
 
 #[cfg(test)]
