@@ -207,13 +207,13 @@ pub mod tests {
     type Pf = <F as Field>::Packing;
 
     /// Evaluate polynomial using Horner's method.
-    fn horner<Fo: Field, EFo: ExtensionField<Fo>>(coeffs: &[EFo], x: Fo) -> EFo {
+    fn horner<Base: Field, Ext: ExtensionField<Base>>(coeffs: &[Ext], x: Base) -> Ext {
         coeffs
             .iter()
             .rev()
             .copied()
             .reduce(|acc, c| acc * x + c)
-            .unwrap_or(EFo::ZERO)
+            .unwrap_or(Ext::ZERO)
     }
 
     /// Test fold_evals against NaiveDft coset evaluations for a specific arity.
@@ -254,35 +254,35 @@ pub mod tests {
     ///
     /// Creates a random polynomial of degree `arity - 1`, evaluates it on a coset
     /// of size `arity`, then verifies that `fold_evals` correctly recovers `f(β)`.
-    fn test_fold_correctness<Fo, EFo>(fold: &FriFold)
+    fn test_fold_correctness<Base, Ext>(fold: &FriFold)
     where
-        Fo: TwoAdicField,
-        EFo: ExtensionField<Fo>,
-        StandardUniform: Distribution<EFo> + Distribution<Fo>,
+        Base: TwoAdicField,
+        Ext: ExtensionField<Base>,
+        StandardUniform: Distribution<Ext> + Distribution<Base>,
     {
         let rng = &mut SmallRng::seed_from_u64(1);
-        let beta: EFo = rng.sample(StandardUniform);
+        let beta: Ext = rng.sample(StandardUniform);
         let arity = fold.arity();
         let log_arity = fold.log_arity();
 
         // Random polynomial of degree arity - 1
-        let poly: Vec<EFo> = (0..arity).map(|_| rng.sample(StandardUniform)).collect();
+        let poly: Vec<Ext> = (0..arity).map(|_| rng.sample(StandardUniform)).collect();
 
         // Compute roots of unity in bit-reversed order for this arity
-        let mut roots: Vec<Fo> = Fo::two_adic_generator(log_arity)
+        let mut roots: Vec<Base> = Base::two_adic_generator(log_arity)
             .powers()
             .take(arity)
             .collect();
         reverse_slice_index_bits(&mut roots);
 
-        let s: Fo = rng.sample(StandardUniform);
+        let s: Base = rng.sample(StandardUniform);
         let s_inv = s.inverse();
 
         // Evaluate polynomial at coset points: [f(s·root) for root in roots]
-        let evals: Vec<EFo> = roots.iter().map(|&root| horner(&poly, root * s)).collect();
+        let evals: Vec<Ext> = roots.iter().map(|&root| horner(&poly, root * s)).collect();
 
         // Expected: f(beta)
-        let expected = horner::<EFo, EFo>(&poly, beta);
+        let expected = horner::<Ext, Ext>(&poly, beta);
 
         // Test fold_evals
         let result = fold.fold_evals(&evals, s_inv, beta);
