@@ -81,7 +81,7 @@ fn deep_quotient_end_to_end() {
 
     // Step 3: Prover constructs DeepPoly (handles observe, grind, sample internally)
     let mut prover_challenger = test_challenger();
-    prover_challenger.observe(commitment.clone());
+    prover_challenger.observe(commitment);
     let (deep_poly, deep_proof) = DeepPoly::new(
         &params,
         &matrices_groups,
@@ -92,7 +92,7 @@ fn deep_quotient_end_to_end() {
     );
 
     // Create commitments slice for multi-commitment API (single commitment in this case)
-    let commitments = vec![(commitment.clone(), dims)];
+    let commitments = vec![(commitment, dims)];
 
     // Step 4: Verifier constructs DeepOracle with same transcript state
     let mut verifier_challenger = test_challenger();

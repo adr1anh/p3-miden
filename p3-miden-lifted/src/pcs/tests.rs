@@ -74,7 +74,7 @@ fn test_pcs_open_verify_roundtrip() {
 
     // Prover
     let mut prover_challenger = test_challenger();
-    prover_challenger.observe(commitment.clone());
+    prover_challenger.observe(commitment);
 
     let proof = open::<F, EF, _, _, _, 2>(
         &lmcs,
@@ -85,7 +85,7 @@ fn test_pcs_open_verify_roundtrip() {
     );
 
     // Create commitments slice for multi-commitment API (single commitment in this case)
-    let commitments: &[_] = &[(commitment.clone(), dims)];
+    let commitments: &[_] = &[(commitment, dims)];
 
     // Verifier
     let mut verifier_challenger = test_challenger();
