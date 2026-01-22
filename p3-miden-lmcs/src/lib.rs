@@ -134,7 +134,7 @@ use thiserror::Error;
 // ============================================================================
 
 pub use lifted_tree::LiftedMerkleTree;
-pub use proof::{Opening, Proof};
+pub use proof::{BatchProof, Opening, Proof};
 
 // ============================================================================
 // Traits
@@ -268,7 +268,7 @@ where
 {
     type F = PF::Value;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST>;
-    type Proof = Proof<PF::Value, PD::Value, DIGEST, 0>;
+    type Proof = BatchProof<PF::Value, PD::Value, DIGEST, 0>;
     type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, 0>;
 
     fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
@@ -282,7 +282,7 @@ where
         indices: &[usize],
         proof: &'a Self::Proof,
     ) -> Result<Vec<Vec<&'a [Self::F]>>, LmcsError> {
-        proof.verify::<H, C, WIDTH>(
+        proof.open::<H, C, WIDTH>(
             &self.sponge,
             &self.compress,
             commitment,
@@ -377,7 +377,7 @@ where
 {
     type F = PF::Value;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST>;
-    type Proof = Proof<PF::Value, PD::Value, DIGEST, SALT>;
+    type Proof = BatchProof<PF::Value, PD::Value, DIGEST, SALT>;
     type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, SALT>;
 
     fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
@@ -401,7 +401,7 @@ where
         indices: &[usize],
         proof: &'a Self::Proof,
     ) -> Result<Vec<Vec<&'a [Self::F]>>, LmcsError> {
-        proof.verify::<H, C, WIDTH>(
+        proof.open::<H, C, WIDTH>(
             &self.inner.sponge,
             &self.inner.compress,
             commitment,
@@ -412,7 +412,7 @@ where
 }
 
 impl<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
-    LmcsTree<F, Hash<F, D, DIGEST_ELEMS>, Proof<F, D, DIGEST_ELEMS, SALT_ELEMS>, M>
+    LmcsTree<F, Hash<F, D, DIGEST_ELEMS>, BatchProof<F, D, DIGEST_ELEMS, SALT_ELEMS>, M>
     for LiftedMerkleTree<F, D, M, DIGEST_ELEMS, SALT_ELEMS>
 where
     F: Copy + Default + Send + Sync,
@@ -435,7 +435,7 @@ where
         LiftedMerkleTree::rows(self, index)
     }
 
-    fn open_multi(&self, indices: &[usize]) -> Proof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
+    fn open_multi(&self, indices: &[usize]) -> BatchProof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
         LiftedMerkleTree::open_multi(self, indices)
     }
 }

@@ -7,21 +7,26 @@
 //! # Proof Types
 //!
 //! - [`Opening`]: Per-query row data with optional salt.
-//! - [`Proof`]: Unified multi-opening proof with openings and compact siblings.
+//! - [`BatchProof`]: Multi-opening proof with openings and compact siblings.
+//! - [`Proof`]: Single-opening proof with opening and authentication path.
 //!
 //! # Usage
 //!
 //! **Prover** (has Merkle tree, creates compact proof):
 //! ```ignore
-//! // Collect siblings during tree traversal (see LiftedMerkleTree::open_multi)
-//! let siblings: Vec<Hash> = collect_required_siblings(&tree, &indices);
-//! let proof = Proof::new(openings, siblings);
+//! // Use LiftedMerkleTree::open_multi to create a batch proof
+//! let proof = tree.open_multi(&indices);
 //! ```
 //!
-//! **Verifier** (checks proof against commitment):
+//! **Verifier** (checks batch proof against commitment):
 //! ```ignore
-//! let root = proof.recompute_root(depth, &[(0, leaf0), (2, leaf2)], &compress)?;
-//! assert_eq!(root, committed_root);
+//! let rows = batch_proof.open(&sponge, &compress, &commitment, &dims, &indices)?;
+//! ```
+//!
+//! **Single-opening** (from extracted paths):
+//! ```ignore
+//! let proofs = batch_proof.extract_proofs(&sponge, &compress, &dims, &indices)?;
+//! let rows = proofs[0].open(&sponge, &compress, &commitment, &dims, 0)?;
 //! ```
 
 use alloc::vec::Vec;
@@ -31,6 +36,8 @@ use p3_matrix::Dimensions;
 use p3_miden_stateful_hasher::StatefulHasher;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 use p3_util::log2_strict_usize;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::{LmcsError, compute_leaf_digest};
 
@@ -58,7 +65,7 @@ pub struct Opening<F, const SALT_ELEMS: usize = 0> {
     pub(crate) salt: [F; SALT_ELEMS],
 }
 
-/// Unified multi-opening proof for LMCS with optional salt.
+/// Batch multi-opening proof for LMCS with optional salt.
 ///
 /// Contains openings (rows + salt per query) and compact Merkle siblings.
 /// The indices are **not** stored in the proof—they must be supplied by the
@@ -88,7 +95,7 @@ pub struct Opening<F, const SALT_ELEMS: usize = 0> {
 ///
 /// # Verification
 ///
-/// The verifier supplies the indices and calls `verify()`, which:
+/// The verifier supplies the indices and calls `open()`, which:
 /// 1. Validates that the proof structure matches the expected dimensions
 /// 2. Recomputes the Merkle root from opened rows, salt, and siblings
 /// 3. Compares against the commitment
@@ -98,7 +105,7 @@ pub struct Opening<F, const SALT_ELEMS: usize = 0> {
     serialize = "F: Serialize, [D; DIGEST_ELEMS]: Serialize, [F; SALT_ELEMS]: Serialize",
     deserialize = "F: Deserialize<'de>, [D; DIGEST_ELEMS]: Deserialize<'de>, [F; SALT_ELEMS]: Deserialize<'de>"
 ))]
-pub struct Proof<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize = 0> {
+pub struct BatchProof<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize = 0> {
     /// Openings: `openings[query_idx]` contains rows and salt for that query.
     pub(crate) openings: Vec<Opening<F, SALT_ELEMS>>,
     /// Merkle siblings in canonical order (left-to-right, bottom-to-top).
@@ -106,9 +113,12 @@ pub struct Proof<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize = 0> {
 }
 
 impl<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
-    Proof<F, D, DIGEST_ELEMS, SALT_ELEMS>
+    BatchProof<F, D, DIGEST_ELEMS, SALT_ELEMS>
+where
+    F: Default + Copy + PartialEq,
+    D: Default + Copy + PartialEq,
 {
-    /// Verify a multi-opening proof against a commitment.
+    /// Open a batch proof against a commitment.
     ///
     /// Validates the proof structure, computes leaf digests from opened rows,
     /// recomputes the Merkle root, and compares against the commitment.
@@ -133,7 +143,7 @@ impl<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
     /// - `IndexOutOfBounds`: An index exceeds the tree height.
     /// - `WrongWidth`: A row's width doesn't match its matrix's dimension.
     /// - `RootMismatch`: Recomputed root doesn't match commitment.
-    pub fn verify<'a, H, C, const WIDTH: usize>(
+    pub fn open<'a, H, C, const WIDTH: usize>(
         &'a self,
         sponge: &H,
         compress: &C,
@@ -142,52 +152,15 @@ impl<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
         indices: &[usize],
     ) -> Result<Vec<Vec<&'a [F]>>, LmcsError>
     where
-        F: Default + Copy + PartialEq,
-        D: Default + Copy + PartialEq,
         H: StatefulHasher<F, [D; DIGEST_ELEMS], State = [D; WIDTH]>,
         C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>,
     {
-        // Validate proof structure
-        if indices.is_empty() || indices.len() != self.openings.len() {
-            return Err(LmcsError::WrongBatchSize);
-        }
-
-        let final_height = dimensions.last().ok_or(LmcsError::WrongBatchSize)?.height;
-        let depth = log2_strict_usize(final_height);
-
-        // Collect (index, digest) pairs, sorted and deduplicated
-        let nodes: Vec<(usize, [D; DIGEST_ELEMS])> = {
-            let mut nodes: Vec<(usize, [D; DIGEST_ELEMS])> = indices
-                .iter()
-                .zip(self.openings.iter())
-                .map(|(&index, opening)| {
-                    if index >= (1 << depth) {
-                        return Err(LmcsError::IndexOutOfBounds);
-                    }
-                    let digest = compute_leaf_digest::<F, D, H, WIDTH, DIGEST_ELEMS>(
-                        sponge,
-                        &opening.rows,
-                        dimensions.iter().map(|d| d.width),
-                        &opening.salt,
-                    )?;
-                    Ok((index, digest))
-                })
-                .collect::<Result<_, _>>()?;
-
-            nodes.sort_by_key(|(idx, _)| *idx);
-
-            for ((idx_a, hash_a), (idx_b, hash_b)) in nodes.iter().zip(nodes.iter().skip(1)) {
-                if idx_a == idx_b && hash_a != hash_b {
-                    return Err(LmcsError::ConflictingLeaf);
-                }
-            }
-
-            nodes.dedup_by_key(|(idx, _)| *idx);
-            nodes
-        };
+        let (nodes, depth) =
+            self.compute_sorted_leaf_nodes::<H, WIDTH>(sponge, dimensions, indices)?;
 
         // Recompute root from known leaves and proof siblings
-        let computed_root = recompute_root_in_place(nodes, &self.siblings, compress, depth)
+        let computed_root = self
+            .recompute_root_in_place(nodes, compress, depth)
             .ok_or(LmcsError::InvalidProof)?;
 
         // Compare against commitment
@@ -202,106 +175,392 @@ impl<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
             .map(|opening| opening.rows.iter().map(|r| r.as_slice()).collect())
             .collect())
     }
-}
 
-/// Recompute the Merkle root from known leaf hashes and a sibling proof.
-///
-/// # Arguments
-///
-/// - `leaf_nodes`: Vector of `(leaf_position, leaf_hash)` pairs, **sorted by position**.
-/// - `proof_siblings`: Sibling hashes in **canonical order** (left-to-right, bottom-to-top).
-/// - `compress`: 2-to-1 compression function for combining sibling pairs.
-/// - `tree_depth`: Depth of the tree (number of levels from leaves to root).
-///
-/// # Binary Tree Position Arithmetic
-///
-/// For a node at position `p` in a binary tree level:
-/// - **Sibling position**: `p ^ 1` (XOR with 1 flips the least significant bit)
-///   - If `p = 4` (binary `100`), sibling is `5` (binary `101`)
-///   - If `p = 5` (binary `101`), sibling is `4` (binary `100`)
-/// - **Is left child**: `p & 1 == 0` (left children have even positions)
-/// - **Parent position**: `p >> 1` (right-shift divides by 2)
-///   - Children at positions 4 and 5 both have parent at position 2
-///
-/// # Algorithm
-///
-/// We process the tree level-by-level, from leaves (level 0) up to the root:
-///
-/// ```text
-/// Level 2 (root):        [0]              <- final output
-///                       /   \
-/// Level 1:           [0]     [1]          <- after 2nd iteration
-///                   /   \   /   \
-/// Level 0 (leaves): [0] [1] [2] [3]       <- input leaf positions
-/// ```
-///
-/// At each level, we iterate through known nodes left-to-right. For each node:
-/// 1. Check if its sibling is also known (would be the next node if positions are adjacent)
-/// 2. If sibling is known, use it; otherwise consume next sibling from proof
-/// 3. Order the pair correctly (left child first) and compress to get parent hash
-/// 4. The parent's position is half the child's position (integer division)
-///
-/// After processing all levels, we should have exactly one node at position 0 (the root).
-///
-/// # Security Properties
-///
-/// - **COMPLETENESS**: Returns `None` if any required sibling is missing from proof.
-/// - **SOUNDNESS**: Returns `None` if proof contains extra unused siblings.
-/// - **CANONICAL ORDER**: Siblings must be provided in exact left-to-right, bottom-to-top order.
-fn recompute_root_in_place<H: Clone, C: PseudoCompressionFunction<H, 2>>(
-    leaf_nodes: Vec<(usize, H)>,
-    proof_siblings: &[H],
-    compress: &C,
-    tree_depth: usize,
-) -> Option<H> {
-    // We alternate between two vectors: one holds the current level's nodes (children),
-    // the other accumulates the next level's nodes (parents). After each level, we swap them.
-    let mut children = leaf_nodes;
-    let mut parents = Vec::new();
-    let mut siblings = proof_siblings.iter();
+    /// Extract individual single-opening proofs from this batch proof.
+    ///
+    /// Reverses the sibling deduplication to produce complete per-leaf proofs.
+    /// When two opened leaves are siblings at some level, the extracted proofs
+    /// include the other's computed digest.
+    ///
+    /// # Arguments
+    ///
+    /// - `sponge`: Stateful hasher for computing leaf digests.
+    /// - `compress`: 2-to-1 compression function for tree nodes.
+    /// - `dimensions`: Dimensions of committed matrices (width and height).
+    /// - `indices`: Leaf indices that were opened.
+    ///
+    /// # Returns
+    ///
+    /// One [`Proof`] per index, in the same order as `indices`.
+    ///
+    /// # Errors
+    ///
+    /// - `WrongBatchSize`: Number of indices doesn't match proof's query count,
+    ///   or dimensions is empty.
+    /// - `IndexOutOfBounds`: An index exceeds the tree height.
+    /// - `WrongWidth`: A row's width doesn't match its matrix's dimension.
+    pub fn extract_proofs<H, C, const WIDTH: usize>(
+        &self,
+        sponge: &H,
+        compress: &C,
+        dimensions: &[Dimensions],
+        indices: &[usize],
+    ) -> Result<Vec<Proof<F, D, DIGEST_ELEMS, SALT_ELEMS>>, LmcsError>
+    where
+        H: StatefulHasher<F, [D; DIGEST_ELEMS], State = [D; WIDTH]>,
+        C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>,
+    {
+        // Reuse existing helper for leaf computation
+        let (leaf_nodes, depth) =
+            self.compute_sorted_leaf_nodes::<H, WIDTH>(sponge, dimensions, indices)?;
 
-    // Process each level from leaves (level 0) up to root (level tree_depth)
-    for _level in 0..tree_depth {
-        let mut children_iter = children.iter().peekable();
+        // Phase 1: Build partial tree containing all nodes.
+        // Insert leaves at level 0. Maps (depth, index) -> digest.
+        let mut tree: BTreeMap<(usize, usize), [D; DIGEST_ELEMS]> = leaf_nodes
+            .into_iter()
+            .map(|(leaf_index, digest)| ((0, leaf_index), digest))
+            .collect();
 
-        while let Some((child_position, child_hash)) = children_iter.next() {
-            let sibling_position = child_position ^ 1;
+        // Build level by level from leaves to root
+        let mut siblings = self.siblings.iter();
+        for current_depth in 0..depth {
+            let mut processed = BTreeSet::new();
 
-            // Get sibling hash: either from known nodes (if next in sorted list) or from proof.
-            // When both children are known, the proof omits that sibling since it's redundant.
-            let sibling_hash = match children_iter.next_if(|(pos, _)| *pos == sibling_position) {
-                Some((_, hash)) => hash.clone(),
-                None => siblings.next()?.clone(),
-            };
+            let indices_at_depth: Vec<_> = tree
+                .range((current_depth, 0)..=(current_depth, usize::MAX))
+                .map(|(&(_, idx), _)| idx)
+                .collect();
 
-            // Determine left/right ordering: left child has even position (bit 0 = 0)
-            let child_is_left = child_position & 1 == 0;
-            let (left_hash, right_hash) = if child_is_left {
-                (child_hash.clone(), sibling_hash)
-            } else {
-                (sibling_hash, child_hash.clone())
-            };
+            for leaf_index in indices_at_depth {
+                let parent_index = leaf_index / 2;
+                if !processed.insert(parent_index) {
+                    continue;
+                }
 
-            let parent_hash = compress.compress([left_hash, right_hash]);
-            let parent_position = child_position >> 1;
-            parents.push((parent_position, parent_hash));
+                let sibling_index = leaf_index ^ 1;
+                let digest = tree[&(current_depth, leaf_index)];
+
+                // Get sibling from tree or consume from proof
+                let sibling_digest = *tree
+                    .entry((current_depth, sibling_index))
+                    .or_insert_with(|| *siblings.next().unwrap());
+
+                // Compute parent: left child has even index
+                let is_left_child = leaf_index & 1 == 0;
+                let (left, right) = if is_left_child {
+                    (digest, sibling_digest)
+                } else {
+                    (sibling_digest, digest)
+                };
+                tree.insert(
+                    (current_depth + 1, parent_index),
+                    compress.compress([left, right]),
+                );
+            }
         }
 
-        // Swap: parents become children for the next iteration
-        core::mem::swap(&mut children, &mut parents);
-        parents.clear();
+        // Phase 2: Extract proofs by walking up the tree for each leaf.
+        let proofs = indices
+            .iter()
+            .zip(&self.openings)
+            .map(|(&leaf_index, opening)| {
+                let mut path_siblings = Vec::with_capacity(depth);
+                let mut current_index = leaf_index;
+
+                for current_depth in 0..depth {
+                    let sibling_index = current_index ^ 1;
+                    path_siblings.push(tree[&(current_depth, sibling_index)]);
+                    current_index >>= 1; // Move to parent
+                }
+
+                Proof {
+                    opening: opening.clone(),
+                    siblings: path_siblings,
+                }
+            })
+            .collect();
+
+        Ok(proofs)
     }
 
-    // Security: all proof siblings must be consumed (no unused data in proof)
-    if siblings.next().is_some() {
-        return None;
+    /// Compute leaf digests, validate indices, sort, and deduplicate.
+    ///
+    /// Returns sorted, deduplicated `(index, digest)` pairs and the tree depth.
+    fn compute_sorted_leaf_nodes<H, const WIDTH: usize>(
+        &self,
+        sponge: &H,
+        dimensions: &[Dimensions],
+        indices: &[usize],
+    ) -> Result<(SortedLeafNodes<D, DIGEST_ELEMS>, usize), LmcsError>
+    where
+        H: StatefulHasher<F, [D; DIGEST_ELEMS], State = [D; WIDTH]>,
+    {
+        // Validate proof structure
+        if indices.is_empty() || indices.len() != self.openings.len() {
+            return Err(LmcsError::WrongBatchSize);
+        }
+
+        let final_height = dimensions.last().ok_or(LmcsError::WrongBatchSize)?.height;
+
+        // Compute (index, digest) pairs with validation
+        let mut nodes: SortedLeafNodes<D, DIGEST_ELEMS> = indices
+            .iter()
+            .zip(self.openings.iter())
+            .map(|(&index, opening)| {
+                if index >= final_height {
+                    return Err(LmcsError::IndexOutOfBounds);
+                }
+                let digest = compute_leaf_digest::<F, D, H, WIDTH, DIGEST_ELEMS>(
+                    sponge,
+                    &opening.rows,
+                    dimensions.iter().map(|d| d.width),
+                    &opening.salt,
+                )?;
+                Ok((index, digest))
+            })
+            .collect::<Result<_, _>>()?;
+
+        // Sort by index
+        nodes.sort_by_key(|(idx, _)| *idx);
+
+        // Check for conflicting leaves (same index, different digest)
+        for window in nodes.windows(2) {
+            let [(idx_a, leaf_a), (idx_b, leaf_b)] = window else {
+                unreachable!()
+            };
+            if idx_a == idx_b && leaf_a != leaf_b {
+                return Err(LmcsError::ConflictingLeaf);
+            }
+        }
+
+        // Deduplicate
+        nodes.dedup_by_key(|(idx, _)| *idx);
+
+        let depth = log2_strict_usize(final_height);
+        Ok((nodes, depth))
     }
 
-    // Invariant: after `depth` iterations of pos >> 1, all valid leaf positions
-    // in [0, 2^depth) converge to exactly one node at position 0.
-    let (_, root_hash) = children.into_iter().next().unwrap();
-    Some(root_hash)
+    /// Recompute the Merkle root from known leaf hashes and this proof's siblings.
+    ///
+    /// # Arguments
+    ///
+    /// - `leaf_nodes`: Vector of `(leaf_position, leaf_hash)` pairs, **sorted by position**.
+    /// - `compress`: 2-to-1 compression function for combining sibling pairs.
+    /// - `tree_depth`: Depth of the tree (number of levels from leaves to root).
+    ///
+    /// # Binary Tree Position Arithmetic
+    ///
+    /// For a node at position `p` in a binary tree level:
+    /// - **Sibling position**: `p ^ 1` (XOR with 1 flips the least significant bit)
+    ///   - If `p = 4` (binary `100`), sibling is `5` (binary `101`)
+    ///   - If `p = 5` (binary `101`), sibling is `4` (binary `100`)
+    /// - **Is left child**: `p & 1 == 0` (left children have even positions)
+    /// - **Parent position**: `p >> 1` (right-shift divides by 2)
+    ///   - Children at positions 4 and 5 both have parent at position 2
+    ///
+    /// # Algorithm
+    ///
+    /// We process the tree level-by-level, from leaves (level 0) up to the root:
+    ///
+    /// ```text
+    /// Level 2 (root):        [0]              <- final output
+    ///                       /   \
+    /// Level 1:           [0]     [1]          <- after 2nd iteration
+    ///                   /   \   /   \
+    /// Level 0 (leaves): [0] [1] [2] [3]       <- input leaf positions
+    /// ```
+    ///
+    /// At each level, we iterate through known nodes left-to-right. For each node:
+    /// 1. Check if its sibling is also known (would be the next node if positions are adjacent)
+    /// 2. If sibling is known, use it; otherwise consume next sibling from proof
+    /// 3. Order the pair correctly (left child first) and compress to get parent hash
+    /// 4. The parent's position is half the child's position (integer division)
+    ///
+    /// After processing all levels, we should have exactly one node at position 0 (the root).
+    ///
+    /// # Security Properties
+    ///
+    /// - **COMPLETENESS**: Returns `None` if any required sibling is missing from proof.
+    /// - **SOUNDNESS**: Returns `None` if proof contains extra unused siblings.
+    /// - **CANONICAL ORDER**: Siblings must be provided in exact left-to-right, bottom-to-top order.
+    fn recompute_root_in_place<C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>>(
+        &self,
+        leaf_nodes: SortedLeafNodes<D, DIGEST_ELEMS>,
+        compress: &C,
+        tree_depth: usize,
+    ) -> Option<[D; DIGEST_ELEMS]> {
+        // We alternate between two vectors: one holds the current level's nodes (children),
+        // the other accumulates the next level's nodes (parents). After each level, we swap them.
+        let mut children = leaf_nodes;
+        let mut parents = Vec::new();
+        let mut siblings = self.siblings.iter();
+
+        // Process each level from leaves (level 0) up to root (level tree_depth)
+        for _level in 0..tree_depth {
+            let mut children_iter = children.iter().peekable();
+
+            while let Some((child_position, child_hash)) = children_iter.next() {
+                let sibling_position = child_position ^ 1;
+
+                // Get sibling hash: either from known nodes (if next in sorted list) or from proof.
+                // When both children are known, the proof omits that sibling since it's redundant.
+                let sibling_hash = match children_iter.next_if(|(pos, _)| *pos == sibling_position)
+                {
+                    Some((_, hash)) => hash.clone(),
+                    None => siblings.next()?.clone(),
+                };
+
+                // Determine left/right ordering: left child has even position (bit 0 = 0)
+                let child_is_left = child_position & 1 == 0;
+                let (left_hash, right_hash) = if child_is_left {
+                    (child_hash.clone(), sibling_hash)
+                } else {
+                    (sibling_hash, child_hash.clone())
+                };
+
+                let parent_hash = compress.compress([left_hash, right_hash]);
+                let parent_position = child_position >> 1;
+                parents.push((parent_position, parent_hash));
+            }
+
+            // Swap: parents become children for the next iteration
+            core::mem::swap(&mut children, &mut parents);
+            parents.clear();
+        }
+
+        // Security: all proof siblings must be consumed (no unused data in proof)
+        if siblings.next().is_some() {
+            return None;
+        }
+
+        // Invariant: after `depth` iterations of pos >> 1, all valid leaf positions
+        // in [0, 2^depth) converge to exactly one node at position 0.
+        let (_, root_hash) = children.into_iter().next().unwrap();
+        Some(root_hash)
+    }
 }
+
+/// Single-opening Merkle proof with opening data and authentication path.
+///
+/// Contains the opening (rows + salt) and siblings (bottom-to-top) for a single leaf.
+/// Use `open()` to verify against a commitment and retrieve the opened rows.
+///
+/// # Type Parameters
+///
+/// - `F`: Field element type.
+/// - `D`: Digest element type.
+/// - `DIGEST_ELEMS`: Number of elements in each digest.
+/// - `SALT_ELEMS`: Number of salt elements. Use `0` for non-hiding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "F: Serialize, [D; DIGEST_ELEMS]: Serialize, [F; SALT_ELEMS]: Serialize",
+    deserialize = "F: Deserialize<'de>, [D; DIGEST_ELEMS]: Deserialize<'de>, [F; SALT_ELEMS]: Deserialize<'de>"
+))]
+pub struct Proof<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize = 0> {
+    /// The opened row data (rows + salt).
+    pub opening: Opening<F, SALT_ELEMS>,
+    /// Sibling digests from leaf level to root (bottom-to-top).
+    pub siblings: Vec<[D; DIGEST_ELEMS]>,
+}
+
+impl<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize> Proof<F, D, DIGEST_ELEMS, SALT_ELEMS>
+where
+    F: Default + Copy + PartialEq,
+    D: Default + Copy + PartialEq,
+{
+    /// Open this proof against a commitment.
+    ///
+    /// Computes the leaf digest from the opening data, verifies the
+    /// authentication path, and returns the opened rows on success.
+    ///
+    /// # Arguments
+    ///
+    /// - `sponge`: Stateful hasher for computing leaf digests.
+    /// - `compress`: 2-to-1 compression function.
+    /// - `commitment`: The committed root hash to verify against.
+    /// - `dimensions`: Dimensions of committed matrices (width and height).
+    /// - `index`: Leaf index that was opened.
+    ///
+    /// # Returns
+    ///
+    /// On success, returns references to the opened rows.
+    /// `result[matrix_idx]` is the row slice for that matrix.
+    ///
+    /// # Errors
+    ///
+    /// - `WrongWidth`: A row's width doesn't match its matrix's dimension.
+    /// - `RootMismatch`: Recomputed root doesn't match commitment.
+    pub fn open<'a, H, C, const WIDTH: usize>(
+        &'a self,
+        sponge: &H,
+        compress: &C,
+        commitment: &Hash<F, D, DIGEST_ELEMS>,
+        dimensions: &[Dimensions],
+        index: usize,
+    ) -> Result<Vec<&'a [F]>, LmcsError>
+    where
+        H: StatefulHasher<F, [D; DIGEST_ELEMS], State = [D; WIDTH]>,
+        C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>,
+    {
+        let leaf_digest = compute_leaf_digest::<F, D, H, WIDTH, DIGEST_ELEMS>(
+            sponge,
+            &self.opening.rows,
+            dimensions.iter().map(|d| d.width),
+            &self.opening.salt,
+        )?;
+
+        let computed_root = self.compute_root(index, leaf_digest, compress);
+
+        if Hash::from(computed_root) != *commitment {
+            return Err(LmcsError::RootMismatch);
+        }
+
+        Ok(self.opening.rows.iter().map(|r| r.as_slice()).collect())
+    }
+
+    /// Compute Merkle root from leaf digest and this path.
+    ///
+    /// # Arguments
+    ///
+    /// - `index`: Leaf position in tree (determines left/right at each level).
+    /// - `leaf_digest`: Hash of the leaf data.
+    /// - `compress`: 2-to-1 compression function.
+    ///
+    /// # Returns
+    ///
+    /// The computed root digest.
+    pub fn compute_root<C>(
+        &self,
+        index: usize,
+        leaf_digest: [D; DIGEST_ELEMS],
+        compress: &C,
+    ) -> [D; DIGEST_ELEMS]
+    where
+        C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>,
+    {
+        let mut current = leaf_digest;
+        let mut pos = index;
+
+        for sibling in &self.siblings {
+            let is_left = pos & 1 == 0;
+            current = if is_left {
+                compress.compress([current, sibling.clone()])
+            } else {
+                compress.compress([sibling.clone(), current])
+            };
+            pos >>= 1;
+        }
+
+        current
+    }
+}
+
+// ============================================================================
+// Type Aliases
+// ============================================================================
+
+/// Sorted `(index, leaf_digest)` pairs for Merkle tree operations.
+type SortedLeafNodes<D, const DIGEST_ELEMS: usize> = Vec<(usize, [D; DIGEST_ELEMS])>;
 
 // ============================================================================
 // Tests
@@ -312,6 +571,24 @@ mod tests {
     use alloc::vec;
 
     use super::*;
+
+    /// Test helper: wraps the `BatchProof::recompute_root_in_place` method for standalone testing.
+    fn recompute_root_in_place<D: Default + Copy + PartialEq, C, const DIGEST_ELEMS: usize>(
+        leaf_nodes: SortedLeafNodes<D, DIGEST_ELEMS>,
+        siblings: &[[D; DIGEST_ELEMS]],
+        compress: &C,
+        tree_depth: usize,
+    ) -> Option<[D; DIGEST_ELEMS]>
+    where
+        C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>,
+    {
+        // Create a dummy batch proof with the given siblings
+        let batch_proof: BatchProof<(), D, DIGEST_ELEMS, 0> = BatchProof {
+            openings: vec![],
+            siblings: siblings.to_vec(),
+        };
+        batch_proof.recompute_root_in_place(leaf_nodes, compress, tree_depth)
+    }
 
     #[derive(Clone)]
     struct TestCompress;
@@ -442,5 +719,86 @@ mod tests {
 
         let result = recompute_root_in_place(nodes, &siblings, &c, DEPTH);
         assert!(result.is_none());
+    }
+
+    // ========================================================================
+    // Proof::compute_root tests
+    // ========================================================================
+
+    /// Helper to create a dummy opening with no rows or salt.
+    fn dummy_opening() -> Opening<u64, 0> {
+        Opening {
+            rows: vec![],
+            salt: [],
+        }
+    }
+
+    #[test]
+    fn proof_compute_root() {
+        // Tree:       [root]
+        //            /      \
+        //        [h01]      [h23]
+        //        /    \     /    \
+        //      [0]   [1]  [2]   [3]
+        let (leaves, _h01, h23, root) = build_test_tree();
+        let compress = TestCompress;
+
+        // Path for leaf 0: siblings are [leaves[1], h23]
+        let proof: Proof<u64, u64, 1, 0> = Proof {
+            opening: dummy_opening(),
+            siblings: vec![leaves[1], h23],
+        };
+        assert_eq!(proof.compute_root(0, leaves[0], &compress), root);
+
+        // Path for leaf 1: siblings are [leaves[0], h23]
+        let proof: Proof<u64, u64, 1, 0> = Proof {
+            opening: dummy_opening(),
+            siblings: vec![leaves[0], h23],
+        };
+        assert_eq!(proof.compute_root(1, leaves[1], &compress), root);
+
+        // Path for leaf 2: siblings are [leaves[3], h01]
+        let (_, h01, _, _) = build_test_tree();
+        let proof: Proof<u64, u64, 1, 0> = Proof {
+            opening: dummy_opening(),
+            siblings: vec![leaves[3], h01],
+        };
+        assert_eq!(proof.compute_root(2, leaves[2], &compress), root);
+
+        // Path for leaf 3: siblings are [leaves[2], h01]
+        let proof: Proof<u64, u64, 1, 0> = Proof {
+            opening: dummy_opening(),
+            siblings: vec![leaves[2], h01],
+        };
+        assert_eq!(proof.compute_root(3, leaves[3], &compress), root);
+    }
+
+    #[test]
+    fn proof_compute_root_depth_3() {
+        // Depth 3 tree (8 leaves):
+        //                 [root]
+        //               /        \
+        //           [h0123]    [h4567]
+        //           /    \      /    \
+        //       [h01]  [h23] [h45] [h67]
+        //       / \    / \    / \   / \
+        //      0   1  2   3  4   5 6   7
+        let compress = TestCompress;
+        let leaves: [[u64; 1]; 8] = [[0], [1], [2], [3], [4], [5], [6], [7]];
+
+        let h01 = compress.compress([leaves[0], leaves[1]]);
+        let h23 = compress.compress([leaves[2], leaves[3]]);
+        let h45 = compress.compress([leaves[4], leaves[5]]);
+        let h67 = compress.compress([leaves[6], leaves[7]]);
+        let h0123 = compress.compress([h01, h23]);
+        let h4567 = compress.compress([h45, h67]);
+        let root = compress.compress([h0123, h4567]);
+
+        // Path for leaf 5: siblings are [leaves[4], h67, h0123]
+        let proof: Proof<u64, u64, 1, 0> = Proof {
+            opening: dummy_opening(),
+            siblings: vec![leaves[4], h67, h0123],
+        };
+        assert_eq!(proof.compute_root(5, leaves[5], &compress), root);
     }
 }

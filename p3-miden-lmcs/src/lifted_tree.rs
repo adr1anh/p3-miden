@@ -206,7 +206,7 @@ where
     ///
     /// This is more efficient than calling [`authentication_path`](Self::authentication_path)
     /// multiple times when opening multiple leaves. The paths can be further deduplicated
-    /// into a [`Proof`](crate::Proof) for serialization.
+    /// into a [`BatchProof`](crate::BatchProof) for serialization.
     ///
     /// Returns a vector of `(index, path)` pairs in the same order as the input indices.
     pub fn authentication_paths(&self, indices: &[usize]) -> Vec<(usize, Vec<[D; DIGEST_ELEMS]>)> {
@@ -247,7 +247,7 @@ where
         }
     }
 
-    /// Open multiple indices at once, returning a compact proof.
+    /// Open multiple indices at once, returning a compact batch proof.
     ///
     /// The proof contains openings (rows + salt per query) and deduplicated Merkle siblings.
     /// Indices do not need to be sorted.
@@ -262,8 +262,11 @@ where
     ///
     /// # Returns
     ///
-    /// A [`Proof`](proof::Proof) containing openings and compact siblings.
-    pub fn open_multi(&self, indices: &[usize]) -> proof::Proof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
+    /// A [`BatchProof`](proof::BatchProof) containing openings and compact siblings.
+    pub fn open_multi(
+        &self,
+        indices: &[usize],
+    ) -> proof::BatchProof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
         use alloc::collections::BTreeSet;
 
         let final_height = self.height();
@@ -321,7 +324,7 @@ where
             })
             .collect();
 
-        proof::Proof { openings, siblings }
+        proof::BatchProof { openings, siblings }
     }
 }
 

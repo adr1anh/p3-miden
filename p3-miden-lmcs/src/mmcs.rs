@@ -189,7 +189,7 @@ where
 /// Recompute the Merkle root from opened rows and an authentication path.
 ///
 /// This is used by the MMCS implementation which uses simple authentication paths
-/// (not CompactProof).
+/// (not the full `Proof` type which includes opening data).
 fn compute_root<
     F,
     D,
