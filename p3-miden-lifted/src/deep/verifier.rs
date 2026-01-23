@@ -8,9 +8,8 @@ use crate::deep::proof::DeepProof;
 use crate::utils::MatrixGroupEvals;
 use p3_challenger::{FieldChallenger, GrindingChallenger};
 use p3_field::{ExtensionField, TwoAdicField};
-use p3_matrix::Dimensions;
 use p3_miden_lmcs::{Lmcs, LmcsError};
-use p3_util::{log2_strict_usize, reverse_bits_len};
+use p3_util::reverse_bits_len;
 use thiserror::Error;
 
 /// Verifier's view of the DEEP quotient as a point-query oracle.
@@ -33,8 +32,12 @@ use thiserror::Error;
 /// width, allowing the hasher to process fixed-size chunks. This implementation
 /// uses alignment > 1 to support such padding virtually (without materializing zeros).
 pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
-    /// Trace commitments with their dimensions (one per trace tree).
-    commitments: Vec<(L::Commitment, Vec<Dimensions>)>,
+    /// Trace commitments with their widths (one per trace tree).
+    commitments: Vec<(L::Commitment, Vec<usize>)>,
+
+    /// Log2 of the universal domain height (tree has 2^log_max_height leaves).
+    /// May be larger than any actual trace height (for domain alignment).
+    log_max_height: usize,
 
     /// Reduced openings: pairs of `(zⱼ, f_reduced(zⱼ))` from the prover's claims.
     reduced_openings: Vec<(EF, EF)>,
@@ -54,33 +57,12 @@ pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
 
 impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L> {
     /// Construct by observing evaluations, checking PoW, and sampling challenges.
-    ///
-    /// This method handles the complete transcript flow:
-    /// 1. Observes evaluations into the Fiat-Shamir transcript
-    /// 2. Checks the proof-of-work witness
-    /// 3. Samples DEEP batching challenges (α for columns, β for points)
-    /// 4. Validates proof structure and computes reduced openings
-    ///
-    /// # Arguments
-    /// - `proof`: DEEP proof containing PoW witness
-    /// - `evals`: Claimed evaluations at each opening point
-    /// - `eval_points`: The out-of-domain evaluation points
-    /// - `commitments`: The trace commitments with their dimensions (one per trace tree)
-    /// - `challenger`: The Fiat-Shamir challenger
-    /// - `params`: DEEP parameters (alignment and proof_of_work_bits)
-    ///
-    /// We reduce each opening's evaluations to `f_reduced(zⱼ) = Σᵢ αⁱ · fᵢ(zⱼʳ)` eagerly.
-    /// This optimization is possible because all columns share the same opening points—
-    /// at query time, we only compute one Horner reduction per query, not per-column.
-    ///
-    /// # Errors
-    ///
-    /// Returns `DeepError` if the proof structure is invalid or PoW witness is invalid.
     pub fn new<Challenger, const N: usize>(
         params: &DeepParams,
         eval_points: [EF; N],
         evals: &[Vec<MatrixGroupEvals<EF>>],
-        commitments: Vec<(L::Commitment, Vec<Dimensions>)>,
+        commitments: Vec<(L::Commitment, Vec<usize>)>,
+        log_max_height: usize,
         challenger: &mut Challenger,
         proof: &DeepProof<Challenger::Witness>,
     ) -> Result<Self, DeepError>
@@ -105,12 +87,13 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
             if point_evals.len() != commitments.len() {
                 return Err(DeepError::StructureMismatch);
             }
-            for (eval_group, (_, dims)) in zip(point_evals, &commitments) {
-                if eval_group.num_matrices() != dims.len() {
+            for (eval_group, (_, widths)) in zip(point_evals, &commitments) {
+                if eval_group.num_matrices() != widths.len() {
                     return Err(DeepError::StructureMismatch);
                 }
-                for (matrix_evals, matrix_dims) in zip(eval_group.iter_matrices(), dims) {
-                    if matrix_evals.len() != matrix_dims.width {
+                for (matrix_evals, width) in zip(eval_group.iter_matrices(), widths.iter().copied())
+                {
+                    if matrix_evals.len() != width {
                         return Err(DeepError::StructureMismatch);
                     }
                 }
@@ -133,6 +116,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
 
         Ok(Self {
             commitments,
+            log_max_height,
             reduced_openings,
             challenge_columns,
             challenge_points,
@@ -141,19 +125,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
         })
     }
 
-    /// Verify Merkle openings and compute `Q(X)` at the queried domain points.
-    ///
-    /// Reduces opened row values via Horner to get `f_reduced(X)`, then computes
-    /// `Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) / (zⱼ - X)` for each queried index.
+    /// Open the oracle at given indices, verifying proofs and computing DEEP evaluations.
     ///
     /// Returns a vector of DEEP evaluations, one per query index.
-    ///
-    /// # Arguments
-    ///
-    /// - `lmcs`: The LMCS instance for verification
-    /// - `indices`: Query indices in the evaluation domain
-    /// - `proofs`: Compact multi-opening proofs, one per trace tree
-    pub fn query(
+    pub fn open_batch(
         &self,
         lmcs: &L,
         indices: &[usize],
@@ -162,21 +137,14 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
         // Verify each commitment's proof and collect opened rows
         // all_opened_rows[commit_idx][query_idx] = Vec<&[F]> (rows for that commitment)
         let all_opened_rows: Vec<Vec<Vec<&[F]>>> = zip(&self.commitments, proofs)
-            .map(|((commit, dims), p)| {
-                lmcs.verify(commit, dims, indices, p)
+            .map(|((commit, widths), p)| {
+                lmcs.open_batch(commit, widths, self.log_max_height, indices, p)
                     .map_err(DeepError::LmcsError)
             })
             .collect::<Result<_, _>>()?;
 
-        // Compute max height across all commitments for domain reconstruction
-        let max_height = self
-            .commitments
-            .iter()
-            .flat_map(|(_, dims)| dims.iter().map(|d| d.height))
-            .max()
-            .unwrap();
-        let log_max_height = log2_strict_usize(max_height);
-        let generator = F::two_adic_generator(log_max_height);
+        // Use stored log_max_height for domain reconstruction
+        let generator = F::two_adic_generator(self.log_max_height);
         let shift = F::GENERATOR;
 
         // Compute DEEP evaluation for each query
@@ -195,7 +163,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
                 //   g = F::GENERATOR (coset shift, avoids subgroup)
                 //   K = <ω> with ω = primitive 2^log_n root of unity
                 // In bit-reversed order: X = g · ω^{bit_rev(index)}
-                let index_bit_rev = reverse_bits_len(index, log_max_height);
+                let index_bit_rev = reverse_bits_len(index, self.log_max_height);
                 let row_point = shift * generator.exp_u64(index_bit_rev as u64);
 
                 let reduced_row =
@@ -220,15 +188,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
 /// Errors that can occur during DEEP oracle construction or verification.
 #[derive(Debug, Error)]
 pub enum DeepError {
-    /// Claimed evaluations don't match commitment structure.
-    ///
-    /// This can mean wrong number of evaluation groups, matrices, or columns.
     #[error("evaluation structure doesn't match commitment")]
     StructureMismatch,
-    /// Proof-of-work witness verification failed.
     #[error("invalid proof-of-work witness")]
     InvalidPowWitness,
-    /// LMCS verification failed.
     #[error("LMCS error: {0}")]
     LmcsError(#[from] LmcsError),
 }

@@ -19,7 +19,7 @@ mod proof;
 pub mod prover;
 pub mod verifier;
 
-pub use config::PcsConfig;
+pub use config::PcsParams;
 pub use proof::Proof;
 pub use verifier::PcsError;
 

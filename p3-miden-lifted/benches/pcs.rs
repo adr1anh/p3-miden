@@ -41,7 +41,7 @@ use p3_miden_dev_utils::{
 };
 use p3_miden_lifted::deep::DeepParams;
 use p3_miden_lifted::fri::{FriFold, FriParams};
-use p3_miden_lifted::pcs::{PcsConfig, prover as lifted_prover};
+use p3_miden_lifted::pcs::{PcsParams, prover as lifted_prover};
 use p3_miden_lmcs::Lmcs;
 use utils::LmcsScenario;
 
@@ -205,7 +205,7 @@ macro_rules! bench_scenario {
                         ("lifted/arity2", FriFold::ARITY_2),
                         ("lifted/arity4", FriFold::ARITY_4),
                     ] {
-                        let config = PcsConfig {
+                        let params = PcsParams {
                             deep: DeepParams {
                                 alignment: S::RATE,
                                 proof_of_work_bits: 0,
@@ -230,8 +230,8 @@ macro_rules! bench_scenario {
                                 // Wrap single tree in slice for multi-tree API
                                 let trace_trees: &[&_] = &[&tree];
                                 let proof = lifted_prover::open::<F, EF, _, _, Challenger, 2>(
+                                    &params,
                                     &lmcs,
-                                    &config,
                                     [z1, z2],
                                     trace_trees,
                                     &mut challenger,

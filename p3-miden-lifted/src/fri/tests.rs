@@ -57,12 +57,12 @@ fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
     let initial_evals: Vec<EF> = query_indices.iter().map(|&idx| evals[idx]).collect();
 
     // Open all query indices at once
-    let openings = fri_polys.open_queries(&params, &query_indices);
+    let openings = fri_polys.prove_queries(&params, &query_indices);
 
-    // Verify all queries at once
+    // Test all queries at once
     fri_oracle
-        .verify_queries(&lmcs, &params, &query_indices, &initial_evals, &openings)
-        .expect("verification should succeed");
+        .test_low_degree(&lmcs, &params, &query_indices, &initial_evals, &openings)
+        .expect("low-degree test should pass");
 }
 
 #[test]
@@ -110,9 +110,9 @@ fn test_fri_verify_wrong_eval() {
 
     let index: usize = rng.random_range(0..lde_size);
     let wrong_eval: EF = rng.sample(StandardUniform); // Wrong!
-    let openings = fri_polys.open_queries(&params, &[index]);
+    let openings = fri_polys.prove_queries(&params, &[index]);
 
-    let result = fri_oracle.verify_queries(
+    let result = fri_oracle.test_low_degree(
         &lmcs,
         &params,
         &[index],
@@ -177,9 +177,9 @@ fn test_fri_verify_wrong_beta() {
 
     let index: usize = rng.random_range(0..lde_size);
     let initial_eval = evals1[index];
-    let openings = fri_polys1.open_queries(&params, &[index]);
+    let openings = fri_polys1.prove_queries(&params, &[index]);
 
-    let result = wrong_oracle.verify_queries(&lmcs, &params, &[index], &[initial_eval], &openings);
+    let result = wrong_oracle.test_low_degree(&lmcs, &params, &[index], &[initial_eval], &openings);
 
     // Should fail because wrong betas produce wrong folding results
     assert!(

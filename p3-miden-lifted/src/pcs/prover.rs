@@ -10,7 +10,7 @@ use p3_matrix::Matrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_util::log2_strict_usize;
 
-use super::config::PcsConfig;
+use super::config::PcsParams;
 use super::proof::Proof;
 use crate::deep::PointQuotients;
 use crate::deep::prover::DeepPoly;
@@ -18,27 +18,9 @@ use crate::fri::prover::FriPolys;
 use crate::utils::{MatrixGroupEvals, bit_reversed_coset_points};
 
 /// Open committed matrices at N evaluation points.
-///
-/// # Type Parameters
-/// - `F`: Base field (must be two-adic for FRI)
-/// - `EF`: Extension field for challenges and evaluations
-/// - `L`: LMCS used for both input matrix commitments and FRI round commitments
-/// - `M`: Matrix type for input matrices
-/// - `Challenger`: Fiat-Shamir challenger (must support grinding)
-/// - `N`: Number of evaluation points (compile-time constant)
-///
-/// # Arguments
-/// - `lmcs`: The LMCS instance used for all commitments
-/// - `config`: PCS configuration (FRI params + DEEP params)
-/// - `eval_points`: Array of N out-of-domain evaluation points
-/// - `trace_trees`: References to committed trace trees (one per commitment round)
-/// - `challenger`: Mutable reference to the Fiat-Shamir challenger
-///
-/// # Returns
-/// A `Proof` containing evaluations, grinding witnesses, and all opening proofs
 pub fn open<F, EF, L, M, Challenger, const N: usize>(
+    params: &PcsParams,
     lmcs: &L,
-    config: &PcsConfig,
     eval_points: [EF; N],
     trace_trees: &[&L::Tree<M>],
     challenger: &mut Challenger,
@@ -72,7 +54,7 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     let quotient = PointQuotients::<F, EF, N>::new(FieldArray::from(eval_points), &coset_points);
     let batched_evals =
-        quotient.batch_eval_lifted(&matrices_groups, &coset_points, config.fri.log_blowup);
+        quotient.batch_eval_lifted(&matrices_groups, &coset_points, params.fri.log_blowup);
 
     // Transpose batched evals: [group][matrix][col] of FieldArray<N> -> [point][group][matrix][col] of EF
     let evals: Vec<Vec<MatrixGroupEvals<EF>>> = (0..N)
@@ -88,7 +70,7 @@ where
     // Construct DEEP quotient (observes evals, grinds, samples α and β)
     // ─────────────────────────────────────────────────────────────────────────
     let (deep_poly, deep_proof) = DeepPoly::new(
-        &config.deep,
+        &params.deep,
         &matrices_groups,
         &evals,
         &batched_evals,
@@ -102,17 +84,17 @@ where
     // The deep_poly contains evaluations on the LDE domain (size max_height).
     // FRI will prove that this polynomial is low-degree.
     let (fri_polys, fri_proof) =
-        FriPolys::<F, EF, L>::new(&config.fri, lmcs, deep_poly.into_evals(), challenger);
+        FriPolys::<F, EF, L>::new(&params.fri, lmcs, deep_poly.deep_evals, challenger);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Grind for query sampling
     // ─────────────────────────────────────────────────────────────────────────
-    let query_pow_witness = challenger.grind(config.query_proof_of_work_bits);
+    let query_pow_witness = challenger.grind(params.query_proof_of_work_bits);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Sample query indices
     // ─────────────────────────────────────────────────────────────────────────
-    let query_indices: Vec<usize> = (0..config.num_queries)
+    let query_indices: Vec<usize> = (0..params.num_queries)
         .map(|_| challenger.sample_bits(log_n))
         .collect();
 
@@ -122,11 +104,11 @@ where
     // Open input trees at all query indices at once (one proof per tree)
     let trace_query_proofs: Vec<L::Proof> = trace_trees
         .iter()
-        .map(|tree| tree.open_multi(&query_indices))
+        .map(|tree| tree.prove_batch(&query_indices))
         .collect();
 
     // Open all FRI rounds at all query indices at once (one proof per round)
-    let fri_query_proofs = fri_polys.open_queries(&config.fri, &query_indices);
+    let fri_query_proofs = fri_polys.prove_queries(&params.fri, &query_indices);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Assemble and return proof

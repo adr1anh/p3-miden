@@ -23,7 +23,7 @@ use crate::utils::{MatrixGroupEvals, bit_reversed_coset_points};
 // End-to-end test
 // ============================================================================
 
-/// End-to-end: prover's `DeepPoly.open()` must match verifier's `DeepOracle.query()`.
+/// End-to-end: prover's `DeepPoly.open()` must match verifier's `DeepOracle.open_batch()`.
 #[test]
 fn deep_quotient_end_to_end() {
     let rng = &mut SmallRng::seed_from_u64(42);
@@ -31,8 +31,8 @@ fn deep_quotient_end_to_end() {
 
     // Parameters
     let log_blowup: usize = 2;
-    let log_n = 10;
-    let n = 1 << log_n;
+    let log_max_height = 10;
+    let max_height = 1 << log_max_height;
 
     let params = DeepParams {
         alignment: RATE,       // Use sponge rate for coefficient alignment
@@ -44,7 +44,7 @@ fn deep_quotient_end_to_end() {
     let z2: EF = rng.sample(StandardUniform);
 
     // Coset points in bit-reversed order
-    let coset_points = bit_reversed_coset_points::<F>(log_n);
+    let coset_points = bit_reversed_coset_points::<F>(log_max_height);
 
     // Create matrices of varying heights (ascending order required)
     // specs: (log_scaling, width) where height = n >> log_scaling
@@ -52,7 +52,7 @@ fn deep_quotient_end_to_end() {
     let matrices: Vec<RowMajorMatrix<F>> = specs
         .iter()
         .map(|&(log_scaling, width)| {
-            let height = n >> log_scaling;
+            let height = max_height >> log_scaling;
             RowMajorMatrix::rand(rng, height, width)
         })
         .collect();
@@ -60,7 +60,7 @@ fn deep_quotient_end_to_end() {
     // Step 1: Commit matrices via LMCS
     let tree = lmcs.build_tree(matrices);
     let commitment = tree.root();
-    let dims: Vec<_> = tree.leaves().iter().map(|m| m.dimensions()).collect();
+    let widths: Vec<usize> = tree.leaves().iter().map(|m| m.width()).collect();
 
     // Step 2: Compute batched evaluations at both opening points
     let quotient = PointQuotients::<F, EF, 2>::new(FieldArray([z1, z2]), &coset_points);
@@ -92,7 +92,7 @@ fn deep_quotient_end_to_end() {
     );
 
     // Create commitments slice for multi-commitment API (single commitment in this case)
-    let commitments = vec![(commitment, dims)];
+    let commitments = vec![(commitment, widths)];
 
     // Step 4: Verifier constructs DeepOracle with same transcript state
     let mut verifier_challenger = test_challenger();
@@ -102,20 +102,21 @@ fn deep_quotient_end_to_end() {
         [z1, z2],
         &evals,
         commitments,
+        log_max_height,
         &mut verifier_challenger,
         &deep_proof,
     )
     .expect("DeepOracle construction should succeed");
 
     // Step 5: Verify at multiple query indices
-    let sample_indices = vec![0, 1, n / 4, n / 2, n - 1];
+    let sample_indices = vec![0, 1, max_height / 4, max_height / 2, max_height - 1];
 
     // Prover opens at all indices at once (one proof per tree)
-    let trace_query_proofs = vec![tree.open_multi(&sample_indices)];
+    let trace_query_proofs = vec![tree.prove_batch(&sample_indices)];
 
     // Verifier evaluates at all indices (also verifies Merkle proofs)
     let verifier_evals = deep_oracle
-        .query(&lmcs, &sample_indices, &trace_query_proofs)
+        .open_batch(&lmcs, &sample_indices, &trace_query_proofs)
         .expect("Merkle verification should pass");
 
     for (i, &index) in sample_indices.iter().enumerate() {

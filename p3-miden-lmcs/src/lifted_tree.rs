@@ -2,7 +2,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::{array, mem};
 
-use crate::proof;
+use crate::batch_proof::BatchProof;
+use crate::opening::Opening;
 use crate::utils::PackedValueExt;
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
@@ -152,20 +153,7 @@ where
         self.leaves.last().unwrap().height()
     }
 
-    /// Extract the opened rows for a given leaf index.
-    ///
-    /// Returns the row from each committed matrix that corresponds to the given
-    /// leaf index after applying nearest-neighbor upsampling. For matrices
-    /// shorter than the tree height, the lifted row index is computed as
-    /// `floor(index / (max_height / height))`.
-    ///
-    /// # Arguments
-    ///
-    /// - `index`: Leaf index in the tree (must be less than tree height).
-    ///
-    /// # Returns
-    ///
-    /// A vector of rows, one per committed matrix, in commitment order.
+    /// Extract the opened rows for a given leaf index (with nearest-neighbor upsampling).
     pub fn rows(&self, index: usize) -> Vec<Vec<F>> {
         let max_height = self.height();
 
@@ -218,16 +206,9 @@ where
 
     /// Extract the salt for the given leaf index.
     ///
-    /// Returns the salt array for the specified leaf. When `SALT_ELEMS = 0`, returns
-    /// a zero-sized array. When `SALT_ELEMS > 0`, the tree must have been constructed
-    /// with salt (enforced by `build_tree` and `build_tree_hiding` compile-time assertions).
-    ///
     /// # Panics
     ///
-    /// Panics at runtime if `SALT_ELEMS > 0` but the tree was constructed without salt.
-    /// This indicates a bug in tree construction (bypassing the safe constructors).
-    ///
-    /// - `index`: the leaf index for which to extract the salt.
+    /// Panics if `SALT_ELEMS > 0` but the tree was constructed without salt.
     pub fn salt(&self, index: usize) -> [F; SALT_ELEMS] {
         match &self.salt {
             Some(salt_matrix) => {
@@ -247,26 +228,8 @@ where
         }
     }
 
-    /// Open multiple indices at once, returning a compact batch proof.
-    ///
-    /// The proof contains openings (rows + salt per query) and deduplicated Merkle siblings.
-    /// Indices do not need to be sorted.
-    ///
-    /// This implementation extracts required siblings directly from `digest_layers` in a single
-    /// level-by-level pass, avoiding the overhead of building full authentication paths and
-    /// deduplicating them afterward.
-    ///
-    /// # Arguments
-    ///
-    /// - `indices`: Leaf indices to open (must all be less than tree height).
-    ///
-    /// # Returns
-    ///
-    /// A [`BatchProof`](proof::BatchProof) containing openings and compact siblings.
-    pub fn open_multi(
-        &self,
-        indices: &[usize],
-    ) -> proof::BatchProof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
+    /// Generate a compact batch proof for multiple indices (need not be sorted).
+    pub fn prove_batch(&self, indices: &[usize]) -> BatchProof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
         use alloc::collections::BTreeSet;
 
         let final_height = self.height();
@@ -320,11 +283,11 @@ where
             .map(|&idx| {
                 let rows = self.rows(idx);
                 let salt = self.salt(idx);
-                proof::Opening { rows, salt }
+                Opening { rows, salt }
             })
             .collect();
 
-        proof::BatchProof { openings, siblings }
+        BatchProof { openings, siblings }
     }
 }
 

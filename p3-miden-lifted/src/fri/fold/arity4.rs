@@ -65,14 +65,6 @@ where
 /// Size-4 inverse FFT (unscaled), input in bit-reversed order.
 ///
 /// Returns coefficients `[c₀, c₁, c₂, c₃]` of `4·f(sX) = c₀ + c₁X + c₂X² + c₃X³`.
-///
-/// ## Type Parameters
-///
-/// - `PF`: Packed base field (can be `F` for scalar or `F::Packing` for SIMD)
-/// - `PEF`: Packed extension field (can be `EF` for scalar or `EF::ExtensionPacking` for SIMD)
-///
-/// The caller chooses whether to operate on scalars or packed values by selecting
-/// the appropriate type parameters.
 #[inline(always)]
 fn ifft4<F, PF, PEF>(evals: [PEF; 4]) -> [PEF; 4]
 where

@@ -26,8 +26,8 @@
 //! // Build tree - no turbofish needed, packed types are known from config
 //! let tree = config.build_tree(matrices);
 //! let root = tree.root();
-//! let proof = tree.open_multi(&indices);
-//! let rows = config.verify(&root, &dims, &indices, &proof)?;
+//! let proof = tree.prove_batch(&indices);
+//! let rows = config.open_batch(&root, &widths, log_max_height, &indices, &proof)?;
 //!
 //! // For hiding commitment with salt, use HidingLmcsConfig with RNG
 //! let hiding_config = HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new(sponge, compress, rng);
@@ -42,7 +42,7 @@
 //! fn commit_and_open<L: Lmcs>(lmcs: &L, matrices: Vec<impl Matrix<L::F>>) {
 //!     let tree = lmcs.build_tree(matrices);
 //!     let commitment = tree.root();
-//!     let proof = tree.open_multi(&[0, 1, 2]);
+//!     let proof = tree.prove_batch(&[0, 1, 2]);
 //!     // ...
 //! }
 //! ```
@@ -110,19 +110,19 @@
 
 extern crate alloc;
 
+pub mod batch_proof;
 mod lifted_tree;
 pub mod mmcs;
+pub mod opening;
 pub mod proof;
 pub mod utils;
-
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::fmt::Debug;
-use core::iter::zip;
 use core::marker::PhantomData;
 
 use p3_field::PackedValue;
-use p3_matrix::{Dimensions, Matrix};
+use p3_matrix::Matrix;
 use p3_miden_stateful_hasher::StatefulHasher;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 use rand::Rng;
@@ -133,21 +133,16 @@ use thiserror::Error;
 // Public Re-exports
 // ============================================================================
 
+pub use batch_proof::BatchProof;
 pub use lifted_tree::LiftedMerkleTree;
-pub use proof::{BatchProof, Opening, Proof};
+pub use opening::Opening;
+pub use proof::Proof;
 
 // ============================================================================
 // Traits
 // ============================================================================
 
 /// Trait for LMCS configurations.
-///
-/// Provides a unified interface for building trees and verifying proofs.
-/// The packed types are captured at the type level, so method calls don't
-/// need turbofish syntax.
-///
-/// This trait enables generic code to work with different LMCS configurations
-/// without knowing the specific packed types.
 pub trait Lmcs: Clone {
     /// Scalar field element type for matrix data.
     ///
@@ -165,13 +160,12 @@ pub trait Lmcs: Clone {
     /// The packed types are known from `self`, so no turbofish is needed.
     fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M>;
 
-    /// Verify a multi-opening proof.
-    ///
-    /// Returns references to opened rows on success.
-    fn verify<'a>(
+    /// Open a batch proof, verifying against the commitment.
+    fn open_batch<'a>(
         &self,
         commitment: &Self::Commitment,
-        dimensions: &[Dimensions],
+        widths: &[usize],
+        log_max_height: usize,
         indices: &[usize],
         proof: &'a Self::Proof,
     ) -> Result<Vec<Vec<&'a [Self::F]>>, LmcsError>;
@@ -193,44 +187,17 @@ pub trait LmcsTree<F, Commitment, Proof, M> {
     /// Get the opened rows for a given leaf index.
     fn rows(&self, index: usize) -> Vec<Vec<F>>;
 
-    /// Open multiple indices at once, returning a compact proof.
-    fn open_multi(&self, indices: &[usize]) -> Proof;
+    /// Generate a batch proof for multiple indices.
+    fn prove_batch(&self, indices: &[usize]) -> Proof;
 }
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
-/// Configuration for Lifted Matrix Commitment Scheme (LMCS).
-///
-/// Holds the cryptographic primitives needed for committing to matrices
-/// and verifying openings. This type captures packed types at the type level,
-/// so method calls don't need turbofish syntax.
+/// LMCS configuration holding cryptographic primitives (sponge + compression).
 ///
 /// For hiding commitments with salt, use [`HidingLmcsConfig`] instead.
-///
-/// # Type Parameters
-///
-/// - `PF`: Packed field element type for SIMD operations. `PF::Value` is the scalar field.
-/// - `PD`: Packed digest element type. `PD::Value` is the scalar digest element type.
-/// - `H`: Stateful hasher/sponge type for hashing matrix rows.
-/// - `C`: 2-to-1 compression function type for building tree nodes.
-/// - `WIDTH`: State width for the hasher.
-/// - `DIGEST`: Number of elements in a digest.
-///
-/// # Example
-///
-/// ```ignore
-/// use p3_miden_lmcs::{LmcsConfig, Lmcs, LmcsTree};
-///
-/// // PF and PD are packed types; F = PF::Value, D = PD::Value
-/// let config = LmcsConfig::<PF, PD, _, _, WIDTH, DIGEST>::new(sponge, compress);
-///
-/// // Build tree - no turbofish needed
-/// let tree = config.build_tree(matrices);
-/// let root = tree.root();
-/// let proof = tree.open_multi(&indices);
-/// ```
 #[derive(Clone, Debug)]
 pub struct LmcsConfig<PF, PD, H, C, const WIDTH: usize, const DIGEST: usize> {
     /// Stateful sponge for hashing matrix rows into leaf digests.
@@ -275,10 +242,11 @@ where
         LiftedMerkleTree::build::<PF, PD, H, C, WIDTH>(&self.sponge, &self.compress, leaves, None)
     }
 
-    fn verify<'a>(
+    fn open_batch<'a>(
         &self,
         commitment: &Self::Commitment,
-        dimensions: &[Dimensions],
+        widths: &[usize],
+        log_max_height: usize,
         indices: &[usize],
         proof: &'a Self::Proof,
     ) -> Result<Vec<Vec<&'a [Self::F]>>, LmcsError> {
@@ -286,7 +254,8 @@ where
             &self.sponge,
             &self.compress,
             commitment,
-            dimensions,
+            widths,
+            log_max_height,
             indices,
         )
     }
@@ -394,10 +363,11 @@ where
         )
     }
 
-    fn verify<'a>(
+    fn open_batch<'a>(
         &self,
         commitment: &Self::Commitment,
-        dimensions: &[Dimensions],
+        widths: &[usize],
+        log_max_height: usize,
         indices: &[usize],
         proof: &'a Self::Proof,
     ) -> Result<Vec<Vec<&'a [Self::F]>>, LmcsError> {
@@ -405,7 +375,8 @@ where
             &self.inner.sponge,
             &self.inner.compress,
             commitment,
-            dimensions,
+            widths,
+            log_max_height,
             indices,
         )
     }
@@ -435,52 +406,9 @@ where
         LiftedMerkleTree::rows(self, index)
     }
 
-    fn open_multi(&self, indices: &[usize]) -> BatchProof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
-        LiftedMerkleTree::open_multi(self, indices)
+    fn prove_batch(&self, indices: &[usize]) -> BatchProof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
+        LiftedMerkleTree::prove_batch(self, indices)
     }
-}
-
-// ============================================================================
-// Verification Helpers
-// ============================================================================
-
-/// Compute leaf digest from rows and salt.
-///
-/// # Arguments
-///
-/// - `sponge`: The stateful hasher for absorbing row data.
-/// - `rows`: Opened rows (one per committed matrix).
-/// - `widths`: Expected width for each row.
-/// - `salt`: Salt elements (empty slice for non-hiding).
-///
-/// # Errors
-///
-/// Returns `Err` if any row width doesn't match the corresponding expected width.
-pub(crate) fn compute_leaf_digest<F, D, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
-    sponge: &H,
-    rows: &[Vec<F>],
-    widths: impl IntoIterator<Item = usize>,
-    salt: &[F],
-) -> Result<[D; DIGEST_ELEMS], LmcsError>
-where
-    F: Default + Copy,
-    D: Default + Copy,
-    H: StatefulHasher<F, [D; DIGEST_ELEMS], State = [D; WIDTH]>,
-{
-    let mut state = [D::default(); WIDTH];
-    for (idx, (row, width)) in zip(rows, widths).enumerate() {
-        if row.len() != width {
-            return Err(LmcsError::WrongWidth { matrix: idx });
-        }
-        sponge.absorb_into(&mut state, row.iter().copied());
-    }
-
-    // Absorb salt
-    if !salt.is_empty() {
-        sponge.absorb_into(&mut state, salt.iter().copied());
-    }
-
-    Ok(sponge.squeeze(&state))
 }
 
 // ============================================================================
@@ -490,28 +418,22 @@ where
 /// Errors that can occur during LMCS operations.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum LmcsError {
-    /// Number of opened rows doesn't match number of committed matrices.
     #[error("wrong batch size")]
     WrongBatchSize,
-    /// Opened row width doesn't match the committed matrix width.
     #[error("wrong width at matrix {matrix}")]
     WrongWidth { matrix: usize },
-    /// Salt row length doesn't match expected width.
+    #[error("wrong matrix count (expected {expected}, got {actual})")]
+    WrongMatrixCount { expected: usize, actual: usize },
     #[error("wrong salt width")]
     WrongSalt,
-    /// Authentication path length doesn't match tree height.
     #[error("wrong proof length")]
     WrongProofLen,
-    /// Query index exceeds tree height.
     #[error("index out of bounds")]
     IndexOutOfBounds,
-    /// Recomputed root doesn't match the commitment.
     #[error("root mismatch")]
     RootMismatch,
-    /// Proof structure doesn't match expected siblings for given leaves.
     #[error("invalid proof")]
     InvalidProof,
-    /// Same leaf index provided with different hashes.
     #[error("conflicting leaf")]
     ConflictingLeaf,
 }

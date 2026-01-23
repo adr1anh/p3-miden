@@ -86,22 +86,7 @@ where
 {
     /// Execute the FRI commit phase.
     ///
-    /// Iteratively folds the polynomial, committing to intermediate evaluations
-    /// and sampling folding challenges until reaching the target degree.
-    /// Grinds for proof-of-work before each beta challenge.
-    ///
-    /// Extension field evaluations are flattened to base field before commitment.
-    ///
-    /// ## Arguments
-    ///
-    /// - `lmcs`: The base-field LMCS for committing to folded evaluations
-    /// - `params`: FRI parameters (includes per-round proof_of_work_bits)
-    /// - `evals`: Initial polynomial evaluations in bit-reversed order (takes ownership)
-    /// - `challenger`: Fiat-Shamir challenger for sampling β
-    ///
-    /// ## Returns
-    ///
-    /// Tuple of `(FriPolys, FriProof)` where `FriProof` contains commitments,
+    /// Returns `(FriPolys, FriProof)` where `FriProof` contains commitments,
     /// final polynomial, and per-round grinding witnesses.
     pub fn new<Challenger>(
         params: &FriParams,
@@ -229,12 +214,12 @@ where
         )
     }
 
-    /// Open multiple query indices across all FRI commit phase rounds at once.
+    /// Generate compact multi-opening proofs for all FRI commit phase rounds.
     ///
-    /// Returns compact multi-opening proofs, one per FRI round.
+    /// Returns one proof per FRI round, each covering all query indices.
     /// Each round's indices are progressively reduced by shifting off `log_arity` bits.
     /// Proofs contain base field values; the verifier reconstructs extension field.
-    pub fn open_queries(&self, params: &FriParams, indices: &[usize]) -> Vec<L::Proof> {
+    pub fn prove_queries(&self, params: &FriParams, indices: &[usize]) -> Vec<L::Proof> {
         let log_arity = params.fold.log_arity();
 
         // For each round, compute the corresponding indices (shifted from previous round)
@@ -248,7 +233,7 @@ where
                     .iter()
                     .map(|&idx| idx >> (log_arity * (round + 1)))
                     .collect();
-                tree.open_multi(&round_indices)
+                tree.prove_batch(&round_indices)
             })
             .collect()
     }

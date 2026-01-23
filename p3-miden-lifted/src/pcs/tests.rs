@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 
 use crate::deep::DeepParams;
 use crate::fri::{FriFold, FriParams};
-use crate::pcs::config::PcsConfig;
+use crate::pcs::config::PcsParams;
 use crate::pcs::prover::open;
 use crate::pcs::verifier::verify;
 use crate::tests::{EF, F, RATE, random_lde_matrix, test_challenger, test_lmcs};
@@ -14,6 +14,7 @@ use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
+use p3_util::log2_strict_usize;
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -27,7 +28,7 @@ fn test_pcs_open_verify_roundtrip() {
     let rng = &mut SmallRng::seed_from_u64(42);
     let lmcs = test_lmcs();
 
-    let config = PcsConfig {
+    let params = PcsParams {
         fri: FriParams {
             log_blowup: 2,
             fold: FriFold::ARITY_2,
@@ -53,7 +54,7 @@ fn test_pcs_open_verify_roundtrip() {
     let matrix = random_lde_matrix(
         rng,
         log_poly_degree,
-        config.fri.log_blowup,
+        params.fri.log_blowup,
         num_columns,
         F::GENERATOR,
     );
@@ -62,7 +63,9 @@ fn test_pcs_open_verify_roundtrip() {
     // Commit matrices via LMCS
     let tree = lmcs.build_tree(matrices);
     let commitment = tree.root();
-    let dims: Vec<_> = tree.leaves().iter().map(|m| m.dimensions()).collect();
+    let widths: Vec<usize> = tree.leaves().iter().map(|m| m.width()).collect();
+    let max_height = tree.leaves().last().map(|m| m.height()).unwrap_or(0);
+    let log_max_height = log2_strict_usize(max_height);
 
     // Evaluation points
     let z1: EF = rng.sample(StandardUniform);
@@ -77,27 +80,28 @@ fn test_pcs_open_verify_roundtrip() {
     prover_challenger.observe(commitment);
 
     let proof = open::<F, EF, _, _, _, 2>(
+        &params,
         &lmcs,
-        &config,
         eval_points,
         trace_trees,
         &mut prover_challenger,
     );
 
     // Create commitments slice for multi-commitment API (single commitment in this case)
-    let commitments: &[_] = &[(commitment, dims)];
+    let commitments: &[_] = &[(commitment, widths)];
 
     // Verifier
     let mut verifier_challenger = test_challenger();
     verifier_challenger.observe(commitment);
 
     let result = verify::<F, EF, _, _, 2>(
+        &params,
         &lmcs,
         commitments,
+        log_max_height,
         eval_points,
         &proof,
         &mut verifier_challenger,
-        &config,
     );
 
     assert!(result.is_ok(), "Verification should succeed: {:?}", result);

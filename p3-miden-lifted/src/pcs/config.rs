@@ -1,14 +1,14 @@
-//! PCS configuration.
+//! PCS parameters.
 
 use crate::deep::DeepParams;
 use crate::fri::FriParams;
 
-/// Complete PCS configuration combining DEEP and FRI parameters.
+/// Complete PCS parameters combining DEEP and FRI parameters.
 ///
 /// Groups all parameters needed for `open` and `verify` into a single struct,
 /// reducing the number of function arguments and ensuring consistent configuration.
 #[derive(Clone, Copy, Debug)]
-pub struct PcsConfig {
+pub struct PcsParams {
     /// DEEP quotient parameters (alignment, grinding).
     pub deep: DeepParams,
 

@@ -16,7 +16,6 @@ use p3_maybe_rayon::prelude::*;
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
 /// Combines all polynomial evaluation claims into a single low-degree polynomial.
-/// See module documentation for the construction and soundness argument.
 pub struct DeepPoly<EF> {
     /// The DEEP quotient polynomial evaluated over the domain.
     /// `deep_evals[i]` is the evaluation at the i-th domain point (bit-reversed order).
@@ -26,22 +25,10 @@ pub struct DeepPoly<EF> {
 impl<EF> DeepPoly<EF> {
     /// Construct `Q(X)` from committed matrices and batched evaluations at N opening points.
     ///
-    /// This method handles the complete transcript flow:
-    /// 1. Observes evaluations into the Fiat-Shamir transcript
-    /// 2. Grinds for proof-of-work witness (if `params.proof_of_work_bits > 0`)
-    /// 3. Samples DEEP batching challenges (α for columns, β for points)
-    /// 4. Constructs the DEEP quotient polynomial
-    ///
     /// # Arguments
-    /// - `params`: DEEP parameters (alignment and proof_of_work_bits)
-    /// - `matrices_groups`: References to committed matrices, grouped by commitment
-    /// - `evals`: Evaluations transposed as `evals[point_idx][group_idx]` for transcript observation
-    /// - `batched_evals`: Evaluations at all N points, indexed as `evals[group_idx][point_idx]`
-    /// - `quotient`: Precomputed `1/(zⱼ - X)` for all N opening points
-    /// - `challenger`: The Fiat-Shamir challenger
-    ///
-    /// # Returns
-    /// Tuple of `(DeepPoly, DeepProof)` where `DeepProof` contains the grinding witness.
+    /// - `evals`: Transposed as `evals[point_idx][group_idx]` for transcript observation.
+    /// - `batched_evals`: Indexed as `batched_evals[group_idx][matrix_idx]` with `FieldArray<N>` per column.
+    /// - `quotient`: Precomputed `1/(zⱼ - xᵢ)` for all opening points zⱼ and domain points xᵢ.
     pub fn new<F, M, const N: usize, Challenger>(
         params: &DeepParams,
         matrices_groups: &[Vec<&M>],
@@ -83,7 +70,7 @@ impl<EF> DeepPoly<EF> {
         let challenge_points: EF = challenger.sample_algebra_element();
 
         let w = F::Packing::WIDTH;
-        let point_quotient = quotient.point_quotient();
+        let point_quotient = &quotient.point_quotient;
         let n = point_quotient.len();
 
         let group_sizes: Vec<usize> = matrices_groups.iter().map(|g| g.len()).collect();
@@ -194,11 +181,6 @@ impl<EF> DeepPoly<EF> {
         }
 
         (Self { deep_evals }, DeepProof { pow_witness })
-    }
-
-    /// Consume self and return the DEEP quotient evaluations.
-    pub fn into_evals(self) -> Vec<EF> {
-        self.deep_evals
     }
 }
 

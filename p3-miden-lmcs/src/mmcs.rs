@@ -79,15 +79,25 @@ where
     ) -> Result<(), Self::Error> {
         let (opened_values, opening_proof) = batch_opening.unpack();
 
-        let no_salt: &[PF::Value; 0] = &[];
+        // Convert dimensions to widths + log_max_height for internal use.
+        let widths: Vec<usize> = dimensions.iter().map(|d| d.width).collect();
+        let log_max_height = dimensions
+            .last()
+            .map(|d| log2_strict_usize(d.height))
+            .unwrap_or(0);
+
+        let opening = crate::Opening {
+            rows: opened_values.to_vec(),
+            salt: [],
+        };
         let expected_root = compute_root(
             &self.sponge,
             &self.compress,
-            opened_values,
+            &opening,
             index,
-            dimensions,
+            &widths,
+            log_max_height,
             opening_proof,
-            no_salt,
         )?;
 
         if &expected_root == commit {
@@ -164,14 +174,25 @@ where
     ) -> Result<(), Self::Error> {
         let (opened_values, (salt, siblings)) = batch_opening.unpack();
 
+        // Convert dimensions to widths + log_max_height for internal use.
+        let widths: Vec<usize> = dimensions.iter().map(|d| d.width).collect();
+        let log_max_height = dimensions
+            .last()
+            .map(|d| log2_strict_usize(d.height))
+            .unwrap_or(0);
+
+        let opening = crate::Opening {
+            rows: opened_values.to_vec(),
+            salt: *salt,
+        };
         let expected_root = compute_root(
             &self.inner.sponge,
             &self.inner.compress,
-            opened_values,
+            &opening,
             index,
-            dimensions,
+            &widths,
+            log_max_height,
             siblings,
-            salt,
         )?;
 
         if &expected_root == commit {
@@ -186,7 +207,7 @@ where
 // Internal Helpers for MMCS verify_batch
 // ============================================================================
 
-/// Recompute the Merkle root from opened rows and an authentication path.
+/// Recompute the Merkle root from an opening and authentication path.
 ///
 /// This is used by the MMCS implementation which uses simple authentication paths
 /// (not the full `Proof` type which includes opening data).
@@ -201,11 +222,11 @@ fn compute_root<
 >(
     sponge: &H,
     compress: &C,
-    rows: &[Vec<F>],
+    opening: &crate::Opening<F, SALT_ELEMS>,
     index: usize,
-    dimensions: &[Dimensions],
+    widths: &[usize],
+    log_max_height: usize,
     proof: &[[D; DIGEST_ELEMS]],
-    salt: &[F; SALT_ELEMS],
 ) -> Result<Hash<F, D, DIGEST_ELEMS>, LmcsError>
 where
     F: Default + Copy,
@@ -213,18 +234,11 @@ where
     H: StatefulHasher<F, [D; DIGEST_ELEMS], State = [D; WIDTH]>,
     C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>,
 {
-    let final_height = dimensions.last().unwrap().height;
-    let expected_proof_len = log2_strict_usize(final_height);
-    if proof.len() != expected_proof_len {
+    if proof.len() != log_max_height {
         return Err(LmcsError::WrongProofLen);
     }
 
-    let mut digest = crate::compute_leaf_digest::<F, D, H, WIDTH, DIGEST_ELEMS>(
-        sponge,
-        rows,
-        dimensions.iter().map(|d| d.width),
-        salt,
-    )?;
+    let mut digest = opening.digest::<D, H, WIDTH, DIGEST_ELEMS>(sponge, widths)?;
 
     let mut current_index = index;
     for sibling in proof {

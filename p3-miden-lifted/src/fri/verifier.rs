@@ -27,7 +27,6 @@ use core::iter::zip;
 
 use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
 use p3_field::{ExtensionField, TwoAdicField};
-use p3_matrix::Dimensions;
 use p3_miden_lmcs::{Lmcs, LmcsError};
 use p3_util::reverse_bits_len;
 use thiserror::Error;
@@ -35,11 +34,11 @@ use thiserror::Error;
 use crate::fri::FriParams;
 use crate::fri::proof::FriProof;
 
-/// Verifier's oracle for FRI query verification.
+/// FRI low-degree test oracle.
 ///
 /// Created via [`FriOracle::new`], which samples folding challenges from
-/// the Fiat-Shamir transcript. The oracle can then verify queries against
-/// the committed polynomial.
+/// the Fiat-Shamir transcript. The oracle tests that evaluations are close
+/// to a low-degree polynomial.
 ///
 /// Uses a single base-field LMCS. Opened base field values are reconstructed
 /// to extension field for folding verification.
@@ -63,20 +62,7 @@ where
     EF: ExtensionField<F>,
     L: Lmcs<F = F>,
 {
-    /// Create an oracle from FRI proof, checking per-round PoW witnesses.
-    ///
-    /// This method enforces the correct Fiat-Shamir order:
-    /// 1. For each round: observe commitment, check PoW witness, sample beta
-    /// 2. Observe final polynomial coefficients
-    ///
-    /// # Arguments
-    /// - `proof`: FRI proof containing commitments, final polynomial, and per-round PoW witnesses
-    /// - `challenger`: The Fiat-Shamir challenger
-    /// - `proof_of_work_bits`: Number of bits for PoW verification (applied per round)
-    ///
-    /// # Errors
-    /// Returns `FriError::InvalidPowWitness` if any round's witness verification fails.
-    /// Returns `FriError::InvalidProofStructure` if witness count doesn't match commitment count.
+    /// Create oracle from FRI proof, checking per-round PoW witnesses.
     pub fn new<Challenger>(
         proof: &FriProof<EF, L, Challenger::Witness>,
         challenger: &mut Challenger,
@@ -117,24 +103,8 @@ where
         })
     }
 
-    /// Verify all FRI queries by checking all folding rounds in batch.
-    ///
-    /// Two-phase verification for each round:
-    /// 1. Verify Merkle openings via LMCS batch verification
-    /// 2. Verify folding consistency for each query index
-    ///
-    /// ## Arguments
-    ///
-    /// - `lmcs`: The base-field LMCS used for commitments
-    /// - `params`: FRI parameters (blowup, folding factor)
-    /// - `indices`: Query indices in the initial domain (bit-reversed)
-    /// - `initial_evals`: Initial evaluations f(x) at each queried point
-    /// - `round_proofs`: Compact multi-opening proofs, one per FRI round
-    ///
-    /// ## Errors
-    ///
-    /// Returns `FriError` if any verification check fails.
-    pub fn verify_queries(
+    /// Test low-degree proximity by checking all folding rounds in batch.
+    pub fn test_low_degree(
         &self,
         lmcs: &L,
         params: &FriParams,
@@ -166,7 +136,7 @@ where
         for (round_idx, (commitment, round_proof)) in
             zip(&self.commitments, round_proofs).enumerate()
         {
-            let num_rows = 1 << log_domain_size.saturating_sub(log_arity);
+            let log_num_rows = log_domain_size.saturating_sub(log_arity);
 
             // Compute row indices for this round
             let row_indices: Vec<usize> = current_indices
@@ -175,13 +145,10 @@ where
                 .collect();
 
             // Verify LMCS opening - dimensions are flattened (EF elements stored as F)
-            let dims = [Dimensions {
-                width: arity * EF::DIMENSION,
-                height: num_rows,
-            }];
+            let widths = [arity * EF::DIMENSION];
 
             let opened_rows = lmcs
-                .verify(commitment, &dims, &row_indices, round_proof)
+                .open_batch(commitment, &widths, log_num_rows, &row_indices, round_proof)
                 .map_err(|e| FriError::LmcsError(e, round_idx))?;
 
             // Verify folding consistency for each query
@@ -211,10 +178,7 @@ where
                 }
 
                 // Compute coset generator inverse s⁻¹
-                let s_inv = {
-                    let log_num_rows = log_domain_size - log_arity;
-                    g_inv.exp_u64(reverse_bits_len(row_idx, log_num_rows) as u64)
-                };
+                let s_inv = g_inv.exp_u64(reverse_bits_len(row_idx, log_num_rows) as u64);
 
                 // Fold: interpolate f on coset and evaluate at β
                 *current_eval = params.fold.fold_evals(&row, s_inv, beta);
@@ -265,21 +229,14 @@ where
 /// Errors that can occur during FRI verification.
 #[derive(Debug, Error)]
 pub enum FriError {
-    /// LMCS verification failed.
     #[error("LMCS verification failed at round {1}: {0}")]
     LmcsError(LmcsError, usize),
-    /// Proof structure doesn't match expected format.
-    ///
-    /// This includes wrong number of commitments, openings, betas, or final polynomial length.
     #[error("invalid proof structure")]
     InvalidProofStructure,
-    /// Evaluation mismatch during folding.
     #[error("evaluation mismatch at row {row_index}, position {position}")]
     EvaluationMismatch { row_index: usize, position: usize },
-    /// Final polynomial evaluation doesn't match folded value.
     #[error("final polynomial mismatch")]
     FinalPolyMismatch,
-    /// Proof-of-work witness verification failed.
     #[error("invalid proof-of-work witness")]
     InvalidPowWitness,
 }

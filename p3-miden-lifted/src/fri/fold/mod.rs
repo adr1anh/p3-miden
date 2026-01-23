@@ -39,13 +39,8 @@ pub struct FriFold {
 }
 
 impl FriFold {
-    /// Arity-2 folding (halves degree per round).
     pub const ARITY_2: Self = Self { log_arity: 1 };
-
-    /// Arity-4 folding (quarters degree per round).
     pub const ARITY_4: Self = Self { log_arity: 2 };
-
-    /// Arity-8 folding (reduces degree by 8x per round).
     pub const ARITY_8: Self = Self { log_arity: 3 };
 
     /// Create a new folder for a supported log-arity (currently only 1, 2, 3).
@@ -57,13 +52,11 @@ impl FriFold {
         }
     }
 
-    /// The folding arity (2, 4, or 8).
     #[inline]
     pub const fn arity(&self) -> usize {
         1 << self.log_arity()
     }
 
-    /// Log₂ of the folding arity (1, 2, or 3).
     #[inline]
     pub const fn log_arity(&self) -> usize {
         self.log_arity
@@ -88,10 +81,7 @@ impl FriFold {
         }
     }
 
-    /// Fold evaluations using packed (SIMD) field operations.
-    ///
-    /// This is the packed version of `fold_evals`, using `F::Packing` and
-    /// `EF::ExtensionPacking` for SIMD parallelism.
+    /// Packed (SIMD) version of `fold_evals`.
     #[inline]
     fn fold_evals_packed<F: TwoAdicField, EF: ExtensionField<F>>(
         &self,

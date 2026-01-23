@@ -31,17 +31,14 @@ where
     L::F: Field,
     EF: ExtensionField<L::F>,
 {
-    /// Returns the Merkle commitments for each folding round.
     pub fn commitments(&self) -> &[L::Commitment] {
         &self.commitments
     }
 
-    /// Returns the coefficients of the final low-degree polynomial.
     pub fn final_poly(&self) -> &[EF] {
         &self.final_poly
     }
 
-    /// Returns the proof-of-work witnesses for each round's beta challenge grinding.
     pub fn pow_witnesses(&self) -> &[Witness] {
         &self.pow_witnesses
     }

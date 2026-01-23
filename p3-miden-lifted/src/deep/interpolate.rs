@@ -92,26 +92,16 @@ use crate::utils::{MatrixExt, MatrixGroupEvals};
 
 /// Precomputed `1/(zⱼ - xᵢ)` for N evaluation points, enabling batched O(n) barycentric
 /// evaluation and DEEP quotient construction.
-///
-/// This struct batches N evaluation points together, sharing a single batch inversion
-/// across all points. This is more efficient when opening at multiple points (e.g., z
-/// and z·ω in DEEP for current and next row constraints).
 pub struct PointQuotients<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> {
     /// The evaluation points `[z₀, z₁, ..., z_{N-1}]`.
     points: FieldArray<EF, N>,
-    /// Batched quotients: `point_quotient[i][j] = 1/(zⱼ - xᵢ)` for domain point xᵢ and eval point zⱼ.
-    point_quotient: Vec<FieldArray<EF, N>>,
+    /// `point_quotient[i][j] = 1/(zⱼ - xᵢ)` for domain point xᵢ and eval point zⱼ.
+    pub(super) point_quotient: Vec<FieldArray<EF, N>>,
     _marker: PhantomData<F>,
 }
 
 impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, EF, N> {
-    /// Create precomputation for N evaluation points.
-    ///
-    /// Computes `1/(zⱼ - xᵢ)` for all domain points xᵢ and evaluation points zⱼ
-    /// using a single batched inversion via Montgomery's trick.
-    ///
-    /// The differences are stored as `Vec<[EF; N]>`, flattened for batch inversion,
-    /// then reconstituted back to the array layout.
+    /// Create precomputation for N evaluation points via batched inversion.
     pub fn new(points: FieldArray<EF, N>, coset_points: &[F]) -> Self {
         let n_points = coset_points.len();
 
@@ -134,14 +124,6 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
             point_quotient,
             _marker: PhantomData,
         }
-    }
-
-    /// Returns the precomputed point quotients `1/(zⱼ - xᵢ)` for each domain point.
-    ///
-    /// `point_quotient[i][j]` is `1/(zⱼ - xᵢ)` where xᵢ is the i-th domain point
-    /// and zⱼ is the j-th evaluation point.
-    pub fn point_quotient(&self) -> &[FieldArray<EF, N>] {
-        &self.point_quotient
     }
 
     /// Evaluate all matrix columns at `[z₀ʳ, z₁ʳ, ..., z_{N-1}ʳ]` where `r = domain_size / matrix_height`.
@@ -371,7 +353,7 @@ mod tests {
         let our_evals: Vec<EF> = result[0].0[0].iter().map(|arr| arr[0]).collect();
 
         // Convert our diff_invs from bit-reversed to standard order for precomputation
-        let mut diff_invs_std: Vec<EF> = quotient.point_quotient()[..lde_height]
+        let mut diff_invs_std: Vec<EF> = quotient.point_quotient[..lde_height]
             .iter()
             .map(|arr| arr[0])
             .collect();
@@ -446,12 +428,12 @@ mod tests {
 
         // Verify point_quotient matches
         for (i, (sq1_q, sq2_q)) in sq1
-            .point_quotient()
+            .point_quotient
             .iter()
-            .zip(sq2.point_quotient().iter())
+            .zip(sq2.point_quotient.iter())
             .enumerate()
         {
-            let mq_q = &mq.point_quotient()[i];
+            let mq_q = &mq.point_quotient[i];
             assert_eq!(sq1_q[0], mq_q[0], "point_quotient mismatch at {i} for z1");
             assert_eq!(sq2_q[0], mq_q[1], "point_quotient mismatch at {i} for z2");
         }
