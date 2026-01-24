@@ -6,9 +6,7 @@ use core::marker::PhantomData;
 use itertools::Itertools;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
-use p3_field::{
-    BasedVectorSpace, PackedFieldExtension, PackedValue, PrimeCharacteristicRing, TwoAdicField,
-};
+use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
@@ -479,9 +477,9 @@ where
     let periodic_table = air.periodic_table();
 
     // Precompute the quotient-domain points for easy lookups.
-    let quotient_points: Vec<SC::Challenge> = {
+    let quotient_points: Vec<Val<SC>> = {
         let mut pts = Vec::with_capacity(quotient_size);
-        let mut point = SC::Challenge::from(quotient_domain.first_point());
+        let mut point = quotient_domain.first_point();
         pts.push(point);
         for _ in 1..quotient_size {
             point = quotient_domain
@@ -492,7 +490,8 @@ where
         pts
     };
 
-    let periodic_on_quotient = compute_periodic_on_quotient_eval_domain::<Val<SC>, SC::Challenge>(
+    // Compute periodic values
+    let periodic_on_quotient = compute_periodic_on_quotient_eval_domain::<Val<SC>, Val<SC>>(
         periodic_table,
         trace_domain,
         &quotient_points,
@@ -583,13 +582,13 @@ where
                 randomness.iter().copied().map(Into::into).collect();
 
             // Grab precomputed periodic evaluations for this packed chunk.
-            let periodic_values: Vec<PackedChallenge<SC>> = periodic_on_quotient
+            let periodic_values: Vec<PackedVal<SC>> = periodic_on_quotient
                 .as_ref()
                 .map(|cols| {
                     cols.iter()
                         .map(|values| {
                             let slice = &values[i_range.clone()];
-                            PackedChallenge::<SC>::from_ext_slice(slice)
+                            *PackedVal::<SC>::from_slice(slice)
                         })
                         .collect()
                 })
