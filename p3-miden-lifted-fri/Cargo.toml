@@ -1,6 +1,6 @@
 [package]
-name = "p3-miden-lifted"
-description = "Lifted Matrix Commitment Scheme (LMCS) implementation with FRI-based PCS."
+name = "p3-miden-lifted-fri"
+description = "Lifted FRI PCS (DEEP quotient + FRI)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

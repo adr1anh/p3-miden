@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use p3_field::{ExtensionField, Field};
+use p3_field::Field;
 use p3_miden_lmcs::Lmcs;
 
 /// FRI proof data including per-round grinding witnesses.

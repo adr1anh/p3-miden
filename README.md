@@ -7,11 +7,11 @@ Miden-specific [Plonky3](https://github.com/Plonky3/Plonky3) crates for the Mide
 | Crate | Based On | Purpose |
 |-------|----------|---------|
 | `p3-miden-air` | `p3-air` | AIR traits supporting auxiliary and periodic columns |
+| `p3-miden-lifted-fri` | - | Lifted FRI PCS (DEEP quotient + FRI) |
 | `p3-miden-uni-stark` | `p3-uni-stark` | Extended `Entry` enum with `Aux` and `Periodic` variants |
 | `p3-miden-fri` | `p3-fri` | Miden FRI implementation with configurable folding factors |
 | `p3-miden-prover` | - | Miden STARK prover combining the above crates |
 | `p3-miden-symmetric` | `p3-symmetric` | StatefulHasher support for incremental hashing |
-| `p3-miden-lifted` | - | Lifted Matrix Commitment Scheme (LMCS) with DEEP quotient and FRI |
 
 ## Modifications
 
@@ -33,7 +33,7 @@ Miden-specific [Plonky3](https://github.com/Plonky3/Plonky3) crates for the Mide
 - `CompressionFunction` trait for two-to-one compression
 - Re-exports upstream `p3-symmetric` types for convenience
 
-### p3-miden-lifted
+### p3-miden-lifted-fri
 - Lifted Merkle tree commitments for matrices of varying heights via upsampling
 - DEEP quotient construction for batching polynomial evaluation claims
 - FRI protocol with configurable arity-2 and arity-4 folding

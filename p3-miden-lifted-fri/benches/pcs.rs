@@ -39,9 +39,9 @@ use p3_miden_dev_utils::{
     BenchScenario, LOG_HEIGHTS, PARALLEL_STR, PcsScenario, RELATIVE_SPECS, criterion_config_long,
     generate_matrices_from_specs, total_elements,
 };
-use p3_miden_lifted::deep::DeepParams;
-use p3_miden_lifted::fri::{FriFold, FriParams};
-use p3_miden_lifted::pcs::{PcsParams, prover as lifted_prover};
+use p3_miden_lifted_fri::deep::DeepParams;
+use p3_miden_lifted_fri::fri::{FriFold, FriParams};
+use p3_miden_lifted_fri::{PcsParams, prover as lifted_prover};
 use p3_miden_lmcs::Lmcs;
 use utils::LmcsScenario;
 

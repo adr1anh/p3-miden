@@ -27,8 +27,8 @@ use p3_miden_dev_utils::{
     LOG_HEIGHTS, PARALLEL_STR, RELATIVE_SPECS, criterion_config, generate_matrices_from_specs,
     total_elements,
 };
-use p3_miden_lifted::deep::PointQuotients;
-use p3_miden_lifted::utils::bit_reversed_coset_points;
+use p3_miden_lifted_fri::deep::PointQuotients;
+use p3_miden_lifted_fri::utils::bit_reversed_coset_points;
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};

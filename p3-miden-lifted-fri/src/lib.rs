@@ -1,4 +1,4 @@
-//! # Lifted PCS
+//! # Lifted FRI PCS
 //!
 //! A polynomial commitment scheme (PCS) combining DEEP quotient construction with FRI
 //! for efficient low-degree testing over two-adic fields.
@@ -13,8 +13,8 @@
 //! - **[`fri`]**: FRI (Fast Reed-Solomon IOP) protocol for low-degree testing, with
 //!   configurable folding arities and final polynomial degree.
 //!
-//! - **[`pcs`]**: Complete PCS implementation combining DEEP quotient and FRI into
-//!   high-level `open` and `verify` functions.
+//! - **PCS API (crate root)**: complete PCS implementation combining DEEP quotient and
+//!   FRI via `prover::open` and `verifier::verify`, plus `PcsParams` and `Proof`.
 //!
 //! For the Lifted Matrix Commitment Scheme (LMCS), see the [`p3_miden_lmcs`] crate.
 
@@ -28,10 +28,16 @@ pub mod deep;
 /// FRI protocol for low-degree testing.
 pub mod fri;
 
-/// Polynomial Commitment Scheme combining DEEP quotient and FRI.
-pub mod pcs;
+mod params;
+mod proof;
+pub mod prover;
+pub mod verifier;
 
 pub mod utils;
+
+pub use params::PcsParams;
+pub use proof::Proof;
+pub use verifier::PcsError;
 
 #[cfg(test)]
 mod tests;

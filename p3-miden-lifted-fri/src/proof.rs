@@ -1,3 +1,5 @@
+//! PCS proof data structures.
+
 use alloc::vec::Vec;
 
 use p3_field::{ExtensionField, Field};

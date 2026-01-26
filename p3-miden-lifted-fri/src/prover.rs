@@ -10,11 +10,11 @@ use p3_matrix::Matrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_util::log2_strict_usize;
 
-use super::config::PcsParams;
-use super::proof::Proof;
+use crate::PcsParams;
 use crate::deep::PointQuotients;
 use crate::deep::prover::DeepPoly;
 use crate::fri::prover::FriPolys;
+use crate::proof::Proof;
 use crate::utils::{MatrixGroupEvals, bit_reversed_coset_points};
 
 /// Open committed matrices at N evaluation points.

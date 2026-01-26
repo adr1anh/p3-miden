@@ -9,12 +9,12 @@ use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_lmcs::Lmcs;
 use thiserror::Error;
 
-use super::config::PcsParams;
-use super::proof::Proof;
+use crate::PcsParams;
 use crate::deep::DeepError;
 use crate::deep::verifier::DeepOracle;
 use crate::fri::FriError;
 use crate::fri::verifier::FriOracle;
+use crate::proof::Proof;
 use crate::utils::MatrixGroupEvals;
 
 /// Verify polynomial evaluation claims against commitments.

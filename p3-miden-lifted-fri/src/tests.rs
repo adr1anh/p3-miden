@@ -1,14 +1,10 @@
-//! End-to-end tests for the complete PCS (DEEP + FRI).
+//! Common test fixtures and end-to-end tests for the lifted FRI PCS.
+//!
+//! Re-exports test fixtures from `p3_miden_dev_utils` for use in tests.
 
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::deep::DeepParams;
-use crate::fri::{FriFold, FriParams};
-use crate::pcs::config::PcsParams;
-use crate::pcs::prover::open;
-use crate::pcs::verifier::verify;
-use crate::tests::{EF, F, RATE, random_lde_matrix, test_challenger, test_lmcs};
 use p3_challenger::CanObserve;
 use p3_field::Field;
 use p3_matrix::Matrix;
@@ -18,6 +14,13 @@ use p3_util::log2_strict_usize;
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
+
+use crate::deep::DeepParams;
+use crate::fri::{FriFold, FriParams};
+use crate::{PcsParams, prover::open, verifier::verify};
+
+pub use p3_miden_dev_utils::configs::baby_bear_poseidon2::{base_lmcs as test_lmcs, *};
+pub use p3_miden_dev_utils::matrix::random_lde_matrix;
 
 // ============================================================================
 // End-to-end test
