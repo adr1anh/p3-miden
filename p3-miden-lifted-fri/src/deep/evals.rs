@@ -1,25 +1,31 @@
 use alloc::vec::Vec;
-use core::ops::Deref;
 
 use p3_field::{ExtensionField, Field, FieldArray, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
+use p3_miden_lmcs::utils::pad_row_to_alignment;
 use p3_miden_transcript::{ProverChannel, VerifierChannel};
-
-use crate::deep::utils::alignment_padding;
 
 /// Out-of-domain evaluations organized per commitment group and matrix.
 ///
 /// Structure: `groups[group_idx][matrix_idx]` is a row-major matrix where rows are points.
+/// All non-empty matrices must have the same height; widths are expected to be aligned already.
 #[derive(Clone, Debug)]
 pub struct DeepEvals<EF: Field> {
     groups: Vec<Vec<RowMajorMatrix<EF>>>,
+    num_points: usize,
 }
 
 impl<EF: Field> DeepEvals<EF> {
     /// Create `DeepEvals` from grouped row-major matrices.
-    pub const fn new(groups: Vec<Vec<RowMajorMatrix<EF>>>) -> Self {
-        Self { groups }
+    ///
+    /// Returns `None` if groups are empty, the first group is empty, or heights are inconsistent.
+    pub fn new(groups: Vec<Vec<RowMajorMatrix<EF>>>) -> Option<Self> {
+        let num_points = groups.first()?.first()?.height();
+        if groups.iter().flatten().any(|m| m.height() != num_points) {
+            return None;
+        }
+        Some(Self { groups, num_points })
     }
 
     /// Grouped row-major matrices, one per commitment group.
@@ -34,41 +40,23 @@ impl<EF: Field> DeepEvals<EF> {
 
     /// Number of evaluation points (rows per matrix).
     pub fn num_points(&self) -> usize {
-        self.groups
-            .first()
-            .and_then(|group| group.first())
-            .map(|matrix| matrix.height())
-            .unwrap_or(0)
+        self.num_points
     }
 
-    pub(crate) fn reduce_all(&self, challenge: EF, alignment: usize) -> Vec<EF> {
-        let num_points = self.num_points();
-        let mut reduced = Vec::with_capacity(num_points);
-        for point_idx in 0..num_points {
-            reduced.push(self.reduce_point(point_idx, challenge, alignment));
-        }
-        reduced
-    }
-
-    fn reduce_point(&self, point_idx: usize, challenge: EF, alignment: usize) -> EF {
+    pub(crate) fn reduce_point(&self, point_idx: usize, challenge: EF) -> EF {
         self.groups
             .iter()
             .flat_map(move |group| {
                 group
                     .iter()
-                    .map(move |matrix| matrix.row_slice(point_idx).expect("point index in range"))
+                    .flat_map(move |matrix| matrix.row(point_idx).expect("point index in range"))
             })
-            .fold(EF::ZERO, |acc, row| {
-                let row = row.deref();
-                let acc = row.iter().fold(acc, |a, &val| a * challenge + val);
-                acc * challenge.exp_u64(alignment_padding(row.len(), alignment) as u64)
-            })
+            .fold(EF::ZERO, |acc, val| acc * challenge + val)
     }
 
     pub(crate) fn read_from_channel<F, Ch>(
         widths: &[&[usize]],
         num_points: usize,
-        alignment: usize,
         channel: &mut Ch,
     ) -> Option<Self>
     where
@@ -76,6 +64,7 @@ impl<EF: Field> DeepEvals<EF> {
         EF: ExtensionField<F>,
         Ch: VerifierChannel<F = F>,
     {
+        // Widths are expected to include any alignment padding.
         let mut values: Vec<Vec<Vec<EF>>> = widths
             .iter()
             .map(|group_widths| {
@@ -91,13 +80,8 @@ impl<EF: Field> DeepEvals<EF> {
                 let group_values = &mut values[group_idx];
                 for (matrix_idx, &width) in group_widths.iter().enumerate() {
                     let matrix_values = &mut group_values[matrix_idx];
-                    for _ in 0..width {
-                        let val = channel.receive_algebra_element::<EF>()?;
-                        matrix_values.push(val);
-                    }
-                    for _ in 0..alignment_padding(width, alignment) {
-                        channel.receive_algebra_element::<EF>()?;
-                    }
+                    let point_values = channel.receive_algebra_slice::<EF>(width)?;
+                    matrix_values.extend(point_values);
                 }
             }
         }
@@ -114,7 +98,7 @@ impl<EF: Field> DeepEvals<EF> {
             })
             .collect();
 
-        Some(Self { groups })
+        Self::new(groups)
     }
 }
 
@@ -153,6 +137,9 @@ impl<EF: Field, const N: usize> BatchedGroupEvals<EF, N> {
 }
 
 /// Batched evaluations at N points, grouped by commitment.
+///
+/// Use [`Self::aligned`] to pad each matrix with zero columns so serialization
+/// no longer needs an explicit alignment parameter.
 #[derive(Clone, Debug)]
 pub struct BatchedEvals<EF: Field, const N: usize> {
     groups: Vec<BatchedGroupEvals<EF, N>>,
@@ -163,11 +150,30 @@ impl<EF: Field, const N: usize> BatchedEvals<EF, N> {
         Self { groups }
     }
 
+    /// Pad each matrix with zero columns so widths are aligned.
+    pub fn aligned(mut self, alignment: usize) -> Self {
+        for group in &mut self.groups {
+            for matrix in &mut group.matrices {
+                let row = core::mem::take(matrix);
+                *matrix = pad_row_to_alignment(row, alignment);
+            }
+        }
+        self
+    }
+
     pub fn groups(&self) -> &[BatchedGroupEvals<EF, N>] {
         &self.groups
     }
 
-    pub fn write_to_channel<F, Ch>(&self, alignment: usize, channel: &mut Ch)
+    pub(crate) fn reduce(&self, challenge: EF) -> FieldArray<EF, N> {
+        let zero = FieldArray::default();
+        self.groups
+            .iter()
+            .flat_map(|group| group.iter_evals())
+            .fold(zero, |acc, val| acc * challenge + *val)
+    }
+
+    pub fn write_to_channel<F, Ch>(&self, channel: &mut Ch)
     where
         F: TwoAdicField,
         EF: ExtensionField<F>,
@@ -178,9 +184,6 @@ impl<EF: Field, const N: usize> BatchedEvals<EF, N> {
                 for matrix_evals in group.iter_matrices() {
                     for eval in matrix_evals {
                         channel.send_algebra_element(eval[point_idx]);
-                    }
-                    for _ in 0..alignment_padding(matrix_evals.len(), alignment) {
-                        channel.send_algebra_element(EF::ZERO);
                     }
                 }
             }

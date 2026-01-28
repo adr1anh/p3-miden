@@ -6,7 +6,7 @@ use core::marker::PhantomData;
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_stateful_hasher::StatefulHasher;
+use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_miden_transcript::VerifierChannel;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 use rand::Rng;
@@ -43,7 +43,8 @@ use crate::{LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, Proof};
 /// use rand::SeedableRng;
 ///
 /// let rng = StdRng::seed_from_u64(42);
-/// let config = HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new(sponge, compress, rng);
+/// let config =
+///     HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new_aligned(sponge, compress, rng);
 ///
 /// let tree = config.build_tree(matrices);
 /// let root = tree.root();
@@ -68,7 +69,7 @@ pub struct HidingLmcsConfig<
 impl<PF, PD, H, C, R, const WIDTH: usize, const DIGEST: usize, const SALT: usize>
     HidingLmcsConfig<PF, PD, H, C, R, WIDTH, DIGEST, SALT>
 {
-    /// Create a new hiding LMCS configuration.
+    /// Create a new hiding LMCS configuration with alignment 1.
     ///
     /// # Compile-time Error
     ///
@@ -80,6 +81,30 @@ impl<PF, PD, H, C, R, const WIDTH: usize, const DIGEST: usize, const SALT: usize
             inner: LmcsConfig {
                 sponge,
                 compress,
+                alignment: 1,
+                _phantom: PhantomData,
+            },
+            rng: RefCell::new(rng),
+        }
+    }
+
+    /// Create a new hiding LMCS configuration using the hasher's alignment.
+    ///
+    /// # Compile-time Error
+    ///
+    /// This constructor is only available when `SALT > 0`.
+    pub fn new_aligned(sponge: H, compress: C, rng: R) -> Self
+    where
+        PF: PackedValue,
+        PD: PackedValue,
+        H: Alignable<PF::Value, PD::Value>,
+    {
+        const { assert!(SALT > 0) }
+        Self {
+            inner: LmcsConfig {
+                sponge,
+                compress,
+                alignment: <H as Alignable<PF::Value, PD::Value>>::ALIGNMENT,
                 _phantom: PhantomData,
             },
             rng: RefCell::new(rng),
@@ -106,6 +131,9 @@ where
     type SingleProof = Proof<PF::Value, PD::Value, DIGEST, SALT>;
     type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, SALT>;
 
+    /// Build a tree with per-leaf salt sampled from the RNG.
+    ///
+    /// Preconditions match `LmcsConfig::build_tree`; panics if `leaves` is empty.
     fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
         let tree_height = leaves.last().map(|m| m.height()).unwrap_or(0);
         let salt = RowMajorMatrix::rand(&mut *self.rng.borrow_mut(), tree_height, SALT);
@@ -115,7 +143,12 @@ where
             &self.inner.compress,
             leaves,
             Some(salt),
+            self.inner.alignment,
         )
+    }
+
+    fn alignment(&self) -> usize {
+        self.inner.alignment
     }
 
     fn open_batch<Ch>(

@@ -42,15 +42,10 @@ pub use verifier::DeepError;
 
 /// DEEP quotient parameters.
 ///
-/// Controls batching alignment and proof-of-work grinding for DEEP challenge sampling.
+/// Controls proof-of-work grinding for DEEP challenge sampling.
+/// Column alignment is handled at the LMCS layer and by padding evaluations.
 #[derive(Clone, Copy, Debug)]
 pub struct DeepParams {
-    /// Column alignment for batching in DEEP quotient construction.
-    ///
-    /// Typically set to the hasher's rate (e.g., 8 for Poseidon2 with WIDTH=16, RATE=8).
-    /// Ensures coefficients are aligned for efficient hashing.
-    pub alignment: usize,
-
     /// Number of bits for proof-of-work grinding before DEEP challenge sampling.
     ///
     /// Set to 0 to disable grinding. Higher values increase prover work but improve

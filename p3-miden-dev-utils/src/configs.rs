@@ -82,7 +82,7 @@ pub trait PcsScenario: BenchScenario {
         + GrindingChallenger
         + CanObserve<<Self::Mmcs as Mmcs<Self::F>>::Commitment>;
 
-    /// Rate constant for sponge (used in DEEP alignment)
+    /// Rate constant for sponge (used for LMCS alignment defaults)
     const RATE: usize;
 
     /// Create a new challenger instance
@@ -240,7 +240,7 @@ macro_rules! impl_poseidon2_config {
         /// Create standard base LMCS config for testing (packed field).
         pub fn base_lmcs() -> BaseLmcs {
             let (_, sponge, compress) = test_components();
-            LmcsConfig::new(sponge, compress)
+            LmcsConfig::new_aligned(sponge, compress)
         }
 
         // =====================================================================

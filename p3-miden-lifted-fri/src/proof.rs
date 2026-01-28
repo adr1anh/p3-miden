@@ -42,6 +42,8 @@ where
     EF: ExtensionField<L::F>,
 {
     /// Parse a PCS transcript view from a verifier channel.
+    ///
+    /// Commitment widths must already include any alignment padding.
     pub fn from_verifier_channel<Ch, const N: usize>(
         params: &PcsParams,
         lmcs: &L,

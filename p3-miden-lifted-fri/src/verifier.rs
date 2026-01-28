@@ -19,6 +19,8 @@ use crate::fri::verifier::FriOracle;
 
 /// Verify polynomial evaluation claims against commitments using a verifier channel.
 ///
+/// Commitment widths are expected to be aligned to the LMCS alignment.
+///
 /// Returns `Ok(evals)` where each group/matrix is a row-major matrix with one row per point.
 pub fn verify_with_channel<F, EF, L, Ch, const N: usize>(
     params: &PcsParams,

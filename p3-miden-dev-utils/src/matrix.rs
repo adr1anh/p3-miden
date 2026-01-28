@@ -7,6 +7,7 @@ use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
+use p3_miden_lmcs::utils::aligned_len;
 use rand::SeedableRng;
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
@@ -122,13 +123,13 @@ pub fn concatenate_matrices<F: Field + PrimeCharacteristicRing, const R: usize>(
     matrices: &[RowMajorMatrix<F>],
 ) -> RowMajorMatrix<F> {
     let max_height = matrices.last().unwrap().height();
-    let width: usize = matrices.iter().map(|m| m.width().next_multiple_of(R)).sum();
+    let width: usize = matrices.iter().map(|m| aligned_len(m.width(), R)).sum();
 
     let concatenated_data: Vec<_> = (0..max_height)
         .flat_map(|idx| {
             matrices.iter().flat_map(move |m| {
                 let mut row = m.row_slice(idx).unwrap().to_vec();
-                let padded_width = row.len().next_multiple_of(R);
+                let padded_width = aligned_len(row.len(), R);
                 row.resize(padded_width, F::ZERO);
                 row
             })

@@ -18,6 +18,8 @@ use crate::fri::prover::FriPolys;
 use crate::utils::bit_reversed_coset_points;
 
 /// Open committed matrices at N evaluation points, writing to a prover channel.
+///
+/// Alignment is derived from the LMCS instance to pad DEEP evaluations consistently.
 pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
@@ -54,6 +56,7 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     let quotient = PointQuotients::<F, EF, N>::new(FieldArray::from(eval_points), &coset_points);
     let batched_evals =
         quotient.batch_eval_lifted(&matrices_groups, &coset_points, params.fri.log_blowup);
+    let alignment = lmcs.alignment();
 
     // ─────────────────────────────────────────────────────────────────────────
     // Construct DEEP quotient (observes evals, grinds, samples α and β)
@@ -61,8 +64,9 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     let deep_poly = DeepPoly::new(
         &params.deep,
         &matrices_groups,
-        &batched_evals,
+        batched_evals,
         &quotient,
+        alignment,
         channel,
     );
 

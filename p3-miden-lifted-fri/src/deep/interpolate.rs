@@ -133,6 +133,9 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
     /// where each element is a `FieldArray<EF, N>` containing evaluations at all N points.
     /// This batches N evaluation points together, using `columnwise_dot_product_batched<N>`
     /// for better cache utilization than N separate calls.
+    ///
+    /// Call [`BatchedEvals::aligned`](crate::deep::BatchedEvals::aligned) to pad columns
+    /// for transcript serialization when alignment is required.
     pub fn batch_eval_lifted<M: Matrix<F>>(
         &self,
         matrices_groups: &[Vec<&M>],

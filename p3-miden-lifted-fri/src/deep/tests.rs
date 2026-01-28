@@ -4,7 +4,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_field::FieldArray;
-use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use rand::distr::StandardUniform;
@@ -16,7 +15,7 @@ use super::interpolate::PointQuotients;
 use super::prover::DeepPoly;
 use super::verifier::DeepOracle;
 use crate::tests::{
-    EF, F, RATE, prover_channel_with_commitment, test_lmcs, verifier_channel_with_commitment,
+    EF, F, prover_channel_with_commitment, test_lmcs, verifier_channel_with_commitment,
 };
 use crate::utils::bit_reversed_coset_points;
 
@@ -32,9 +31,9 @@ fn deep_quotient_end_to_end() {
     let max_height = 1 << log_max_height;
 
     let params = DeepParams {
-        alignment: RATE,       // Use sponge rate for coefficient alignment
         proof_of_work_bits: 1, // Low for fast tests
     };
+    let alignment = lmcs.alignment();
 
     // Two random opening points
     let z1: EF = rng.sample(StandardUniform);
@@ -57,7 +56,7 @@ fn deep_quotient_end_to_end() {
     // Step 1: Commit matrices via LMCS
     let tree = lmcs.build_tree(matrices);
     let commitment = tree.root();
-    let widths: Vec<usize> = tree.leaves().iter().map(|m| m.width()).collect();
+    let widths = tree.widths();
 
     // Step 2: Compute batched evaluations at both opening points
     let quotient = PointQuotients::<F, EF, 2>::new(FieldArray([z1, z2]), &coset_points);
@@ -71,8 +70,9 @@ fn deep_quotient_end_to_end() {
     let deep_poly = DeepPoly::new(
         &params,
         &matrices_groups,
-        &batched_evals,
+        batched_evals,
         &quotient,
+        alignment,
         &mut prover_channel,
     );
     let sample_indices = vec![0, 1, max_height / 4, max_height / 2, max_height - 1];

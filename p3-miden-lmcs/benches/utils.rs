@@ -95,7 +95,7 @@ impl LmcsScenario for BabyBearKeccak {
     fn lmcs() -> Self::Lmcs {
         let inner = bb_keccak::KeccakMmcsSponge::new(KeccakF {});
         let compress = bb_keccak::KeccakCompress::new(inner);
-        LmcsConfig::new(keccak_sponge(), compress)
+        LmcsConfig::new_aligned(keccak_sponge(), compress)
     }
 }
 
@@ -105,6 +105,6 @@ impl LmcsScenario for GoldilocksKeccak {
     fn lmcs() -> Self::Lmcs {
         let inner = gl_keccak::KeccakMmcsSponge::new(KeccakF {});
         let compress = gl_keccak::KeccakCompress::new(inner);
-        LmcsConfig::new(keccak_sponge(), compress)
+        LmcsConfig::new_aligned(keccak_sponge(), compress)
     }
 }

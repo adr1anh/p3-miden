@@ -28,6 +28,8 @@ where
     EF: ExtensionField<F>,
 {
     /// Parse DEEP transcript data from a verifier channel.
+    ///
+    /// Commitment widths must already include any alignment padding.
     pub fn from_verifier_channel<Ch>(
         params: &DeepParams,
         commitments: &[(<Ch as VerifierChannel>::Commitment, Vec<usize>)],
@@ -41,8 +43,7 @@ where
             .iter()
             .map(|(_, widths)| widths.as_slice())
             .collect();
-        let evals =
-            DeepEvals::read_from_channel(&widths, num_eval_points, params.alignment, channel)?;
+        let evals = DeepEvals::read_from_channel(&widths, num_eval_points, channel)?;
 
         let pow_witness = channel.grind(params.proof_of_work_bits)?;
         let challenge_columns: EF = channel.sample_algebra_element();

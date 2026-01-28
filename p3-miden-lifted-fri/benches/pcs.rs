@@ -208,7 +208,6 @@ macro_rules! bench_scenario {
                     ] {
                         let params = PcsParams {
                             deep: DeepParams {
-                                alignment: S::RATE,
                                 proof_of_work_bits: 0,
                             },
                             fri: FriParams {

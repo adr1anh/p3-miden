@@ -29,7 +29,7 @@ pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 /// Create a local LMCS config.
 pub fn lmcs() -> BaseLmcs {
     let (_, sponge, compress) = bb::test_components();
-    LmcsConfig::new(sponge, compress)
+    LmcsConfig::new_aligned(sponge, compress)
 }
 
 /// Create sponge and compressor for Merkle tree tests.
@@ -65,7 +65,7 @@ type HidingConfig = HidingLmcsConfig<P, P, Sponge, Compress, SmallRng, WIDTH, DI
 
 fn hiding_lmcs(rng: SmallRng) -> HidingConfig {
     let (_, sponge, compress) = bb::test_components();
-    HidingLmcsConfig::new(sponge, compress, rng)
+    HidingLmcsConfig::new_aligned(sponge, compress, rng)
 }
 
 // ============================================================================
@@ -83,7 +83,7 @@ fn lmcs_roundtrip() {
             .collect();
 
         let tree = lmcs.build_tree(matrices);
-        let widths: Vec<_> = tree.leaves().iter().map(|m| m.width()).collect();
+        let widths = tree.widths();
         let max_height = tree.leaves().last().map(|m| m.height()).unwrap_or(0);
         let log_max_height = log2_strict_usize(max_height);
 
@@ -140,7 +140,7 @@ fn hiding_roundtrip() {
 
         let config = hiding_lmcs(rng);
         let tree: HidingTree<_> = config.build_tree(matrices);
-        let widths: Vec<_> = tree.leaves().iter().map(|m| m.width()).collect();
+        let widths = tree.widths();
         let max_height = tree.leaves().last().map(|m| m.height()).unwrap_or(0);
         let log_max_height = log2_strict_usize(max_height);
         let mut prover_channel = ProverTranscript::new(bb::test_challenger());
@@ -198,7 +198,7 @@ fn open_batch_handles_empty_or_oob() {
     let lmcs = lmcs();
     let matrices = vec![RowMajorMatrix::rand(&mut rng, 4, 3)];
     let tree = lmcs.build_tree(matrices);
-    let widths: Vec<_> = tree.leaves().iter().map(|m| m.width()).collect();
+    let widths = tree.widths();
     let log_max_height = log2_strict_usize(tree.height());
     let commitment = tree.root();
 
@@ -235,7 +235,7 @@ fn read_batch_handles_empty_or_oob() {
     let lmcs = lmcs();
     let matrices = vec![RowMajorMatrix::rand(&mut rng, 4, 3)];
     let tree = lmcs.build_tree(matrices);
-    let widths: Vec<_> = tree.leaves().iter().map(|m| m.width()).collect();
+    let widths = tree.widths();
     let log_max_height = log2_strict_usize(tree.height());
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());

@@ -25,7 +25,8 @@
 use alloc::vec::Vec;
 
 use p3_challenger::CanSample;
-use p3_field::{BasedVectorSpace, ExtensionField, TwoAdicField};
+use p3_field::{ExtensionField, TwoAdicField};
+use p3_miden_lmcs::utils::aligned_len;
 use p3_miden_lmcs::{Lmcs, LmcsError};
 use p3_miden_transcript::VerifierChannel;
 use p3_util::reverse_bits_len;
@@ -136,7 +137,11 @@ where
                 .collect();
 
             // Verify LMCS opening - dimensions are flattened (EF elements stored as F)
-            let widths = [arity * <EF as BasedVectorSpace<F>>::DIMENSION];
+            let base_width = arity * EF::DIMENSION;
+            // LMCS may pad rows to its alignment; the padded tail is part of the commitment
+            // and need not be zero, so the verifier ignores it.
+            let aligned_width = aligned_len(base_width, lmcs.alignment());
+            let widths = [aligned_width];
 
             let opened_rows = lmcs
                 .open_batch(
@@ -156,9 +161,10 @@ where
             {
                 // Get the opened row for this query (first matrix, since FRI only has one)
                 let flat_row = &opened_rows[query_idx][0];
+                let row_slice = &flat_row[..base_width];
 
                 // Reconstruct extension field values from flattened base field
-                let row: Vec<EF> = EF::reconstitute_from_base(flat_row.to_vec());
+                let row: Vec<EF> = EF::reconstitute_from_base(row_slice.to_vec());
 
                 // position_in_coset = current_idx & (arity - 1)
                 let position_in_coset = current_idx & ((1 << log_arity) - 1);

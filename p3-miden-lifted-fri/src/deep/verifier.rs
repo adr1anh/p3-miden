@@ -28,11 +28,10 @@ use thiserror::Error;
 /// (where r is the lift factor), but the verifier sees this as `fᵢ'(z)` where
 /// `fᵢ'(X) = fᵢ(Xʳ)` is the lifted polynomial on the full domain.
 ///
-/// An alternative implementation could open rows padded with zeros to the alignment
-/// width, allowing the hasher to process fixed-size chunks. This implementation
-/// uses alignment > 1 to support such padding virtually (without materializing zeros).
 pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
     /// Trace commitments with their widths (one per trace tree).
+    ///
+    /// Widths are expected to be aligned to the LMCS alignment.
     commitments: Vec<(L::Commitment, Vec<usize>)>,
 
     /// Log2 of the universal domain height (tree has 2^log_max_height leaves).
@@ -47,16 +46,13 @@ pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
     /// Challenge `β` for batching opening points.
     challenge_points: EF,
 
-    /// Alignment width for Horner reduction (typically hasher's rate).
-    /// When alignment > 1, coefficient indices are padded to multiples of this value,
-    /// equivalent to virtually appending zeros to each row before hashing.
-    alignment: usize,
-
     _marker: PhantomData<F>,
 }
 
 impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L> {
     /// Construct by reading evaluations, checking PoW, and sampling challenges.
+    ///
+    /// Commitment widths must already include any alignment padding.
     pub fn new<Ch>(
         params: &DeepParams,
         eval_points: &[EF],
@@ -71,13 +67,8 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
             .iter()
             .map(|(_, widths)| widths.as_slice())
             .collect();
-        let evals = DeepEvals::read_from_channel::<F, Ch>(
-            &widths,
-            eval_points.len(),
-            params.alignment,
-            channel,
-        )
-        .ok_or(DeepError::StructureMismatch)?;
+        let evals = DeepEvals::read_from_channel::<F, Ch>(&widths, eval_points.len(), channel)
+            .ok_or(DeepError::StructureMismatch)?;
 
         // 1. Check grinding witness
         let _pow_witness = channel
@@ -89,9 +80,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
         let challenge_points: EF = channel.sample_algebra_element();
 
         // Reduce each opening's evaluations via Horner: (z_j, f_reduced(z_j))
-        let reduced_evals = evals.reduce_all(challenge_columns, params.alignment);
-        let reduced_openings: Vec<(EF, EF)> = zip(eval_points, reduced_evals)
-            .map(|(&point, reduced_eval)| (point, reduced_eval))
+        let reduced_openings: Vec<(EF, EF)> = eval_points
+            .iter()
+            .enumerate()
+            .map(|(point_idx, point)| (*point, evals.reduce_point(point_idx, challenge_columns)))
             .collect();
 
         let oracle = Self {
@@ -100,7 +92,6 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
             reduced_openings,
             challenge_columns,
             challenge_points,
-            alignment: params.alignment,
             _marker: PhantomData,
         };
 
@@ -127,7 +118,6 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
                     *acc,
                     rows_for_query.iter().map(Vec::as_slice),
                     self.challenge_columns,
-                    self.alignment,
                 );
             }
         }

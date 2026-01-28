@@ -9,7 +9,8 @@
 //!   directly from the in-memory [`LiftedMerkleTree`].
 //! - `verify_batch` recomputes the leaf digest from rows+salt, derives widths and
 //!   the expected authentication-path length from [`Dimensions`], and checks the root.
-//!   The caller must supply dimensions in the same height order used to build the tree.
+//!   The caller must supply dimensions in the same height order used to build the tree,
+//!   with widths already aligned to the LMCS alignment.
 //! - The hiding configuration delegates to the inner `LmcsConfig` implementation so
 //!   proof shape and validation stay identical; only tree construction consumes randomness.
 
@@ -91,6 +92,15 @@ where
         tree.leaves.iter().collect()
     }
 
+    /// Verify a single-leaf opening against `commit`.
+    ///
+    /// Security notes:
+    /// - `dimensions.width` is interpreted as the committed row length (including any
+    ///   alignment padding); LMCS does not enforce that padded values are zero.
+    /// - `dimensions` must match the commitment; out-of-range `index` returns
+    ///   `InvalidProof`.
+    /// - Returns `InvalidProof` for malformed rows/siblings, `RootMismatch` for a
+    ///   well-formed proof to a different root.
     fn verify_batch(
         &self,
         commit: &Self::Commitment,
@@ -122,6 +132,10 @@ where
         let log_max_height = log2_ceil_usize(max_height);
         if siblings.len() != log_max_height {
             return Err(LmcsError::InvalidProof);
+        }
+
+        if index >= max_height {
+            return Err(LmcsError::InvalidProof)
         }
 
         let computed_root = {

@@ -80,7 +80,6 @@ fn test_pcs_open_verify_roundtrip() {
             proof_of_work_bits: 1, // Low for fast tests (per-round)
         },
         deep: DeepParams {
-            alignment: RATE,
             proof_of_work_bits: 1, // Low for fast tests
         },
         num_queries: 5,
@@ -107,7 +106,7 @@ fn test_pcs_open_verify_roundtrip() {
     // Commit matrices via LMCS
     let tree = lmcs.build_tree(matrices);
     let commitment = tree.root();
-    let widths: Vec<usize> = tree.leaves().iter().map(|m| m.width()).collect();
+    let widths = tree.widths();
     let max_height = tree.leaves().last().map(|m| m.height()).unwrap_or(0);
     let log_max_height = log2_strict_usize(max_height);
 

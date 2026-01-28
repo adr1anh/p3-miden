@@ -9,7 +9,7 @@ use crate::fri::FriParams;
 /// reducing the number of function arguments and ensuring consistent configuration.
 #[derive(Clone, Copy, Debug)]
 pub struct PcsParams {
-    /// DEEP quotient parameters (alignment, grinding).
+    /// DEEP quotient parameters (grinding).
     pub deep: DeepParams,
 
     /// FRI protocol parameters (blowup, folding, final degree, grinding).

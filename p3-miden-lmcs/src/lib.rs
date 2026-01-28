@@ -22,7 +22,7 @@
 //!
 //! // Config captures PF, PD (packed types), H, C, WIDTH, DIGEST
 //! // F = PF::Value and D = PD::Value are derived
-//! let config = LmcsConfig::<PF, PD, _, _, WIDTH, DIGEST>::new(sponge, compress);
+//! let config = LmcsConfig::<PF, PD, _, _, WIDTH, DIGEST>::new_aligned(sponge, compress);
 //! let challenger = /* ... */;
 //!
 //! // Build tree - no turbofish needed, packed types are known from config
@@ -36,7 +36,8 @@
 //! let rows = config.open_batch(&root, &widths, log_max_height, &indices, &mut verifier_channel)?;
 //!
 //! // For hiding commitment with salt, use HidingLmcsConfig with RNG
-//! let hiding_config = HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new(sponge, compress, rng);
+//! let hiding_config =
+//!     HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new_aligned(sponge, compress, rng);
 //! let tree = hiding_config.build_tree(matrices);
 //! ```
 //!
@@ -177,11 +178,20 @@ pub trait Lmcs: Clone {
     /// Build a tree from matrices.
     fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M>;
 
+    /// Column alignment used when streaming openings into transcripts.
+    ///
+    /// This is a hint-format convenience: choosing the sponge rate allows verifiers to
+    /// absorb rows in fixed-size chunks without special-casing the final partial chunk.
+    /// Callers should align widths to this value before opening; LMCS does not enforce
+    /// that padding is zero.
+    fn alignment(&self) -> usize;
+
     /// Open a batch proof by reading hint data from a transcript channel.
     ///
     /// The hint format is implementation-defined; callers must use the matching
     /// `LmcsTree::prove_batch` implementation to produce compatible hints.
-    /// `widths` and `log_max_height` must match the committed tree.
+    /// `widths` and `log_max_height` must match the committed tree and already
+    /// include any alignment padding.
     fn open_batch<Ch>(
         &self,
         commitment: &Self::Commitment,
@@ -220,15 +230,26 @@ pub trait LmcsTree<F, Commitment, M> {
     fn height(&self) -> usize;
 
     /// Get references to the committed matrices.
+    ///
+    /// Matrix widths are not padded; use [`Self::widths`] for aligned widths.
     fn leaves(&self) -> &[M];
 
     /// Get the opened rows for a given leaf index.
+    ///
+    /// Rows are padded to the LMCS alignment used for transcript hints.
     fn rows(&self, index: usize) -> Vec<Vec<F>>;
+
+    /// Column alignment used when streaming openings.
+    fn alignment(&self) -> usize;
+
+    /// Get aligned widths for each committed matrix.
+    fn widths(&self) -> Vec<usize>;
 
     /// Prove a batch opening and stream it into a transcript channel.
     ///
     /// The hint format is implementation-defined and must be consumed by the
-    /// corresponding `Lmcs::open_batch` implementation.
+    /// corresponding `Lmcs::open_batch` implementation. Rows are padded to the
+    /// LMCS alignment before being written to the channel.
     fn prove_batch<Ch>(&self, indices: &[usize], channel: &mut Ch)
     where
         Ch: ProverChannel<F = F, Commitment = Commitment>;

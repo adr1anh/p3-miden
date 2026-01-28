@@ -45,6 +45,14 @@ impl<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
     /// layout matches the `LmcsConfig`/`LiftedMerkleTree` implementation in this crate.
     /// Empty `indices` return `Some(vec![])` and consume no hints; out-of-range indices
     /// return `None`.
+    ///
+    /// Security notes:
+    /// - `widths` and `log_max_height` are trusted parameters.
+    /// - `widths` must already include alignment padding; LMCS does not enforce that
+    ///   padding values are zero.
+    /// - Sibling hints are read left-to-right, bottom-to-top.
+    /// - Extra hints are ignored and left unread.
+    /// - Duplicate indices must yield identical rows/salt or `None` is returned.
     pub fn read_batch_from_channel<H, C, Ch, const WIDTH: usize>(
         sponge: &H,
         compress: &C,

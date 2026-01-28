@@ -7,10 +7,11 @@ use crate::deep::BatchedEvals;
 use crate::utils::PackedFieldExtensionExt;
 use p3_challenger::CanSample;
 use p3_field::{
-    ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue, TwoAdicField, dot_product,
+    ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue, TwoAdicField,
 };
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
+use p3_miden_lmcs::utils::aligned_widths;
 use p3_miden_transcript::ProverChannel;
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
@@ -28,11 +29,13 @@ impl<EF> DeepPoly<EF> {
     /// # Arguments
     /// - `batched_evals`: Indexed as `batched_evals[group_idx][matrix_idx]` with `FieldArray<N>` per column.
     /// - `quotient`: Precomputed `1/(zⱼ - xᵢ)` for all opening points zⱼ and domain points xᵢ.
+    /// - `alignment`: Column alignment for padding zero columns.
     pub fn new<F, M, const N: usize, Ch>(
         params: &DeepParams,
         matrices_groups: &[Vec<&M>],
-        batched_evals: &BatchedEvals<EF, N>,
+        batched_evals: BatchedEvals<EF, N>,
         quotient: &PointQuotients<F, EF, N>,
+        alignment: usize,
         channel: &mut Ch,
     ) -> Self
     where
@@ -58,8 +61,10 @@ impl<EF> DeepPoly<EF> {
             );
         }
 
+        let batched_evals = batched_evals.aligned(alignment);
+
         // 1. Observe evaluations into transcript in point-major order.
-        batched_evals.write_to_channel(params.alignment, channel);
+        batched_evals.write_to_channel(channel);
 
         // 2. Grind for proof-of-work witness
         let _pow_witness = channel.grind(params.proof_of_work_bits);
@@ -67,6 +72,10 @@ impl<EF> DeepPoly<EF> {
         // 3. Sample DEEP challenges
         let challenge_columns: EF = channel.sample_algebra_element();
         let challenge_points: EF = channel.sample_algebra_element();
+
+        // Pre-compute f_reduced(zⱼ) for all N points using Horner.
+        // Structure: batched_evals.groups()[group_idx][matrix_idx][col_idx] is FieldArray<EF, N>
+        let f_reduced_at_points: FieldArray<EF, N> = batched_evals.reduce(challenge_columns);
 
         let w = F::Packing::WIDTH;
         let point_quotient = &quotient.point_quotient;
@@ -78,8 +87,11 @@ impl<EF> DeepPoly<EF> {
             .flat_map(|g| g.iter().map(|m| m.width()))
             .collect();
 
+        // Align each matrix width so padding is explicit in the transcript.
+        let aligned_widths = aligned_widths(widths.iter().copied(), alignment);
+
         let coeffs_columns: Vec<Vec<EF>> =
-            derive_coeffs_from_challenge(&widths, challenge_columns, params.alignment);
+            derive_coeffs_from_challenge(&aligned_widths, challenge_columns);
 
         // Negate coefficients so inner loop computes f_reduced(z) - f_reduced(X) via addition
         let neg_column_coeffs: Vec<Vec<EF>> = coeffs_columns
@@ -105,22 +117,6 @@ impl<EF> DeepPoly<EF> {
                 acc
             })
             .unwrap_or_else(|| EF::zero_vec(n));
-
-        // Pre-compute f_reduced(zⱼ) for all N points
-        // Structure: batched_evals.groups()[group_idx][matrix_idx][col_idx] is FieldArray<EF, N>
-        let f_reduced_at_points: FieldArray<EF, N> = {
-            let coeffs_flat = coeffs_columns
-                .iter()
-                .flatten()
-                .copied()
-                .map(FieldArray::from);
-            let evals_flat = batched_evals
-                .groups()
-                .iter()
-                .flat_map(|group| group.iter_evals())
-                .copied();
-            dot_product(coeffs_flat, evals_flat)
-        };
 
         // Pre-compute βʲ for all N points
         let point_coeffs: [EF; N] = core::array::from_fn(|j| {
@@ -259,33 +255,17 @@ fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>, C: AsRef<[
 /// Reversed order enables Horner evaluation: the verifier processes values
 /// left-to-right computing `α·acc + val`, which produces `Σ αⁿ⁻¹⁻ⁱ·vᵢ`.
 ///
-/// # Alignment
-///
-/// Each matrix's coefficient range is padded to a multiple of `alignment`.
-/// This is equivalent to an implementation that:
-/// 1. Pads each row with zeros to the alignment width
-/// 2. Computes the linear combination including those zeros
-///
-/// The zeros don't affect the sum, but they do affect coefficient indexing.
-/// By aligning indices, we ensure the prover's explicit coefficients match
-/// the verifier's Horner reduction (which skips the implicit zeros via `α^gap`).
-fn derive_coeffs_from_challenge<EF: Field>(
-    widths: &[usize],
-    challenge: EF,
-    alignment: usize,
-) -> Vec<Vec<EF>> {
-    let total: usize = widths.iter().map(|w| w.next_multiple_of(alignment)).sum();
+/// Widths are assumed to be aligned already (padded with trailing zero columns
+/// when needed). When the dot product only uses the prefix up to each matrix's
+/// actual width, the result matches explicit zero padding.
+fn derive_coeffs_from_challenge<EF: Field>(widths: &[usize], challenge: EF) -> Vec<Vec<EF>> {
+    let total: usize = widths.iter().sum();
     let all_powers: Vec<EF> = challenge.powers().collect_n(total);
     let rev_powers_iter = &mut all_powers.into_iter().rev();
 
     widths
         .iter()
-        .map(|&width| {
-            let padded = width.next_multiple_of(alignment);
-            let mut coeffs: Vec<EF> = rev_powers_iter.take(padded).collect();
-            coeffs.truncate(width); // drop alignment padding
-            coeffs
-        })
+        .map(|&width| rev_powers_iter.take(width).collect())
         .collect()
 }
 
@@ -297,6 +277,7 @@ mod tests {
     use super::derive_coeffs_from_challenge;
     use crate::deep::utils::reduce_with_powers_from;
     use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, dot_product};
+    use p3_miden_lmcs::utils::{aligned_widths, pad_rows_to_alignment};
 
     use crate::tests::{EF, F};
 
@@ -306,38 +287,41 @@ mod tests {
         let c: EF = EF::from_u64(2);
         let alignment = 3;
         let widths = [2usize, 3];
+        let aligned_widths = aligned_widths(widths, alignment);
         let rows: Vec<Vec<F>> = vec![
             vec![F::from_u64(1), F::from_u64(2)],
             vec![F::from_u64(3), F::from_u64(4), F::from_u64(5)],
         ];
+        let padded_rows = pad_rows_to_alignment(rows.clone(), alignment);
 
-        let coeffs = derive_coeffs_from_challenge(&widths, c, alignment);
+        let coeffs = derive_coeffs_from_challenge(&aligned_widths, c);
 
         // Explicit coefficient sum: Σᵢ coeffs[i] · rows[i]
         let explicit: EF = dot_product(
             coeffs.iter().flatten().copied(),
-            rows.iter().flatten().copied(),
+            padded_rows.iter().flatten().copied(),
         );
 
         // Horner using reduce_with_powers (same as used in verifier)
-        let horner: EF = reduce_with_powers(rows.iter().map(|r| r.as_slice()), c, alignment);
+        let horner: EF = reduce_with_powers(padded_rows.iter().map(|r| r.as_slice()), c);
 
         assert_eq!(explicit, horner);
     }
 
-    /// Alignment: coeffs match Horner for various width/alignment combos.
+    /// Padding: coeffs match Horner for various width/alignment combos.
     #[test]
     fn derive_coeffs_alignment() {
         let c: EF = EF::from_u64(7);
         let alignment = 4;
         let widths = [3usize, 5, 2];
+        let aligned_widths = aligned_widths(widths, alignment);
 
-        let coeffs = derive_coeffs_from_challenge(&widths, c, alignment);
+        let coeffs = derive_coeffs_from_challenge(&aligned_widths, c);
 
-        // Verify lengths match widths
-        assert_eq!(coeffs[0].len(), 3);
-        assert_eq!(coeffs[1].len(), 5);
-        assert_eq!(coeffs[2].len(), 2);
+        // Verify lengths match aligned widths
+        assert_eq!(coeffs[0].len(), aligned_widths[0]);
+        assert_eq!(coeffs[1].len(), aligned_widths[1]);
+        assert_eq!(coeffs[2].len(), aligned_widths[2]);
 
         // Verify this matches Horner reduction with arbitrary test data
         let rows: Vec<Vec<F>> = vec![
@@ -351,12 +335,13 @@ mod tests {
             ],
             vec![F::from_u64(100), F::from_u64(200)],
         ];
+        let padded_rows = pad_rows_to_alignment(rows.clone(), alignment);
 
         let explicit: EF = dot_product(
             coeffs.iter().flatten().copied(),
-            rows.iter().flatten().copied(),
+            padded_rows.iter().flatten().copied(),
         );
-        let horner: EF = reduce_with_powers(rows.iter().map(|r| r.as_slice()), c, alignment);
+        let horner: EF = reduce_with_powers(padded_rows.iter().map(|r| r.as_slice()), c);
 
         assert_eq!(explicit, horner);
     }
@@ -367,24 +352,14 @@ mod tests {
     /// (from [`super::prover::derive_coeffs_from_challenge`]) makes this produce the
     /// same result as explicit `Σᵢ coeffs[i] · vals[i]`.
     ///
-    /// # Alignment
-    ///
-    /// After each slice, multiplies by `α^gap` where `gap` pads the slice length to
-    /// the next multiple of `alignment`. This is equivalent to:
-    /// - Padding each row with zeros to the alignment width
-    /// - Including those zeros in the Horner accumulation
-    ///
-    /// An alternative implementation could materialize zero-padded rows; this approach
-    /// achieves the same result without allocating the padding.
     pub fn reduce_with_powers<'a, F, EF>(
         slices: impl IntoIterator<Item = &'a [F]>,
         challenge: EF,
-        alignment: usize,
     ) -> EF
     where
         F: Field + 'a,
         EF: ExtensionField<F>,
     {
-        reduce_with_powers_from(EF::ZERO, slices, challenge, alignment)
+        reduce_with_powers_from(EF::ZERO, slices, challenge)
     }
 }

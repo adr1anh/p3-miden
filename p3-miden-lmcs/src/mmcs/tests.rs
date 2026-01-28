@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
+use p3_commit::{BatchOpeningRef, Mmcs};
 use p3_field::PrimeCharacteristicRing;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::{Dimensions, Matrix};
@@ -27,12 +27,12 @@ const BASE_SHAPES: &[(usize, usize)] = &[(4, 5), (8, 3)];
 
 fn mmcs() -> BaseMmcs {
     let (_, sponge, compress) = test_components();
-    LmcsConfig::new(sponge, compress)
+    LmcsConfig::new_aligned(sponge, compress)
 }
 
 fn hiding_mmcs(rng: SmallRng) -> HidingMmcs {
     let (_, sponge, compress) = test_components();
-    HidingLmcsConfig::new(sponge, compress, rng)
+    HidingLmcsConfig::new_aligned(sponge, compress, rng)
 }
 
 fn components() -> (Sponge, Compress) {
@@ -47,21 +47,15 @@ fn random_matrices(rng: &mut SmallRng, shapes: &[(usize, usize)]) -> Vec<RowMatr
         .collect()
 }
 
-fn widths_from_tree<C, T>(tree: &T) -> Vec<usize>
-where
-    T: LmcsTree<F, C, RowMatrix>,
-{
-    tree.leaves().iter().map(|m| m.width()).collect()
-}
-
 fn dimensions_from_tree<C, T>(tree: &T) -> Vec<Dimensions>
 where
     T: LmcsTree<F, C, RowMatrix>,
 {
     tree.leaves()
         .iter()
-        .map(|m| Dimensions {
-            width: m.width(),
+        .zip(tree.widths())
+        .map(|(m, width)| Dimensions {
+            width,
             height: m.height(),
         })
         .collect()
@@ -93,16 +87,6 @@ fn hiding_tree(seed: u64, shapes: &[(usize, usize)], salt_seed: u64) -> (HidingM
     (mmcs, tree)
 }
 
-fn batch_opening_ref<M>(batch_opening: &'_ BatchOpening<F, M>) -> BatchOpeningRef<'_, F, M>
-where
-    M: Mmcs<F>,
-{
-    BatchOpeningRef {
-        opened_values: &batch_opening.opened_values,
-        opening_proof: &batch_opening.opening_proof,
-    }
-}
-
 #[test]
 fn extract_proofs_roundtrip() {
     let (sponge, compress) = components();
@@ -113,7 +97,7 @@ fn extract_proofs_roundtrip() {
         let matrices = random_matrices(&mut rng, matrices);
 
         let tree = mmcs.build_tree(matrices);
-        let widths = widths_from_tree(&tree);
+        let widths = tree.widths();
         let log_max_height = log2_strict_usize(tree.height());
         let (commitment, dimensions, _) = tree_context(&tree);
 
@@ -170,9 +154,14 @@ fn mmcs_roundtrip_non_hiding() {
     let (commitment, dimensions, index) = tree_context(&tree);
 
     let batch_opening = Mmcs::open_batch(&mmcs, index, &tree);
-    let batch_opening_ref = batch_opening_ref(&batch_opening);
-    Mmcs::verify_batch(&mmcs, &commitment, &dimensions, index, batch_opening_ref)
-        .expect("mmcs verify should succeed");
+    Mmcs::verify_batch(
+        &mmcs,
+        &commitment,
+        &dimensions,
+        index,
+        (&batch_opening).into(),
+    )
+    .expect("mmcs verify should succeed");
 
     let expected_rows = tree.rows(index);
     for (row, expected_row) in batch_opening.opened_values.iter().zip(expected_rows.iter()) {
@@ -186,9 +175,14 @@ fn mmcs_roundtrip_hiding() {
     let (commitment, dimensions, index) = tree_context(&tree);
 
     let batch_opening = Mmcs::open_batch(&mmcs, index, &tree);
-    let batch_opening_ref = batch_opening_ref(&batch_opening);
-    Mmcs::verify_batch(&mmcs, &commitment, &dimensions, index, batch_opening_ref)
-        .expect("mmcs verify should succeed");
+    Mmcs::verify_batch(
+        &mmcs,
+        &commitment,
+        &dimensions,
+        index,
+        (&batch_opening).into(),
+    )
+    .expect("mmcs verify should succeed");
 }
 
 #[test]

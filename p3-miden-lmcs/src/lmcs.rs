@@ -6,7 +6,7 @@ use core::marker::PhantomData;
 
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
-use p3_miden_stateful_hasher::StatefulHasher;
+use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_miden_transcript::VerifierChannel;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 
@@ -21,13 +21,20 @@ use crate::{LiftedMerkleTree, Lmcs, LmcsError, Proof};
 /// - For each query index (in caller order): one row per matrix (in leaf order), then
 ///   `SALT_ELEMS` field elements of salt.
 /// - After all indices: missing sibling hashes, level-by-level, left-to-right, bottom-to-top.
+///
 /// Hints are not observed into the Fiat-Shamir challenger.
 ///
 /// `open_batch` expects `widths` and `log_max_height` to match the committed tree,
-/// rejects empty `indices`, and ignores extra hint data. Duplicate indices must yield
-/// identical rows/salt or `InvalidProof` is returned. `read_batch_from_channel` parses
-/// the same hint stream into per-index proofs without verifying against a commitment;
-/// empty indices return `Ok(vec![])` and out-of-range indices return `InvalidProof`.
+/// rejects empty `indices`, and ignores extra hint data. Widths must already include
+/// alignment padding. Duplicate indices must yield identical rows/salt or `InvalidProof`
+/// is returned. `read_batch_from_channel` parses the same hint stream into per-index
+/// proofs without verifying against a commitment; empty indices return `Ok(vec![])`
+/// and out-of-range indices return `InvalidProof`.
+///
+/// Padding note:
+/// - LMCS does not enforce that aligned padding values are zero. Verifiers cannot
+///   distinguish zero padding from arbitrary values unless they check those columns
+///   in the opened rows or constrain them elsewhere.
 ///
 /// For hiding commitments with salt, use [`crate::HidingLmcsConfig`] instead.
 #[derive(Clone, Debug)]
@@ -44,18 +51,37 @@ pub struct LmcsConfig<
     pub sponge: H,
     /// 2-to-1 compression function for building internal tree nodes.
     pub compress: C,
+    /// Column alignment used for transcript openings.
+    pub alignment: usize,
     pub(crate) _phantom: PhantomData<(PF, PD)>,
 }
 
 impl<PF, PD, H, C, const WIDTH: usize, const DIGEST: usize>
     LmcsConfig<PF, PD, H, C, WIDTH, DIGEST, 0>
 {
-    /// Create a new LMCS configuration.
+    /// Create a new LMCS configuration with alignment 1.
     #[inline]
     pub const fn new(sponge: H, compress: C) -> Self {
         Self {
             sponge,
             compress,
+            alignment: 1,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Create a new LMCS configuration using the hasher's alignment.
+    #[inline]
+    pub fn new_aligned(sponge: H, compress: C) -> Self
+    where
+        PF: PackedValue,
+        PD: PackedValue,
+        H: Alignable<PF::Value, PD::Value>,
+    {
+        Self {
+            sponge,
+            compress,
+            alignment: <H as Alignable<PF::Value, PD::Value>>::ALIGNMENT,
             _phantom: PhantomData,
         }
     }
@@ -78,11 +104,42 @@ where
     type SingleProof = Proof<PF::Value, PD::Value, DIGEST, SALT_ELEMS>;
     type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, SALT_ELEMS>;
 
+    /// Build a tree from matrices.
+    ///
+    /// Preconditions:
+    /// - `leaves` is non-empty.
+    /// - Matrix heights are powers of two and sorted by height (shortest to tallest).
+    ///
+    /// Panics if `leaves` is empty. Incorrect height order commits to a different
+    /// lifted matrix than intended.
     fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
         const { assert!(SALT_ELEMS == 0) }
-        LiftedMerkleTree::build::<PF, PD, H, C, WIDTH>(&self.sponge, &self.compress, leaves, None)
+        LiftedMerkleTree::build::<PF, PD, H, C, WIDTH>(
+            &self.sponge,
+            &self.compress,
+            leaves,
+            None,
+            self.alignment,
+        )
     }
 
+    fn alignment(&self) -> usize {
+        self.alignment
+    }
+
+    /// Verify a batch opening from transcript hints.
+    ///
+    /// Security notes:
+    /// - `widths` and `log_max_height` must describe the committed tree; they are not checked.
+    /// - `widths` must already include alignment padding; LMCS does not enforce that padded
+    ///   values are zero. Verifiers cannot distinguish zero padding from arbitrary values
+    ///   unless they check the opened rows or constrain them elsewhere.
+    /// - Empty `indices` returns `InvalidProof`.
+    /// - Duplicate indices must yield identical rows/salt or `InvalidProof`.
+    /// - Out-of-range indices (>= 2^log_max_height) return `InvalidProof`.
+    /// - Missing siblings or malformed hints return `InvalidProof`.
+    /// - Extra hints are ignored and left unread.
+    /// - Returns `RootMismatch` only after a well-formed proof yields a different root.
     fn open_batch<Ch>(
         &self,
         commitment: &Self::Commitment,
@@ -199,6 +256,16 @@ where
         Ok(openings)
     }
 
+    /// Parse batch hints into per-index proofs without verifying a commitment.
+    ///
+    /// Security notes:
+    /// - `widths` and `log_max_height` are trusted parameters.
+    /// - `widths` must already include alignment padding; LMCS does not enforce that padded
+    ///   values are zero. Verifiers cannot distinguish zero padding from arbitrary values
+    ///   unless they check the opened rows or constrain them elsewhere.
+    /// - Empty `indices` returns `Ok(vec![])` and consumes no hints.
+    /// - Out-of-range indices return `InvalidProof`.
+    /// - Extra hints are ignored and left unread.
     fn read_batch_from_channel<Ch>(
         &self,
         widths: &[usize],
@@ -227,11 +294,9 @@ where
 #[cfg(test)]
 mod tests {
     use alloc::vec;
-    use alloc::vec::Vec;
 
     use crate::{Lmcs, LmcsConfig, LmcsError, LmcsTree};
     use p3_field::PrimeCharacteristicRing;
-    use p3_matrix::Matrix;
     use p3_matrix::dense::RowMajorMatrix;
     use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
     use p3_miden_transcript::{
@@ -252,10 +317,10 @@ mod tests {
     #[test]
     fn open_batch_cases() {
         let (_, sponge, compress) = bb::test_components();
-        let lmcs: TestLmcs = LmcsConfig::new(sponge, compress);
+        let lmcs: TestLmcs = LmcsConfig::new_aligned(sponge, compress);
         let matrices = vec![small_matrix(4, 2, 0), small_matrix(4, 3, 100)];
         let tree = lmcs.build_tree(matrices);
-        let widths: Vec<_> = tree.leaves().iter().map(|m| m.width()).collect();
+        let widths = tree.widths();
         let log_max_height = log2_strict_usize(tree.height());
         let commitment = tree.root();
 
@@ -292,7 +357,7 @@ mod tests {
         assert_open(&[2, 2]);
 
         let tiny_tree = lmcs.build_tree(vec![small_matrix(1, 1, 7)]);
-        let widths_tiny = vec![1];
+        let widths_tiny = tiny_tree.widths();
         let log_tiny = log2_strict_usize(tiny_tree.height());
         let indices = [0usize];
         let mut prover_channel = ProverTranscript::new(bb::test_challenger());

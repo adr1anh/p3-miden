@@ -2,7 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::{array, mem};
 
-use crate::utils::PackedValueExt;
+use crate::utils::{PackedValueExt, aligned_widths, pad_row_to_alignment, pad_rows_to_alignment};
 use crate::{LmcsTree, Proof};
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
@@ -32,16 +32,20 @@ use serde::{Deserialize, Serialize};
 /// The per-leaf row composition uses nearest-neighbor upsampling: each matrix `M_i` is virtually
 /// extended to height `N` (width unchanged) by repeating each row `r_i = N / n_i` times
 /// contiguously. For leaf index `j`, the sponge absorbs the `j`-th row from each lifted matrix
-/// in sequence (with per-matrix zero padding to a multiple of the hasher's padding width for
-/// absorption).
+/// in sequence. The sponge applies its own padding semantics during absorption; LMCS alignment
+/// only affects transcript hints.
+///
+/// Note: alignment padding is a convention for transcript openings and does not affect the
+/// commitment. It is independent of the sponge's absorption alignment. LMCS does not enforce
+/// that padded columns are zero; verifiers cannot distinguish zero padding from arbitrary values
+/// unless they check those columns or constrain them elsewhere.
 ///
 /// Equivalent single-matrix view: this commitment is equivalent to first forming a single
 /// height-`N` matrix by (a) lifting every input matrix to height `N`, (b) padding each lifted
-/// matrix horizontally with zero columns so each width is a multiple of the hasher's padding
-/// width, and (c) concatenating the results side-by-side. The leaf digest at index `j` is then
-/// the sponge of that single concatenated matrix's row `j`. From the verifier's perspective,
-/// the two constructions are indistinguishable: verification absorbs the same padded row
-/// segments in the same order and checks the same Merkle path.
+/// matrix horizontally with zero columns to reflect the sponge's absorption alignment (if any),
+/// and (c) concatenating the results side-by-side. The leaf digest at index `j` is then the
+/// sponge of that single concatenated matrix's row `j`. This is a conceptual view: LMCS does
+/// not enforce that those padded columns are zero unless the caller checks them.
 ///
 /// Since [`StatefulHasher`] operates on a single field type, this tree uses the same type `F`
 /// for both matrix elements and digest words, unlike `MerkleTree` which can hash `F → W`.
@@ -54,7 +58,11 @@ use serde::{Deserialize, Serialize};
 /// [`LmcsConfig::open_batch`](crate::LmcsConfig::open_batch):
 /// - For each query index (in caller order): one row per matrix (in leaf order), then
 ///   `SALT_ELEMS` field elements of salt.
+/// - Each row is padded with explicit zeros to the LMCS alignment.
+///   This allows verifiers to absorb fixed-size chunks without special-casing
+///   the final partial chunk; padding is not enforced to be zero.
 /// - After all indices: missing sibling hashes, level-by-level, left-to-right, bottom-to-top.
+///
 /// Hints are not observed into the Fiat-Shamir challenger.
 ///
 /// This generally shouldn't be used directly. If you're using a Merkle tree as an MMCS,
@@ -85,6 +93,8 @@ pub struct LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS
     /// Salt matrix for hiding commitment. Each row contains `SALT_ELEMS` random field elements.
     /// `None` when `SALT_ELEMS = 0` (non-hiding mode).
     pub(crate) salt: Option<RowMajorMatrix<F>>,
+    /// Column alignment used for transcript proofs.
+    pub(crate) alignment: usize,
 }
 
 impl<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
@@ -106,10 +116,18 @@ where
         &self.leaves
     }
 
+    /// Return the upsampled rows for `index`, padded to `alignment`.
+    ///
+    /// Padding uses `Default::default()` and is not enforced by verification; callers
+    /// that require zero padding must check these columns explicitly.
+    ///
+    /// Panics if `index` is out of range for the tree height.
     fn rows(&self, index: usize) -> Vec<Vec<F>> {
         let max_height = self.height();
+        let alignment = self.alignment;
 
-        self.leaves
+        let rows = self
+            .leaves
             .iter()
             .map(|m| {
                 let height = m.height();
@@ -119,9 +137,16 @@ where
                     .expect("row_index must be valid after upsampling")
                     .to_vec()
             })
-            .collect()
+            .collect();
+
+        pad_rows_to_alignment(rows, alignment)
     }
 
+    /// Prove a batch opening and stream it into a transcript channel.
+    ///
+    /// Panics if any index is out of range. Rows are padded to `alignment` and those
+    /// padding values are not validated by verification; callers that require zero
+    /// padding must check the opened rows explicitly.
     fn prove_batch<Ch>(&self, indices: &[usize], channel: &mut Ch)
     where
         Ch: ProverChannel<F = F, Commitment = Hash<F, D, DIGEST_ELEMS>>,
@@ -130,6 +155,7 @@ where
 
         let final_height = self.leaves.last().unwrap().height();
         let depth = log2_strict_usize(final_height);
+        let alignment = self.alignment;
 
         // Validate indices
         for &index in indices {
@@ -140,13 +166,15 @@ where
         }
 
         for &idx in indices {
-            for m in &self.leaves {
+            for m in self.leaves.iter() {
                 let height = m.height();
                 let log_scaling_factor = log2_strict_usize(final_height / height);
                 let row_index = idx >> log_scaling_factor;
                 let row = m
                     .row_slice(row_index)
-                    .expect("row_index must be valid after upsampling");
+                    .expect("row_index must be valid after upsampling")
+                    .to_vec();
+                let row = pad_row_to_alignment(row, alignment);
                 channel.hint_field_slice(&row);
             }
             if SALT_ELEMS > 0 {
@@ -184,6 +212,15 @@ where
             known = parents;
         }
     }
+
+    fn alignment(&self) -> usize {
+        self.alignment
+    }
+
+    fn widths(&self) -> Vec<usize> {
+        let alignment = self.alignment;
+        aligned_widths(self.leaves.iter().map(|m| m.width()), alignment)
+    }
 }
 
 impl<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
@@ -194,11 +231,21 @@ where
     M: Matrix<F>,
 {
     /// Internal builder for creating trees with optional salt.
+    ///
+    /// Preconditions:
+    /// - `leaves` is non-empty and heights are powers of two.
+    /// - Matrices are sorted by height (shortest to tallest).
+    ///
+    /// `alignment` controls transcript padding only; LMCS does not enforce that padded
+    /// columns are zero.
+    ///
+    /// Panics if `leaves` is empty.
     pub(crate) fn build<PF, PD, H, C, const WIDTH: usize>(
         h: &H,
         c: &C,
         leaves: Vec<M>,
         salt: Option<RowMajorMatrix<F>>,
+        alignment: usize,
     ) -> Self
     where
         PF: PackedValue<Value = F>,
@@ -211,6 +258,7 @@ where
             + Sync,
     {
         assert!(!leaves.is_empty(), "cannot commit empty batch");
+        debug_assert!(alignment > 0, "alignment must be non-zero");
 
         // Build leaf states from matrices using the sponge
         let mut leaf_states: Vec<[PD::Value; WIDTH]> =
@@ -246,10 +294,14 @@ where
             leaves,
             digest_layers,
             salt,
+            alignment: alignment.max(1),
         }
     }
 
     /// Build a full opening proof for a single leaf index.
+    ///
+    /// Rows are padded to `alignment` and LMCS does not enforce that padding is zero.
+    /// Panics if `index` is out of range for the tree height.
     pub fn single_proof(&self, index: usize) -> Proof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
         let mut siblings = Vec::with_capacity(self.digest_layers.len().saturating_sub(1));
         let mut layer_index = index;
@@ -269,11 +321,17 @@ where
         }
     }
 
+    /// Column alignment used when streaming openings.
+    pub fn alignment(&self) -> usize {
+        self.alignment
+    }
+
     /// Extract the salt for the given leaf index.
     ///
     /// # Panics
     ///
-    /// Panics if `SALT_ELEMS > 0` but the tree was constructed without salt.
+    /// Panics if `index` is out of range, or if `SALT_ELEMS > 0` but the tree was
+    /// constructed without salt.
     pub fn salt(&self, index: usize) -> [F; SALT_ELEMS] {
         match &self.salt {
             Some(salt_matrix) => {
@@ -304,6 +362,9 @@ where
 /// extended matrix in order. Each absorbed row is virtually padded with zeros to a multiple of the
 /// hasher's padding width for absorption; see [`LiftedMerkleTree`](crate::LiftedMerkleTree) docs
 /// for the equivalent single-matrix view.
+///
+/// Padding is implicit and not checked; callers that require zero padding must enforce
+/// it elsewhere.
 ///
 /// # Preconditions
 /// - `matrices` is non-empty and sorted by non-decreasing power-of-two heights.
