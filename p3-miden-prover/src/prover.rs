@@ -538,9 +538,8 @@ where
                     let base_packed: Vec<PackedVal<SC>> =
                         aux_trace.vertically_packed_row_pair(i_start, next_step);
                     let ef_width = aux_trace.width() / d;
-
-                    // Convert from packed base field to packed extension field
-                    // Each EF element is formed from D consecutive base field elements
+                    // Convert from packed base field to packed extension field.
+                    // Each EF element is formed from D consecutive base field elements.
                     let ef_packed: Vec<PackedChallenge<SC>> = (0..ef_width * 2)
                         .map(|i| {
                             PackedChallenge::<SC>::from_basis_coefficients_fn(|j| {
@@ -556,7 +555,8 @@ where
             let preprocessed = preprocessed_on_quotient_domain.map(|preprocessed| {
                 let preprocessed_width = preprocessed.width();
                 RowMajorMatrix::new(
-                    preprocessed.vertically_packed_row_pair::<PackedVal<SC>>(i_start, next_step),
+                    preprocessed
+                        .vertically_packed_row_pair::<PackedVal<SC>>(i_start, next_step),
                     preprocessed_width,
                 )
             });
@@ -573,9 +573,7 @@ where
                 (0..num_cols)
                     .map(|col_idx| {
                         PackedVal::<SC>::from_fn(|j| {
-                            periodic_on_quotient
-                                .get(i_start + j, col_idx)
-                                .clone()
+                            *periodic_on_quotient.get(i_start + j, col_idx)
                         })
                     })
                     .collect()
