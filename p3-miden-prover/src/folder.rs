@@ -23,7 +23,7 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     pub aux: RowMajorMatrixView<'a, PackedChallenge<SC>>,
     /// The randomness used to compute the aux trace; can be zero width.
     /// Cached EF randomness packed from base randomness to avoid temporary leaks
-    pub packed_randomness: &'a [PackedChallenge<SC>],
+    pub packed_randomness: Vec<PackedChallenge<SC>>,
     /// Aux trace bus boundary values packed from base field to extension field
     pub aux_bus_boundary_values: &'a [PackedChallenge<SC>],
     /// The preprocessed columns (if any)
@@ -194,7 +194,7 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
 
     #[inline]
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
-        self.packed_randomness
+        self.packed_randomness.as_slice()
     }
 
     fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {

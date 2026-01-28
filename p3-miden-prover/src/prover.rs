@@ -8,13 +8,13 @@ use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing, TwoAdicField};
 use p3_matrix::Matrix;
-use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
+use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 use p3_miden_air::MidenAir;
 use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
-use crate::periodic_tables::{compute_periodic_on_quotient_eval_domain, fill_periodic_values};
+use crate::periodic_tables::compute_periodic_on_quotient_eval_domain;
 use crate::util::prover_row_to_ext;
 use crate::{
     AirWithBoundaryConstraints, Commitments, Domain, OpenedValues, PackedChallenge, PackedVal,
@@ -70,15 +70,13 @@ where
     // Compute the constraint polynomials as vectors of symbolic expressions.
     let aux_width = air.aux_width();
     let num_randomness = air.num_randomness();
-    let symbolic_constraints = info_span!("build symbolic constraints").in_scope(|| {
-        get_symbolic_constraints(
-            air,
-            preprocessed_width,
-            public_values.len(),
-            aux_width,
-            num_randomness,
-        )
-    });
+    let symbolic_constraints = get_symbolic_constraints(
+        air,
+        preprocessed_width,
+        public_values.len(),
+        aux_width,
+        num_randomness,
+    );
 
     // Count the number of constraints that we have.
     let constraint_count = symbolic_constraints.len();
@@ -189,22 +187,19 @@ where
                 .collect();
 
             // Ask config (VM) to build the aux trace if available.
-            let aux_trace_opt =
-                info_span!("build aux trace").in_scope(|| air.build_aux_trace(trace, &randomness));
+            let aux_trace_opt = air.build_aux_trace(trace, &randomness);
 
             // At the moment, it panics if the aux trace is not available.
             // In a future PR, we will introduce LogUp based permutation as a fall back if aux trace is not available.
             let aux_trace = aux_trace_opt
                 .expect("aux_challenges > 0 but no aux trace was provided or generated");
 
-            let aux_finals = info_span!("extract aux finals").in_scope(|| {
-                let aux_finals_base = aux_trace
-                    .last_row()
-                    .expect("aux_challenges > 0 but aux trace was empty")
-                    .into_iter()
-                    .collect_vec();
-                prover_row_to_ext(&aux_finals_base)
-            });
+            let aux_finals_base = aux_trace
+                .last_row()
+                .expect("aux_challenges > 0 but aux trace was empty")
+                .into_iter()
+                .collect_vec();
+            let aux_finals = prover_row_to_ext(&aux_finals_base);
 
             let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
                 .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
@@ -267,38 +262,32 @@ where
     //
     // This only works if the trace domain is `gH'` and the quotient domain is `gK` for some subgroup `K` contained in `H'`.
     // TODO: Make this explicit in `get_evaluations_on_domain` or otherwise fix this.
-    let trace_on_quotient_domain = info_span!("trace on quotient domain")
-        .in_scope(|| pcs.get_evaluations_on_domain(&trace_data, 0, quotient_domain));
-    let aux_trace_on_quotient_domain = aux_trace_data_opt.as_ref().map(|data| {
-        info_span!("aux trace on quotient domain")
-            .in_scope(|| pcs.get_evaluations_on_domain(data, 0, quotient_domain))
-    });
+    let trace_on_quotient_domain = pcs.get_evaluations_on_domain(&trace_data, 0, quotient_domain);
+    let aux_trace_on_quotient_domain = aux_trace_data_opt
+        .as_ref()
+        .map(|data| pcs.get_evaluations_on_domain(data, 0, quotient_domain));
 
-    let preprocessed_on_quotient_domain = preprocessed_data.as_ref().map(|data| {
-        info_span!("preprocessed on quotient domain")
-            .in_scope(|| pcs.get_evaluations_on_domain(data, 0, quotient_domain))
-    });
+    let preprocessed_on_quotient_domain = preprocessed_data
+        .as_ref()
+        .map(|data| pcs.get_evaluations_on_domain(data, 0, quotient_domain));
 
     // Compute the quotient polynomial `Q(x)` by evaluating
     //          `C(T_1(x), ..., T_w(x), T_1(hx), ..., T_w(hx), selectors(x)) / Z_H(x)`
     // at every point in the quotient domain. The degree of `Q(x)` is `<= deg(C(x)) - N = 2N - 2` in the case
     // where `deg(C) = 3`. (See the discussion above constraint_degree for more details.)
-    let quotient_values: Vec<SC::Challenge> =
-        info_span!("evaluate quotient polynomial").in_scope(|| {
-            quotient_values::<SC, _, _>(
-                air,
-                public_values,
-                trace_domain,
-                quotient_domain,
-                &trace_on_quotient_domain,
-                aux_trace_on_quotient_domain.as_ref(),
-                &randomness,
-                &aux_finals,
-                preprocessed_on_quotient_domain.as_ref(),
-                alpha,
-                constraint_count,
-            )
-        });
+    let quotient_values: Vec<SC::Challenge> = quotient_values::<SC, _, _>(
+        air,
+        public_values,
+        trace_domain,
+        quotient_domain,
+        &trace_on_quotient_domain,
+        aux_trace_on_quotient_domain.as_ref(),
+        &randomness,
+        &aux_finals,
+        preprocessed_on_quotient_domain.as_ref(),
+        alpha,
+        constraint_count,
+    );
 
     // Due to `alpha`, evaluations of `Q` all lie in the extension field `E`.
     // We flatten this into a matrix of `F` values by treating `E` as an `F`
@@ -307,8 +296,7 @@ where
     // This is valid to do because our domain lies in the base field `F`. Hence we can split
     // `Q(x)` into `e + 1` polynomials `Q_0(x), ... , Q_e(x)` each contained in `F`.
     // such that `Q(x) = [Q_0(x), ... ,Q_e(x)]` holds for all `x` in `F`.
-    let quotient_flat = info_span!("flatten quotient to base")
-        .in_scope(|| RowMajorMatrix::new_col(quotient_values).flatten_to_base());
+    let quotient_flat = RowMajorMatrix::new_col(quotient_values).flatten_to_base();
 
     // Currently each polynomial `Q_i(x)` is of degree `<= 2(N - 1)` and
     // we have it's evaluations over a the coset `gK of size `2N`. Let `k` be the chosen
@@ -450,27 +438,6 @@ where
     }
 }
 
-// INTERNAL HELPERS
-// ================================================================================================
-
-/// Writes two vertically packed rows (row `r` and `r + step`) into `out`.
-///
-/// The caller owns the `out` buffer to avoid per-iteration allocations in the hot loop.
-fn fill_vertically_packed_row_pair<T, P>(
-    matrix: &impl Matrix<T>,
-    r: usize,
-    step: usize,
-    out: &mut Vec<P>,
-) where
-    T: Copy + Send + Sync + Clone,
-    P: PackedValue<Value = T>,
-{
-    out.clear();
-
-    out.extend(matrix.vertically_packed_row::<P>(r));
-    out.extend(matrix.vertically_packed_row::<P>(r + step));
-}
-
 // TODO: Group some arguments to remove the `allow`?
 #[instrument(name = "compute quotient polynomial", skip_all)]
 #[allow(clippy::too_many_arguments)]
@@ -507,17 +474,17 @@ where
     // Get periodic table from AIR. Periodic columns are derived solely from
     // `periodic_table()` (never committed) and behave like degree-0 constants
     // shared by prover and verifier.
-    let periodic_table = info_span!("collect periodic table").in_scope(|| air.periodic_table());
+    let periodic_table = air.periodic_table();
 
-    // Compute periodic values (compact LDE table)
-    let periodic_on_quotient = info_span!("periodic eval for quotient").in_scope(|| {
-        compute_periodic_on_quotient_eval_domain(&periodic_table, &trace_domain, &quotient_domain)
-    });
+    // Compute periodic values
+    let periodic_on_quotient =
+        compute_periodic_on_quotient_eval_domain(&periodic_table, &trace_domain, &quotient_domain);
 
     // =====================================
     // normal eval section
     // =====================================
-    // We take PackedVal::<SC>::WIDTH values at a time. Pad only when quotient_size < WIDTH.
+    // We take PackedVal::<SC>::WIDTH worth of values at a time from a quotient_size slice, so we need to
+    // pad with default values in the case where quotient_size is smaller than PackedVal::<SC>::WIDTH.
     for _ in quotient_size..PackedVal::<SC>::WIDTH {
         sels.is_first_row.push(Val::<SC>::default());
         sels.is_last_row.push(Val::<SC>::default());
@@ -525,216 +492,134 @@ where
         sels.inv_vanishing.push(Val::<SC>::default());
     }
 
-    // Pre-pack selectors once to avoid slicing per chunk. Each packed entry corresponds to
-    // one `PackedVal::WIDTH` chunk of the quotient domain.
-
-    let chunk_size = PackedVal::<SC>::WIDTH;
-    let packed_is_first_row = PackedVal::<SC>::pack_slice(&sels.is_first_row);
-    let packed_is_last_row = PackedVal::<SC>::pack_slice(&sels.is_last_row);
-    let packed_is_transition = PackedVal::<SC>::pack_slice(&sels.is_transition);
-    let packed_inv_vanishing = PackedVal::<SC>::pack_slice(&sels.inv_vanishing);
-
-    let mut alpha_powers =
-        info_span!("compute alpha powers").in_scope(|| alpha.powers().collect_n(constraint_count));
+    let mut alpha_powers = alpha.powers().collect_n(constraint_count);
     alpha_powers.reverse();
     // alpha powers looks like Vec<EF> ~ Vec<[F; D]>
     // It's useful to also have access to the transpose of this of form [Vec<F>; D].
-    let decomposed_alpha_powers: Vec<_> = info_span!("decompose alpha powers").in_scope(|| {
-        (0..SC::Challenge::DIMENSION)
-            .map(|i| {
-                alpha_powers
-                    .iter()
-                    .map(|x| x.as_basis_coefficients_slice()[i])
-                    .collect()
-            })
-            .collect()
-    });
-
-    // Pack aux bus boundary values
-    let packed_aux_bus_boundary_values: Vec<PackedChallenge<SC>> =
-        info_span!("pack aux bus boundary values").in_scope(|| {
-            aux_bus_boundary_values
+    let decomposed_alpha_powers: Vec<_> = (0..SC::Challenge::DIMENSION)
+        .map(|i| {
+            alpha_powers
                 .iter()
-                .copied()
-                .map(Into::into)
+                .map(|x| x.as_basis_coefficients_slice()[i])
                 .collect()
-        });
+        })
+        .collect();
 
-    // Pack challenges once for constraint evaluation
-    let packed_randomness: Vec<PackedChallenge<SC>> = info_span!("pack randomness")
-        .in_scope(|| randomness.iter().copied().map(Into::into).collect());
-
-    let num_periodic_cols = periodic_on_quotient.width();
-    let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
-    let aux_base_width = aux_trace_on_quotient_domain
-        .as_ref()
-        .map(|aux_trace| aux_trace.width())
-        .unwrap_or(0);
-    let aux_ef_width = aux_base_width / d;
-    let preprocessed_width = preprocessed_on_quotient_domain
-        .as_ref()
-        .map(|preprocessed| preprocessed.width())
-        .unwrap_or(0);
-
-    // Reusable per-chunk buffers to avoid allocations inside the parallel loop.
-    struct ChunkBuffers<SC: StarkGenericConfig> {
-        periodic_values: Vec<PackedVal<SC>>,
-        main_row_pair: Vec<PackedVal<SC>>,
-        aux_base_packed: Vec<PackedVal<SC>>,
-        aux_ef_packed: Vec<PackedChallenge<SC>>,
-        preprocessed_row_pair: Vec<PackedVal<SC>>,
-    }
-
-    impl<SC: StarkGenericConfig> ChunkBuffers<SC> {
-        fn new(
-            num_periodic_cols: usize,
-            main_width: usize,
-            aux_base_width: usize,
-            aux_ef_width: usize,
-            preprocessed_width: usize,
-        ) -> Self {
-            Self {
-                periodic_values: Vec::with_capacity(num_periodic_cols),
-                main_row_pair: Vec::with_capacity(main_width * 2),
-                aux_base_packed: Vec::with_capacity(aux_base_width * 2),
-                aux_ef_packed: Vec::with_capacity(aux_ef_width * 2),
-                preprocessed_row_pair: Vec::with_capacity(preprocessed_width * 2),
-            }
-        }
-    }
-
-    let eval_chunk_into = |buffers: &mut ChunkBuffers<SC>,
-                           i_start: usize,
-                           out_chunk: &mut [SC::Challenge]| {
-        let packed_idx = i_start / PackedVal::<SC>::WIDTH;
-        let is_first_row = packed_is_first_row[packed_idx];
-        let is_last_row = packed_is_last_row[packed_idx];
-        let is_transition = packed_is_transition[packed_idx];
-        let inv_vanishing = packed_inv_vanishing[packed_idx];
-
-        fill_vertically_packed_row_pair::<Val<SC>, PackedVal<SC>>(
-            trace_on_quotient_domain,
-            i_start,
-            next_step,
-            &mut buffers.main_row_pair,
-        );
-        let main = RowMajorMatrixView::new(buffers.main_row_pair.as_slice(), width);
-        let aux = if let Some(aux_trace) = aux_trace_on_quotient_domain {
-            // Aux trace is stored in flattened base field format (each EF element = D base elements)
-            // We need to convert it to packed extension field format.
-            fill_vertically_packed_row_pair::<Val<SC>, PackedVal<SC>>(
-                aux_trace,
-                i_start,
-                next_step,
-                &mut buffers.aux_base_packed,
-            );
-
-            // Convert from packed base field to packed extension field
-            // Each EF element is formed from D consecutive base field elements.
-            buffers.aux_ef_packed.clear();
-            buffers
-                .aux_ef_packed
-                .resize(aux_ef_width * 2, PackedChallenge::<SC>::ZERO);
-            for (slot, base_chunk) in buffers
-                .aux_ef_packed
-                .iter_mut()
-                .zip(buffers.aux_base_packed.chunks_exact(d))
-            {
-                *slot = PackedChallenge::<SC>::from_basis_coefficients_fn(|j| base_chunk[j]);
-            }
-
-            RowMajorMatrixView::new(buffers.aux_ef_packed.as_slice(), aux_ef_width)
-        } else {
-            RowMajorMatrixView::new(&[] as &[PackedChallenge<SC>], 0)
-        };
-
-        let preprocessed = preprocessed_on_quotient_domain.map(|preprocessed| {
-            fill_vertically_packed_row_pair::<Val<SC>, PackedVal<SC>>(
-                preprocessed,
-                i_start,
-                next_step,
-                &mut buffers.preprocessed_row_pair,
-            );
-            RowMajorMatrixView::new(buffers.preprocessed_row_pair.as_slice(), preprocessed_width)
-        });
-
-        // Grab precomputed periodic evaluations for this packed chunk.
-        fill_periodic_values(&periodic_on_quotient, i_start, &mut buffers.periodic_values);
-
-        let accumulator = PackedChallenge::<SC>::ZERO;
-        let mut folder: ProverConstraintFolder<'_, SC> = ProverConstraintFolder {
-            main,
-            aux,
-            preprocessed,
-            public_values,
-            periodic_values: buffers.periodic_values.as_slice(),
-            is_first_row,
-            is_last_row,
-            is_transition,
-            alpha_powers: &alpha_powers,
-            decomposed_alpha_powers: &decomposed_alpha_powers,
-            accumulator,
-            constraint_index: 0,
-            pending_base_start: 0,
-            pending_base_len: 0,
-            pending_base: core::array::from_fn(|_| PackedVal::<SC>::ZERO),
-            packed_randomness: &packed_randomness,
-            aux_bus_boundary_values: &packed_aux_bus_boundary_values,
-        };
-
-        air.eval(&mut folder);
-        folder.flush_pending_base();
-
-        // quotient(x) = constraints(x) / Z_H(x)
-        let quotient = folder.accumulator * inv_vanishing;
-
-        // "Transpose" D packed base coefficients into WIDTH scalar extension coefficients.
-        // NOTE: `quotient_size` is a power of two and `PackedVal::WIDTH` is a power of two, so
-        // this loop is typically over a full chunk. We still guard the tail for correctness.
-        let basis_coeffs = quotient.as_basis_coefficients_slice();
-        let len = core::cmp::min(quotient_size - i_start, out_chunk.len());
-        for (idx_in_packing, c) in out_chunk.iter_mut().enumerate().take(len) {
-            *c = SC::Challenge::from_basis_coefficients_fn(|coeff_idx| {
-                basis_coeffs[coeff_idx].as_slice()[idx_in_packing]
-            });
-        }
-    };
+    let packed_aux_bus_boundary_values: Vec<PackedChallenge<SC>> = aux_bus_boundary_values
+        .iter()
+        .copied()
+        .map(Into::into)
+        .collect();
 
     info_span!("evaluate constraints on quotient domain").in_scope(|| {
-        let mut out = vec![SC::Challenge::default(); quotient_size];
+        (0..quotient_size)
+            .into_par_iter()
+            .step_by(PackedVal::<SC>::WIDTH)
+            .flat_map_iter(|i_start| {
+                let i_range = i_start..i_start + PackedVal::<SC>::WIDTH;
 
-        #[cfg(feature = "parallel")]
-        out.par_chunks_mut(chunk_size).enumerate().for_each_init(
-            || {
-                ChunkBuffers::<SC>::new(
-                    num_periodic_cols,
+                let is_first_row =
+                    *PackedVal::<SC>::from_slice(&sels.is_first_row[i_range.clone()]);
+                let is_last_row = *PackedVal::<SC>::from_slice(&sels.is_last_row[i_range.clone()]);
+                let is_transition =
+                    *PackedVal::<SC>::from_slice(&sels.is_transition[i_range.clone()]);
+                let inv_vanishing =
+                    *PackedVal::<SC>::from_slice(&sels.inv_vanishing[i_range.clone()]);
+
+                let main = RowMajorMatrix::new(
+                    trace_on_quotient_domain
+                        .vertically_packed_row_pair::<PackedVal<SC>>(i_start, next_step),
                     width,
-                    aux_base_width,
-                    aux_ef_width,
-                    preprocessed_width,
+                );
+                let aux = aux_trace_on_quotient_domain.as_ref().map_or_else(
+                    || RowMajorMatrix::new(vec![], 0),
+                    |aux_trace| {
+                        // Aux trace is stored in flattened base field format (each EF element = D base elements)
+                        // We need to convert it to packed extension field format
+                        let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
+                        let base_packed: Vec<PackedVal<SC>> =
+                            aux_trace.vertically_packed_row_pair(i_start, next_step);
+                        let ef_width = aux_trace.width() / d;
+
+                        // Convert from packed base field to packed extension field
+                        // Each EF element is formed from D consecutive base field elements
+                        let ef_packed: Vec<PackedChallenge<SC>> = (0..ef_width * 2)
+                            .map(|i| {
+                                PackedChallenge::<SC>::from_basis_coefficients_fn(|j| {
+                                    base_packed[i * d + j]
+                                })
+                            })
+                            .collect();
+
+                        RowMajorMatrix::new(ef_packed, ef_width)
+                    },
+                );
+
+                let preprocessed = preprocessed_on_quotient_domain.map(|preprocessed| {
+                    let preprocessed_width = preprocessed.width();
+                    RowMajorMatrix::new(
+                        preprocessed.vertically_packed_row_pair::<PackedVal<SC>>(
+                            i_start, next_step,
+                        ),
+                        preprocessed_width,
+                    )
+                });
+
+                // Pack challenges for constraint evaluation
+                let packed_randomness: Vec<PackedChallenge<SC>> =
+                    randomness.iter().copied().map(Into::into).collect();
+
+                // Grab precomputed periodic evaluations for this packed chunk.
+                let periodic_values: Vec<PackedVal<SC>> = if periodic_table.is_empty() {
+                    Vec::new()
+                } else {
+                    let num_cols = periodic_on_quotient.width();
+                    (0..num_cols)
+                        .map(|col_idx| {
+                            PackedVal::<SC>::from_fn(|j| {
+                                periodic_on_quotient.get(i_start + j, col_idx).clone()
+                            })
+                        })
+                        .collect()
+                };
+
+                let accumulator = PackedChallenge::<SC>::ZERO;
+                let mut folder: ProverConstraintFolder<'_, SC> = ProverConstraintFolder {
+                    main: main.as_view(),
+                    aux: aux.as_view(),
+                    preprocessed: preprocessed.as_ref().map(|m| m.as_view()),
+                    public_values,
+                    periodic_values: &periodic_values,
+                    is_first_row,
+                    is_last_row,
+                    is_transition,
+                    alpha_powers: &alpha_powers,
+                    decomposed_alpha_powers: &decomposed_alpha_powers,
+                    accumulator,
+                    constraint_index: 0,
+                    pending_base_start: 0,
+                    pending_base_len: 0,
+                    pending_base: core::array::from_fn(|_| PackedVal::<SC>::ZERO),
+                    packed_randomness,
+                    aux_bus_boundary_values: &packed_aux_bus_boundary_values,
+                };
+
+                air.eval(&mut folder);
+                folder.flush_pending_base();
+
+                // quotient(x) = constraints(x) / Z_H(x)
+                let quotient = folder.accumulator * inv_vanishing;
+
+                // "Transpose" D packed base coefficients into WIDTH scalar extension coefficients.
+                (0..core::cmp::min(quotient_size, PackedVal::<SC>::WIDTH)).map(
+                    move |idx_in_packing| {
+                        SC::Challenge::from_basis_coefficients_fn(|coeff_idx| {
+                            quotient.as_basis_coefficients_slice()[coeff_idx].as_slice()
+                                [idx_in_packing]
+                        })
+                    },
                 )
-            },
-            |buffers, (chunk_idx, out_chunk)| {
-                let i_start = chunk_idx * chunk_size;
-                eval_chunk_into(buffers, i_start, out_chunk);
-            },
-        );
-
-        #[cfg(not(feature = "parallel"))]
-        {
-            let mut buffers = ChunkBuffers::<SC>::new(
-                num_periodic_cols,
-                width,
-                aux_base_width,
-                aux_ef_width,
-                preprocessed_width,
-            );
-            for (chunk_idx, out_chunk) in out.chunks_mut(chunk_size).enumerate() {
-                let i_start = chunk_idx * chunk_size;
-                eval_chunk_into(&mut buffers, i_start, out_chunk);
-            }
-        }
-
-        out
+            })
+            .collect()
     })
 }
