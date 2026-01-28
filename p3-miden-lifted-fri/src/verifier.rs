@@ -4,36 +4,35 @@
 
 use alloc::vec::Vec;
 
-use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
+use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_lmcs::Lmcs;
+use p3_miden_transcript::VerifierChannel;
 use thiserror::Error;
 
 use crate::PcsParams;
 use crate::deep::DeepError;
+use crate::deep::DeepEvals;
 use crate::deep::verifier::DeepOracle;
 use crate::fri::FriError;
 use crate::fri::verifier::FriOracle;
-use crate::proof::Proof;
-use crate::utils::MatrixGroupEvals;
 
-/// Verify polynomial evaluation claims against commitments.
+/// Verify polynomial evaluation claims against commitments using a verifier channel.
 ///
-/// Returns `Ok(evals)` where `evals[point_idx][commit_idx]` contains the verified evaluations.
-pub fn verify<F, EF, L, Challenger, const N: usize>(
+/// Returns `Ok(evals)` where each group/matrix is a row-major matrix with one row per point.
+pub fn verify_with_channel<F, EF, L, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
     commitments: &[(L::Commitment, Vec<usize>)],
     log_max_height: usize,
     eval_points: [EF; N],
-    proof: &Proof<F, EF, L, Challenger::Witness>,
-    challenger: &mut Challenger,
-) -> Result<Vec<Vec<MatrixGroupEvals<EF>>>, PcsError>
+    channel: &mut Ch,
+) -> Result<DeepEvals<EF>, PcsError>
 where
     F: TwoAdicField,
-    EF: ExtensionField<F>,
+    EF: ExtensionField<F> + PartialEq + Clone,
     L: Lmcs<F = F>,
-    Challenger: FieldChallenger<F> + CanObserve<L::Commitment> + GrindingChallenger,
+    Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
     // Validate we have commitments
     if commitments.is_empty() {
@@ -43,52 +42,44 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // Construct verifier's DEEP oracle (observes evals, checks PoW, samples α/β)
     // ─────────────────────────────────────────────────────────────────────────
-    let deep_oracle = DeepOracle::<F, EF, L>::new(
+    let (deep_oracle, evals) = DeepOracle::<F, EF, L>::new(
         &params.deep,
-        eval_points,
-        &proof.evals,
+        &eval_points,
         commitments.to_vec(),
         log_max_height,
-        challenger,
-        &proof.deep_proof,
+        channel,
     )?;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Create FRI oracle (observes commitments + final poly, checks per-round PoW)
     // ─────────────────────────────────────────────────────────────────────────
-    let fri_oracle = FriOracle::new(&proof.fri_proof, challenger, params.fri.proof_of_work_bits)?;
+    let fri_oracle = FriOracle::new(&params.fri, log_max_height, channel)?;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Check query PoW witness and sample query indices
     // ─────────────────────────────────────────────────────────────────────────
-    if !challenger.check_witness(params.query_proof_of_work_bits, proof.query_pow_witness) {
+    if channel.grind(params.query_proof_of_work_bits).is_none() {
         return Err(PcsError::InvalidQueryPowWitness);
     }
 
     let query_indices: Vec<usize> = (0..params.num_queries)
-        .map(|_| challenger.sample_bits(log_max_height))
+        .map(|_| channel.sample_bits(log_max_height))
         .collect();
 
     // ─────────────────────────────────────────────────────────────────────────
     // Verify DEEP openings for all queries at once
     // ─────────────────────────────────────────────────────────────────────────
-    let deep_evals = deep_oracle.open_batch(lmcs, &query_indices, &proof.trace_query_proofs)?;
+    let deep_evals = deep_oracle.open_batch(lmcs, &query_indices, channel)?;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Test low-degree proximity for all queries at once
     // ─────────────────────────────────────────────────────────────────────────
-    fri_oracle.test_low_degree(
-        lmcs,
-        &params.fri,
-        &query_indices,
-        &deep_evals,
-        &proof.fri_query_proofs,
-    )?;
+    fri_oracle.test_low_degree(lmcs, &params.fri, &query_indices, &deep_evals, channel)?;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Return verified evaluations
     // ─────────────────────────────────────────────────────────────────────────
-    Ok(proof.evals.clone())
+    Ok(evals)
 }
 
 // ============================================================================

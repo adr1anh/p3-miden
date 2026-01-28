@@ -23,16 +23,15 @@
 //! After each fold, we shift off `log_arity` bits, moving to the parent coset.
 
 use alloc::vec::Vec;
-use core::iter::zip;
 
-use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
-use p3_field::{ExtensionField, TwoAdicField};
+use p3_challenger::CanSample;
+use p3_field::{BasedVectorSpace, ExtensionField, TwoAdicField};
 use p3_miden_lmcs::{Lmcs, LmcsError};
+use p3_miden_transcript::VerifierChannel;
 use p3_util::reverse_bits_len;
 use thiserror::Error;
 
 use crate::fri::FriParams;
-use crate::fri::proof::FriProof;
 
 /// FRI low-degree test oracle.
 ///
@@ -48,82 +47,76 @@ where
     EF: ExtensionField<F>,
     L: Lmcs<F = F>,
 {
-    /// Merkle commitments for each folding round.
-    commitments: Vec<L::Commitment>,
-    /// Folding challenges β for each round.
-    betas: Vec<EF>,
+    /// Per-round commitment and folding challenge.
+    rounds: Vec<FriRoundOracle<L::Commitment, EF>>,
     /// Coefficients of the final low-degree polynomial.
     final_poly: Vec<EF>,
+}
+
+struct FriRoundOracle<Commitment, EF> {
+    commitment: Commitment,
+    beta: EF,
 }
 
 impl<F, EF, L> FriOracle<F, EF, L>
 where
     F: TwoAdicField,
-    EF: ExtensionField<F>,
+    EF: ExtensionField<F> + Clone,
     L: Lmcs<F = F>,
 {
-    /// Create oracle from FRI proof, checking per-round PoW witnesses.
-    pub fn new<Challenger>(
-        proof: &FriProof<EF, L, Challenger::Witness>,
-        challenger: &mut Challenger,
-        proof_of_work_bits: usize,
+    /// Create oracle by reading from a verifier channel.
+    pub fn new<Ch>(
+        params: &FriParams,
+        log_domain_size: usize,
+        channel: &mut Ch,
     ) -> Result<Self, FriError>
     where
-        L::Commitment: Clone,
-        Challenger: FieldChallenger<F> + CanObserve<L::Commitment> + GrindingChallenger,
+        Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F>,
     {
-        // Validate structure: witnesses count must match commitments count
-        if proof.pow_witnesses.len() != proof.commitments.len() {
-            return Err(FriError::InvalidProofStructure);
-        }
+        let num_rounds = params.num_rounds(log_domain_size);
+        let mut rounds = Vec::with_capacity(num_rounds);
 
-        // 1. For each round: observe commitment, check witness, sample beta
-        let mut betas = Vec::with_capacity(proof.commitments.len());
-        for (commit, &witness) in zip(&proof.commitments, &proof.pow_witnesses) {
-            challenger.observe(commit.clone());
+        for _ in 0..num_rounds {
+            let commitment = channel
+                .receive_commitment()
+                .ok_or(FriError::InvalidProofStructure)?
+                .clone();
 
-            // Check grinding witness for this round
-            if !challenger.check_witness(proof_of_work_bits, witness) {
+            if channel.grind(params.proof_of_work_bits).is_none() {
                 return Err(FriError::InvalidPowWitness);
             }
 
-            let beta: EF = challenger.sample_algebra_element();
-            betas.push(beta);
+            let beta: EF = channel.sample_algebra_element();
+            rounds.push(FriRoundOracle { commitment, beta });
         }
 
-        // 2. Observe final polynomial coefficients
-        for &coeff in &proof.final_poly {
-            challenger.observe_algebra_element(coeff);
-        }
+        let final_degree = params.final_poly_degree(log_domain_size);
+        let final_poly = channel
+            .receive_algebra_slice(final_degree)
+            .ok_or(FriError::InvalidProofStructure)?;
 
-        Ok(Self {
-            commitments: proof.commitments.clone(),
-            betas,
-            final_poly: proof.final_poly.clone(),
-        })
+        Ok(Self { rounds, final_poly })
     }
 
-    /// Test low-degree proximity by checking all folding rounds in batch.
-    pub fn test_low_degree(
+    /// Test low-degree proximity by reading openings from a verifier channel.
+    pub fn test_low_degree<Ch>(
         &self,
         lmcs: &L,
         params: &FriParams,
         indices: &[usize],
         initial_evals: &[EF],
-        round_proofs: &[L::Proof],
-    ) -> Result<(), FriError> {
-        // Verify the proof has the expected structure
-        if round_proofs.len() != self.commitments.len() {
-            return Err(FriError::InvalidProofStructure);
-        }
+        channel: &mut Ch,
+    ) -> Result<(), FriError>
+    where
+        Ch: VerifierChannel<F = F, Commitment = L::Commitment>,
+    {
+        let log_arity = params.fold.log_arity();
+        let arity = params.fold.arity();
+        let mut log_domain_size = self.log_domain_size(params);
 
         if indices.len() != initial_evals.len() {
             return Err(FriError::InvalidProofStructure);
         }
-
-        let log_arity = params.fold.log_arity();
-        let arity = params.fold.arity();
-        let mut log_domain_size = self.log_domain_size(params);
 
         // Track current indices and evals for each query
         let mut current_indices: Vec<usize> = indices.to_vec();
@@ -133,9 +126,7 @@ where
         let mut g_inv = F::two_adic_generator(log_domain_size).inverse();
 
         // Verify each round
-        for (round_idx, (commitment, round_proof)) in
-            zip(&self.commitments, round_proofs).enumerate()
-        {
+        for (round_idx, round) in self.rounds.iter().enumerate() {
             let log_num_rows = log_domain_size.saturating_sub(log_arity);
 
             // Compute row indices for this round
@@ -145,14 +136,17 @@ where
                 .collect();
 
             // Verify LMCS opening - dimensions are flattened (EF elements stored as F)
-            let widths = [arity * EF::DIMENSION];
+            let widths = [arity * <EF as BasedVectorSpace<F>>::DIMENSION];
 
             let opened_rows = lmcs
-                .open_batch(commitment, &widths, log_num_rows, &row_indices, round_proof)
+                .open_batch(
+                    &round.commitment,
+                    &widths,
+                    log_num_rows,
+                    &row_indices,
+                    channel,
+                )
                 .map_err(|e| FriError::LmcsError(e, round_idx))?;
-
-            // Verify folding consistency for each query
-            let beta = self.betas[round_idx];
 
             for (query_idx, ((&current_idx, &row_idx), current_eval)) in current_indices
                 .iter()
@@ -161,7 +155,7 @@ where
                 .enumerate()
             {
                 // Get the opened row for this query (first matrix, since FRI only has one)
-                let flat_row = opened_rows[query_idx][0];
+                let flat_row = &opened_rows[query_idx][0];
 
                 // Reconstruct extension field values from flattened base field
                 let row: Vec<EF> = EF::reconstitute_from_base(flat_row.to_vec());
@@ -181,7 +175,7 @@ where
                 let s_inv = g_inv.exp_u64(reverse_bits_len(row_idx, log_num_rows) as u64);
 
                 // Fold: interpolate f on coset and evaluate at β
-                *current_eval = params.fold.fold_evals(&row, s_inv, beta);
+                *current_eval = params.fold.fold_evals(&row, s_inv, round.beta);
             }
 
             // Update indices and domain size for next round
@@ -216,8 +210,7 @@ where
     #[inline]
     fn log_domain_size(&self, params: &FriParams) -> usize {
         let log_final_poly_degree = self.final_poly.len().trailing_zeros() as usize;
-        let log_max_degree =
-            self.commitments.len() * params.fold.log_arity() + log_final_poly_degree;
+        let log_max_degree = self.rounds.len() * params.fold.log_arity() + log_final_poly_degree;
         log_max_degree + params.log_blowup
     }
 }

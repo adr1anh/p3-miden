@@ -88,7 +88,8 @@ use p3_maybe_rayon::prelude::*;
 use p3_util::linear_map::LinearMap;
 use p3_util::{flatten_to_base, log2_strict_usize, reconstitute_from_base};
 
-use crate::utils::{MatrixExt, MatrixGroupEvals};
+use crate::deep::{BatchedEvals, BatchedGroupEvals};
+use crate::utils::MatrixExt;
 
 /// Precomputed `1/(zⱼ - xᵢ)` for N evaluation points, enabling batched O(n) barycentric
 /// evaluation and DEEP quotient construction.
@@ -128,7 +129,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
 
     /// Evaluate all matrix columns at `[z₀ʳ, z₁ʳ, ..., z_{N-1}ʳ]` where `r = domain_size / matrix_height`.
     ///
-    /// Returns evaluations grouped by commitment: `result[group_idx][matrix_idx][col_idx]`
+    /// Returns evaluations grouped by commitment: `groups[group_idx][matrix_idx][col_idx]`
     /// where each element is a `FieldArray<EF, N>` containing evaluations at all N points.
     /// This batches N evaluation points together, using `columnwise_dot_product_batched<N>`
     /// for better cache utilization than N separate calls.
@@ -137,7 +138,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
         matrices_groups: &[Vec<&M>],
         coset_points: &[F],
         log_blowup: usize,
-    ) -> Vec<MatrixGroupEvals<FieldArray<EF, N>>> {
+    ) -> BatchedEvals<EF, N> {
         let n = coset_points.len();
         let d = n >> log_blowup;
         let log_d = log2_strict_usize(d);
@@ -190,7 +191,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
         // f(z_j^r) = s_j(z_j) · Σ w_{i,j}(z_j) · f(x_i)
         // For each group, evaluate at all N points using columnwise_dot_product_batched
         // Returns Vec<[EF; N]> where result[col][point] = eval of column col at point point
-        matrices_groups
+        let groups = matrices_groups
             .iter()
             .map(|group| {
                 // Evaluate each matrix in the group at all N points
@@ -205,9 +206,11 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
                         results
                     })
                     .collect();
-                MatrixGroupEvals::new(group_evals)
+                BatchedGroupEvals::new(group_evals)
             })
-            .collect()
+            .collect();
+
+        BatchedEvals::new(groups)
     }
 }
 
@@ -292,7 +295,13 @@ mod tests {
             );
             // Extract the single-point evaluations from FieldArray<EF, 1>
             // Skip the dummy matrix (index 0), use the test matrix (index 1)
-            let our_evals: Vec<EF> = result[0].0[1].iter().map(|arr| arr[0]).collect();
+            let group = &result.groups()[0];
+            let our_evals: Vec<EF> = group
+                .matrix(1)
+                .expect("test matrix present")
+                .iter()
+                .map(|arr| arr[0])
+                .collect();
 
             // Standard interpolation on the lifted coset
             let expected_evals = interpolate_coset(&evals_std, lifted_shift, z_lifted);
@@ -350,7 +359,13 @@ mod tests {
         // Our barycentric evaluation (no lifting since lde_height = n)
         let result = quotient.batch_eval_lifted(&[vec![&evals_br]], &coset_points_br, log_blowup);
         // Extract the single-point evaluations from FieldArray<EF, 1>
-        let our_evals: Vec<EF> = result[0].0[0].iter().map(|arr| arr[0]).collect();
+        let group = &result.groups()[0];
+        let our_evals: Vec<EF> = group
+            .matrix(0)
+            .expect("matrix present")
+            .iter()
+            .map(|arr| arr[0])
+            .collect();
 
         // Convert our diff_invs from bit-reversed to standard order for precomputation
         let mut diff_invs_std: Vec<EF> = quotient.point_quotient[..lde_height]
@@ -438,16 +453,17 @@ mod tests {
             assert_eq!(sq2_q[0], mq_q[1], "point_quotient mismatch at {i} for z2");
         }
 
-        // Verify batch_eval_lifted results match
-        // multi_evals[group][point] vs single_evals[point][group]
-        // Now single_evals contain FieldArray<EF, 1>, multi_evals contain FieldArray<EF, 2>
-        for (group_idx, multi_group) in multi_evals.iter().enumerate() {
-            let single_group1 = &single_evals1[group_idx];
-            let single_group2 = &single_evals2[group_idx];
+        // Verify batch_eval_lifted results match.
+        // Single-point evals have FieldArray<EF, 1>; multi-point evals have FieldArray<EF, 2>.
+        for (group_idx, multi_group) in multi_evals.groups().iter().enumerate() {
+            let single_group1 = &single_evals1.groups()[group_idx];
+            let single_group2 = &single_evals2.groups()[group_idx];
 
             // Compare point 0 (z1)
-            for (matrix_idx, (multi_mat, single_mat)) in
-                multi_group.0.iter().zip(single_group1.0.iter()).enumerate()
+            for (matrix_idx, (multi_mat, single_mat)) in multi_group
+                .iter_matrices()
+                .zip(single_group1.iter_matrices())
+                .enumerate()
             {
                 assert_eq!(
                     multi_mat.len(),
@@ -463,8 +479,10 @@ mod tests {
             }
 
             // Compare point 1 (z2)
-            for (matrix_idx, (multi_mat, single_mat)) in
-                multi_group.0.iter().zip(single_group2.0.iter()).enumerate()
+            for (matrix_idx, (multi_mat, single_mat)) in multi_group
+                .iter_matrices()
+                .zip(single_group2.iter_matrices())
+                .enumerate()
             {
                 assert_eq!(
                     multi_mat.len(),

@@ -4,26 +4,29 @@
 //! [`HidingLmcsConfig`] for integration with FRI and other proof systems.
 
 use alloc::vec::Vec;
+use core::iter::zip;
 
 use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::PackedValue;
 use p3_matrix::{Dimensions, Matrix};
 use p3_miden_stateful_hasher::StatefulHasher;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
-use p3_util::log2_strict_usize;
+use p3_util::log2_ceil_usize;
 use rand::Rng;
 use rand::distr::{Distribution, StandardUniform};
 use serde::{Deserialize, Serialize};
 
+use crate::LmcsTree;
 use crate::lifted_tree::LiftedMerkleTree;
+use crate::utils::digest_rows_and_salt;
 use crate::{HidingLmcsConfig, Lmcs, LmcsConfig, LmcsError};
 
 // ============================================================================
 // Mmcs implementation for LmcsConfig (non-hiding)
 // ============================================================================
 
-impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize> Mmcs<PF::Value>
-    for LmcsConfig<PF, PD, H, C, WIDTH, DIGEST_ELEMS>
+impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
+    Mmcs<PF::Value> for LmcsConfig<PF, PD, H, C, WIDTH, DIGEST_ELEMS, SALT_ELEMS>
 where
     PF: PackedValue + Default,
     PD: PackedValue + Default,
@@ -34,11 +37,13 @@ where
     C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>
         + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
         + Sync,
+    [PF::Value; SALT_ELEMS]: Serialize + for<'de> Deserialize<'de>,
     [PD::Value; DIGEST_ELEMS]: Serialize + for<'de> Deserialize<'de>,
 {
-    type ProverData<M> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST_ELEMS, 0>;
+    type ProverData<M> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST_ELEMS, SALT_ELEMS>;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST_ELEMS>;
-    type Proof = Vec<[PD::Value; DIGEST_ELEMS]>;
+    /// Proof includes salt and siblings: `([F; SALT_ELEMS], Vec<[D; DIGEST_ELEMS]>)`
+    type Proof = ([PF::Value; SALT_ELEMS], Vec<[PD::Value; DIGEST_ELEMS]>);
     type Error = LmcsError;
 
     fn commit<M: Matrix<PF::Value>>(
@@ -60,10 +65,13 @@ where
             "index {index} out of range {final_height}"
         );
 
-        let opened_rows = tree.rows(index);
-        let proof = tree.authentication_path(index);
+        let crate::Proof {
+            rows,
+            salt,
+            siblings,
+        } = tree.single_proof(index);
 
-        BatchOpening::new(opened_rows, proof)
+        BatchOpening::new(rows, (salt, siblings))
     }
 
     fn get_matrices<'a, M: Matrix<PF::Value>>(&self, tree: &'a Self::ProverData<M>) -> Vec<&'a M> {
@@ -77,34 +85,54 @@ where
         index: usize,
         batch_opening: BatchOpeningRef<'_, PF::Value, Self>,
     ) -> Result<(), Self::Error> {
-        let (opened_values, opening_proof) = batch_opening.unpack();
+        let (rows, (salt, siblings)) = batch_opening.unpack();
 
         // Convert dimensions to widths + log_max_height for internal use.
         let widths: Vec<usize> = dimensions.iter().map(|d| d.width).collect();
-        let log_max_height = dimensions
-            .last()
-            .map(|d| log2_strict_usize(d.height))
-            .unwrap_or(0);
-
-        let opening = crate::Opening {
-            rows: opened_values.to_vec(),
-            salt: [],
-        };
-        let expected_root = compute_root(
-            &self.sponge,
-            &self.compress,
-            &opening,
-            index,
-            &widths,
-            log_max_height,
-            opening_proof,
-        )?;
-
-        if &expected_root == commit {
-            Ok(())
-        } else {
-            Err(LmcsError::RootMismatch)
+        if batch_opening.opened_values.len() != widths.len() {
+            return Err(LmcsError::InvalidProof);
         }
+        for (row, &width) in zip(batch_opening.opened_values, &widths) {
+            if row.len() != width {
+                return Err(LmcsError::InvalidProof);
+            }
+        }
+
+        let leaf_digest =
+            digest_rows_and_salt(&self.sponge, rows.iter().map(|row| row.as_slice()), salt);
+
+        let max_height = dimensions
+            .iter()
+            .map(|d| d.height)
+            .max()
+            .ok_or(LmcsError::InvalidProof)?;
+        let log_max_height = log2_ceil_usize(max_height);
+        if siblings.len() != log_max_height {
+            return Err(LmcsError::InvalidProof);
+        }
+
+        let computed_root = {
+            let mut current = leaf_digest;
+            let mut pos = index;
+
+            for sibling_digest in siblings {
+                let is_left = pos & 1 == 0;
+                current = if is_left {
+                    self.compress.compress([current, *sibling_digest])
+                } else {
+                    self.compress.compress([*sibling_digest, current])
+                };
+                pos >>= 1;
+            }
+
+            current
+        };
+
+        if Hash::from(computed_root) != *commit {
+            return Err(LmcsError::RootMismatch);
+        }
+
+        Ok(())
     }
 }
 
@@ -148,21 +176,18 @@ where
         index: usize,
         tree: &Self::ProverData<M>,
     ) -> BatchOpening<PF::Value, Self> {
-        let final_height = tree.height();
-        assert!(
-            index < final_height,
-            "index {index} out of range {final_height}"
-        );
-
-        let opened_rows = tree.rows(index);
-        let siblings = tree.authentication_path(index);
-        let salt = tree.salt(index);
-
-        BatchOpening::new(opened_rows, (salt, siblings))
+        let BatchOpening {
+            opened_values,
+            opening_proof,
+        } = Mmcs::open_batch(&self.inner, index, tree);
+        BatchOpening {
+            opened_values,
+            opening_proof,
+        }
     }
 
     fn get_matrices<'a, M: Matrix<PF::Value>>(&self, tree: &'a Self::ProverData<M>) -> Vec<&'a M> {
-        tree.leaves.iter().collect()
+        self.inner.get_matrices(tree)
     }
 
     fn verify_batch(
@@ -172,84 +197,11 @@ where
         index: usize,
         batch_opening: BatchOpeningRef<'_, PF::Value, Self>,
     ) -> Result<(), Self::Error> {
-        let (opened_values, (salt, siblings)) = batch_opening.unpack();
-
-        // Convert dimensions to widths + log_max_height for internal use.
-        let widths: Vec<usize> = dimensions.iter().map(|d| d.width).collect();
-        let log_max_height = dimensions
-            .last()
-            .map(|d| log2_strict_usize(d.height))
-            .unwrap_or(0);
-
-        let opening = crate::Opening {
-            rows: opened_values.to_vec(),
-            salt: *salt,
+        let batch_opening = BatchOpeningRef {
+            opened_values: batch_opening.opened_values,
+            opening_proof: batch_opening.opening_proof,
         };
-        let expected_root = compute_root(
-            &self.inner.sponge,
-            &self.inner.compress,
-            &opening,
-            index,
-            &widths,
-            log_max_height,
-            siblings,
-        )?;
-
-        if &expected_root == commit {
-            Ok(())
-        } else {
-            Err(LmcsError::RootMismatch)
-        }
+        self.inner
+            .verify_batch(commit, dimensions, index, batch_opening)
     }
-}
-
-// ============================================================================
-// Internal Helpers for MMCS verify_batch
-// ============================================================================
-
-/// Recompute the Merkle root from an opening and authentication path.
-///
-/// This is used by the MMCS implementation which uses simple authentication paths
-/// (not the full `Proof` type which includes opening data).
-fn compute_root<
-    F,
-    D,
-    H,
-    C,
-    const WIDTH: usize,
-    const DIGEST_ELEMS: usize,
-    const SALT_ELEMS: usize,
->(
-    sponge: &H,
-    compress: &C,
-    opening: &crate::Opening<F, SALT_ELEMS>,
-    index: usize,
-    widths: &[usize],
-    log_max_height: usize,
-    proof: &[[D; DIGEST_ELEMS]],
-) -> Result<Hash<F, D, DIGEST_ELEMS>, LmcsError>
-where
-    F: Default + Copy,
-    D: Default + Copy,
-    H: StatefulHasher<F, [D; DIGEST_ELEMS], State = [D; WIDTH]>,
-    C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>,
-{
-    if proof.len() != log_max_height {
-        return Err(LmcsError::WrongProofLen);
-    }
-
-    let mut digest = opening.digest::<D, H, WIDTH, DIGEST_ELEMS>(sponge, widths)?;
-
-    let mut current_index = index;
-    for sibling in proof {
-        let (left, right) = if current_index & 1 == 0 {
-            (digest, *sibling)
-        } else {
-            (*sibling, digest)
-        };
-        digest = compress.compress([left, right]);
-        current_index >>= 1;
-    }
-
-    Ok(digest.into())
 }

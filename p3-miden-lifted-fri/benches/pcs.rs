@@ -42,7 +42,8 @@ use p3_miden_dev_utils::{
 use p3_miden_lifted_fri::deep::DeepParams;
 use p3_miden_lifted_fri::fri::{FriFold, FriParams};
 use p3_miden_lifted_fri::{PcsParams, prover as lifted_prover};
-use p3_miden_lmcs::Lmcs;
+use p3_miden_lmcs::{Lmcs, LmcsTree};
+use p3_miden_transcript::ProverTranscript;
 use utils::LmcsScenario;
 
 // =============================================================================
@@ -226,17 +227,18 @@ macro_rules! bench_scenario {
                                 challenger.observe(commitment.clone());
                                 let z1: EF = challenger.sample_algebra_element();
                                 let z2: EF = challenger.sample_algebra_element();
+                                let mut channel = ProverTranscript::new(challenger);
 
                                 // Wrap single tree in slice for multi-tree API
                                 let trace_trees: &[&_] = &[&tree];
-                                let proof = lifted_prover::open::<F, EF, _, _, Challenger, 2>(
+                                lifted_prover::open_with_channel::<F, EF, _, _, _, 2>(
                                     &params,
                                     &lmcs,
                                     [z1, z2],
                                     trace_trees,
-                                    &mut challenger,
+                                    &mut channel,
                                 );
-                                black_box(proof)
+                                black_box(channel.into_data())
                             });
                         });
                     }

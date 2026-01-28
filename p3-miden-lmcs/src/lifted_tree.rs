@@ -2,14 +2,14 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::{array, mem};
 
-use crate::batch_proof::BatchProof;
-use crate::opening::Opening;
 use crate::utils::PackedValueExt;
+use crate::{LmcsTree, Proof};
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 use p3_miden_stateful_hasher::StatefulHasher;
+use p3_miden_transcript::ProverChannel;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
@@ -79,10 +79,109 @@ pub struct LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS
 }
 
 impl<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
+    LmcsTree<F, Hash<F, D, DIGEST_ELEMS>, M> for LiftedMerkleTree<F, D, M, DIGEST_ELEMS, SALT_ELEMS>
+where
+    F: Copy + Default + PartialEq + Send + Sync,
+    D: Copy + Default + PartialEq + Send + Sync,
+    M: Matrix<F>,
+{
+    fn root(&self) -> Hash<F, D, DIGEST_ELEMS> {
+        self.digest_layers.last().unwrap()[0].into()
+    }
+
+    fn height(&self) -> usize {
+        self.leaves.last().unwrap().height()
+    }
+
+    fn leaves(&self) -> &[M] {
+        &self.leaves
+    }
+
+    fn rows(&self, index: usize) -> Vec<Vec<F>> {
+        let max_height = self.height();
+
+        self.leaves
+            .iter()
+            .map(|m| {
+                let height = m.height();
+                let log_scaling_factor = log2_strict_usize(max_height / height);
+                let row_index = index >> log_scaling_factor;
+                m.row_slice(row_index)
+                    .expect("row_index must be valid after upsampling")
+                    .to_vec()
+            })
+            .collect()
+    }
+
+    fn prove_batch<Ch>(&self, indices: &[usize], channel: &mut Ch)
+    where
+        Ch: ProverChannel<F = F, Commitment = Hash<F, D, DIGEST_ELEMS>>,
+    {
+        use alloc::collections::BTreeSet;
+
+        let final_height = self.leaves.last().unwrap().height();
+        let depth = log2_strict_usize(final_height);
+
+        // Validate indices
+        for &index in indices {
+            assert!(
+                index < final_height,
+                "index {index} out of range {final_height}"
+            );
+        }
+
+        for &idx in indices {
+            for m in &self.leaves {
+                let height = m.height();
+                let log_scaling_factor = log2_strict_usize(final_height / height);
+                let row_index = idx >> log_scaling_factor;
+                let row = m
+                    .row_slice(row_index)
+                    .expect("row_index must be valid after upsampling");
+                channel.hint_field_slice(&row);
+            }
+            if SALT_ELEMS > 0 {
+                let salt = self.salt(idx);
+                channel.hint_field_slice(&salt);
+            }
+        }
+
+        let mut known: BTreeSet<usize> = indices.iter().copied().collect();
+
+        // Walk up the tree level by level
+        for layer_idx in 0..depth {
+            let mut parents = BTreeSet::new();
+
+            // BTreeSet iterates in sorted order (left-to-right)
+            for &pos in &known {
+                let parent_pos = pos / 2;
+                if !parents.insert(parent_pos) {
+                    continue; // Already processed this pair
+                }
+
+                let left_pos = parent_pos * 2;
+                let right_pos = left_pos + 1;
+                let have_left = known.contains(&left_pos);
+                let have_right = known.contains(&right_pos);
+
+                // Add sibling hash if exactly one child is known
+                if have_left && !have_right {
+                    channel.hint_commitment(Hash::from(self.digest_layers[layer_idx][right_pos]));
+                } else if !have_left && have_right {
+                    channel.hint_commitment(Hash::from(self.digest_layers[layer_idx][left_pos]));
+                }
+            }
+
+            known = parents;
+        }
+    }
+}
+
+impl<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
     LiftedMerkleTree<F, D, M, DIGEST_ELEMS, SALT_ELEMS>
 where
-    F: Copy + Default + Send + Sync,
-    D: Copy + PartialEq + Send + Sync,
+    F: Copy + Default + PartialEq + Send + Sync,
+    D: Copy + Default + PartialEq + Send + Sync,
     M: Matrix<F>,
 {
     /// Internal builder for creating trees with optional salt.
@@ -141,67 +240,24 @@ where
         }
     }
 
-    /// Return the root digest of the tree.
-    #[must_use]
-    pub fn root(&self) -> Hash<F, D, DIGEST_ELEMS> {
-        self.digest_layers.last().unwrap()[0].into()
-    }
-
-    /// Return the height of the tree (number of leaves).
-    #[must_use]
-    pub fn height(&self) -> usize {
-        self.leaves.last().unwrap().height()
-    }
-
-    /// Extract the opened rows for a given leaf index (with nearest-neighbor upsampling).
-    pub fn rows(&self, index: usize) -> Vec<Vec<F>> {
-        let max_height = self.height();
-
-        self.leaves
-            .iter()
-            .map(|m| {
-                let height = m.height();
-                let log_scaling_factor = log2_strict_usize(max_height / height);
-                let row_index = index >> log_scaling_factor;
-                m.row_slice(row_index)
-                    .expect("row_index must be valid after upsampling")
-                    .to_vec()
-            })
-            .collect()
-    }
-
-    /// Extract the Merkle authentication path (sibling digests) for the given leaf index.
-    ///
-    /// Returns a vector of sibling digests, one per tree layer, ordered from leaf layer upward.
-    /// Does not include the root digest (since the path terminates there).
-    ///
-    /// - `index`: the leaf index for which to extract the authentication path.
-    pub fn authentication_path(&self, index: usize) -> Vec<[D; DIGEST_ELEMS]> {
-        let mut layers = Vec::with_capacity(self.digest_layers.len().saturating_sub(1));
+    /// Build a full opening proof for a single leaf index.
+    pub fn single_proof(&self, index: usize) -> Proof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
+        let mut siblings = Vec::with_capacity(self.digest_layers.len().saturating_sub(1));
         let mut layer_index = index;
         for layer in &self.digest_layers {
             if layer.len() == 1 {
                 break;
             }
             let sibling = layer[layer_index ^ 1];
-            layers.push(sibling);
+            siblings.push(sibling);
             layer_index >>= 1;
         }
-        layers
-    }
 
-    /// Extract authentication paths for multiple indices at once.
-    ///
-    /// This is more efficient than calling [`authentication_path`](Self::authentication_path)
-    /// multiple times when opening multiple leaves. The paths can be further deduplicated
-    /// into a [`BatchProof`](crate::BatchProof) for serialization.
-    ///
-    /// Returns a vector of `(index, path)` pairs in the same order as the input indices.
-    pub fn authentication_paths(&self, indices: &[usize]) -> Vec<(usize, Vec<[D; DIGEST_ELEMS]>)> {
-        indices
-            .iter()
-            .map(|&index| (index, self.authentication_path(index)))
-            .collect()
+        Proof {
+            rows: self.rows(index),
+            salt: self.salt(index),
+            siblings,
+        }
     }
 
     /// Extract the salt for the given leaf index.
@@ -227,68 +283,6 @@ where
             }
         }
     }
-
-    /// Generate a compact batch proof for multiple indices (need not be sorted).
-    pub fn prove_batch(&self, indices: &[usize]) -> BatchProof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
-        use alloc::collections::BTreeSet;
-
-        let final_height = self.height();
-        let depth = log2_strict_usize(final_height);
-
-        // Validate indices
-        for &index in indices {
-            assert!(
-                index < final_height,
-                "index {index} out of range {final_height}"
-            );
-        }
-
-        // Build compact siblings in canonical order (left-to-right, bottom-to-top).
-        // Start with leaf positions as "known".
-        let mut known: BTreeSet<usize> = indices.iter().copied().collect();
-        let mut siblings: Vec<[D; DIGEST_ELEMS]> = Vec::new();
-
-        // Walk up the tree level by level
-        for layer_idx in 0..depth {
-            let mut parents = BTreeSet::new();
-
-            // BTreeSet iterates in sorted order (left-to-right)
-            for &pos in &known {
-                let parent_pos = pos / 2;
-                if parents.contains(&parent_pos) {
-                    continue; // Already processed this pair
-                }
-
-                let left_pos = parent_pos * 2;
-                let right_pos = left_pos + 1;
-                let have_left = known.contains(&left_pos);
-                let have_right = known.contains(&right_pos);
-
-                // Add sibling hash if exactly one child is known
-                if have_left && !have_right {
-                    siblings.push(self.digest_layers[layer_idx][right_pos]);
-                } else if !have_left && have_right {
-                    siblings.push(self.digest_layers[layer_idx][left_pos]);
-                }
-
-                parents.insert(parent_pos);
-            }
-
-            known = parents;
-        }
-
-        // Build Opening instances for each query
-        let openings = indices
-            .iter()
-            .map(|&idx| {
-                let rows = self.rows(idx);
-                let salt = self.salt(idx);
-                Opening { rows, salt }
-            })
-            .collect();
-
-        BatchProof { openings, siblings }
-    }
 }
 
 /// Build leaf states using the upsampled view (nearest-neighbor upsampling).
@@ -307,14 +301,7 @@ where
 /// - `P::WIDTH` is a power of two.
 ///
 /// Panics in debug builds if preconditions are violated.
-pub(crate) fn build_leaf_states_upsampled<
-    PF,
-    PD,
-    M,
-    H,
-    const WIDTH: usize,
-    const DIGEST_ELEMS: usize,
->(
+fn build_leaf_states_upsampled<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     matrices: &[M],
     sponge: &H,
 ) -> Vec<[PD::Value; WIDTH]>

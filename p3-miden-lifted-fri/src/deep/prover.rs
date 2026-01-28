@@ -3,15 +3,15 @@ use core::iter::zip;
 
 use super::DeepParams;
 use super::interpolate::PointQuotients;
-use super::utils::observe_evals;
-use crate::deep::proof::DeepProof;
-use crate::utils::{MatrixGroupEvals, PackedFieldExtensionExt};
-use p3_challenger::{FieldChallenger, GrindingChallenger};
+use crate::deep::BatchedEvals;
+use crate::utils::PackedFieldExtensionExt;
+use p3_challenger::CanSample;
 use p3_field::{
     ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue, TwoAdicField, dot_product,
 };
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
+use p3_miden_transcript::ProverChannel;
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
@@ -26,32 +26,31 @@ impl<EF> DeepPoly<EF> {
     /// Construct `Q(X)` from committed matrices and batched evaluations at N opening points.
     ///
     /// # Arguments
-    /// - `evals`: Transposed as `evals[point_idx][group_idx]` for transcript observation.
     /// - `batched_evals`: Indexed as `batched_evals[group_idx][matrix_idx]` with `FieldArray<N>` per column.
     /// - `quotient`: Precomputed `1/(zⱼ - xᵢ)` for all opening points zⱼ and domain points xᵢ.
-    pub fn new<F, M, const N: usize, Challenger>(
+    pub fn new<F, M, const N: usize, Ch>(
         params: &DeepParams,
         matrices_groups: &[Vec<&M>],
-        evals: &[Vec<MatrixGroupEvals<EF>>],
-        batched_evals: &[MatrixGroupEvals<FieldArray<EF, N>>],
+        batched_evals: &BatchedEvals<EF, N>,
         quotient: &PointQuotients<F, EF, N>,
-        challenger: &mut Challenger,
-    ) -> (Self, DeepProof<Challenger::Witness>)
+        channel: &mut Ch,
+    ) -> Self
     where
         F: TwoAdicField,
         EF: ExtensionField<F>,
         M: Matrix<F>,
-        Challenger: FieldChallenger<F> + GrindingChallenger,
+        Ch: ProverChannel<F = F> + CanSample<F>,
     {
         // Validate: one eval group per matrix group
+        let batched_groups = batched_evals.groups();
         assert_eq!(
-            batched_evals.len(),
+            batched_groups.len(),
             matrices_groups.len(),
             "batched_evals should have one group per matrix group"
         );
 
         // Validate: each group's matrix count matches
-        for (evals_group, matrices) in zip(batched_evals, matrices_groups) {
+        for (evals_group, matrices) in zip(batched_groups, matrices_groups) {
             assert_eq!(
                 evals_group.num_matrices(),
                 matrices.len(),
@@ -59,15 +58,15 @@ impl<EF> DeepPoly<EF> {
             );
         }
 
-        // 1. Observe evaluations into transcript
-        observe_evals::<F, EF, Challenger>(evals, challenger, params.alignment);
+        // 1. Observe evaluations into transcript in point-major order.
+        batched_evals.write_to_channel(params.alignment, channel);
 
         // 2. Grind for proof-of-work witness
-        let pow_witness = challenger.grind(params.proof_of_work_bits);
+        let _pow_witness = channel.grind(params.proof_of_work_bits);
 
         // 3. Sample DEEP challenges
-        let challenge_columns: EF = challenger.sample_algebra_element();
-        let challenge_points: EF = challenger.sample_algebra_element();
+        let challenge_columns: EF = channel.sample_algebra_element();
+        let challenge_points: EF = channel.sample_algebra_element();
 
         let w = F::Packing::WIDTH;
         let point_quotient = &quotient.point_quotient;
@@ -108,7 +107,7 @@ impl<EF> DeepPoly<EF> {
             .unwrap_or_else(|| EF::zero_vec(n));
 
         // Pre-compute f_reduced(zⱼ) for all N points
-        // Structure: batched_evals[group_idx].0[matrix_idx][col_idx] is FieldArray<EF, N>
+        // Structure: batched_evals.groups()[group_idx][matrix_idx][col_idx] is FieldArray<EF, N>
         let f_reduced_at_points: FieldArray<EF, N> = {
             let coeffs_flat = coeffs_columns
                 .iter()
@@ -116,6 +115,7 @@ impl<EF> DeepPoly<EF> {
                 .copied()
                 .map(FieldArray::from);
             let evals_flat = batched_evals
+                .groups()
                 .iter()
                 .flat_map(|group| group.iter_evals())
                 .copied();
@@ -180,7 +180,7 @@ impl<EF> DeepPoly<EF> {
                 });
         }
 
-        (Self { deep_evals }, DeepProof { pow_witness })
+        Self { deep_evals }
     }
 }
 
@@ -295,8 +295,8 @@ mod tests {
     use alloc::vec::Vec;
 
     use super::derive_coeffs_from_challenge;
-    use crate::deep::utils::reduce_with_powers;
-    use p3_field::{PrimeCharacteristicRing, dot_product};
+    use crate::deep::utils::reduce_with_powers_from;
+    use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, dot_product};
 
     use crate::tests::{EF, F};
 
@@ -359,5 +359,32 @@ mod tests {
         let horner: EF = reduce_with_powers(rows.iter().map(|r| r.as_slice()), c, alignment);
 
         assert_eq!(explicit, horner);
+    }
+
+    /// Horner reduction: computes `Σᵢ αⁿ⁻¹⁻ⁱ · vᵢ` via left-to-right accumulation.
+    ///
+    /// For each value v, computes `acc = α·acc + v`. The reversed coefficient order
+    /// (from [`super::prover::derive_coeffs_from_challenge`]) makes this produce the
+    /// same result as explicit `Σᵢ coeffs[i] · vals[i]`.
+    ///
+    /// # Alignment
+    ///
+    /// After each slice, multiplies by `α^gap` where `gap` pads the slice length to
+    /// the next multiple of `alignment`. This is equivalent to:
+    /// - Padding each row with zeros to the alignment width
+    /// - Including those zeros in the Horner accumulation
+    ///
+    /// An alternative implementation could materialize zero-padded rows; this approach
+    /// achieves the same result without allocating the padding.
+    pub fn reduce_with_powers<'a, F, EF>(
+        slices: impl IntoIterator<Item = &'a [F]>,
+        challenge: EF,
+        alignment: usize,
+    ) -> EF
+    where
+        F: Field + 'a,
+        EF: ExtensionField<F>,
+    {
+        reduce_with_powers_from(EF::ZERO, slices, challenge, alignment)
     }
 }

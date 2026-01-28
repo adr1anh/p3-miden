@@ -146,7 +146,7 @@ macro_rules! impl_poseidon2_config {
         scenario: $scenario:ident,
         field: $field:ty,
         ext_degree: $ext_deg:literal,
-        perm_type: $perm:ty,
+        perm: $perm:ident,
         width: $width:literal,
         rate: $rate:literal,
         digest: $digest:literal,
@@ -192,7 +192,7 @@ macro_rules! impl_poseidon2_config {
         pub type EF = BinomialExtensionField<F, $ext_deg>;
 
         /// Poseidon2 permutation.
-        pub type Perm = $perm;
+        pub type Perm = $perm<$width>;
 
         /// Stateful sponge for hashing (can be used for LMCS).
         pub type Sponge = StatefulSponge<Perm, WIDTH, RATE, DIGEST>;
@@ -382,7 +382,7 @@ pub mod baby_bear_poseidon2 {
         scenario: BabyBearPoseidon2,
         field: BabyBear,
         ext_degree: 4,
-        perm_type: Poseidon2BabyBear<WIDTH>,
+        perm: Poseidon2BabyBear,
         width: 16,
         rate: 8,
         digest: 8,
@@ -410,7 +410,7 @@ pub mod goldilocks_poseidon2 {
         scenario: GoldilocksPoseidon2,
         field: Goldilocks,
         ext_degree: 2,
-        perm_type: Poseidon2Goldilocks<WIDTH>,
+        perm: Poseidon2Goldilocks,
         width: 12,
         rate: 8,
         digest: 4,

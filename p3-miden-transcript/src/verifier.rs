@@ -7,6 +7,8 @@ use p3_challenger::{
 };
 use p3_field::{BasedVectorSpace, Field};
 
+use crate::TranscriptData;
+
 /// Verifier channel that reads transcript data and observes into the challenger.
 #[derive(Clone, Debug)]
 pub struct VerifierTranscript<'a, F, C, Ch> {
@@ -23,6 +25,12 @@ impl<'a, F, C, Ch> VerifierTranscript<'a, F, C, Ch> {
             fields,
             commitments,
         }
+    }
+
+    /// Creates a verifier transcript backed by a `TranscriptData` container.
+    pub fn from_data(challenger: Ch, data: &'a TranscriptData<F, C>) -> Self {
+        let (fields, commitments) = data.as_slices();
+        Self::new(challenger, fields, commitments)
     }
 }
 

@@ -10,6 +10,7 @@ use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
+use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript};
 use p3_util::log2_strict_usize;
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
@@ -17,10 +18,50 @@ use rand::{Rng, SeedableRng};
 
 use crate::deep::DeepParams;
 use crate::fri::{FriFold, FriParams};
-use crate::{PcsParams, prover::open, verifier::verify};
+use crate::{PcsParams, prover::open_with_channel, verifier::verify_with_channel};
 
 pub use p3_miden_dev_utils::configs::baby_bear_poseidon2::{base_lmcs as test_lmcs, *};
 pub use p3_miden_dev_utils::matrix::random_lde_matrix;
+
+pub type TestCommitment = <BaseLmcs as Lmcs>::Commitment;
+pub type TestTranscriptData = TranscriptData<F, TestCommitment>;
+pub type TestProverChannel = ProverTranscript<F, TestCommitment, Challenger>;
+pub type TestVerifierChannel<'a> = VerifierTranscript<'a, F, TestCommitment, Challenger>;
+
+pub fn prover_channel() -> TestProverChannel {
+    ProverTranscript::new(test_challenger())
+}
+
+pub fn prover_channel_with_commitment(commitment: &TestCommitment) -> TestProverChannel {
+    let mut challenger = test_challenger();
+    challenger.observe(*commitment);
+    ProverTranscript::new(challenger)
+}
+
+pub fn verifier_channel(data: &'_ TestTranscriptData) -> TestVerifierChannel<'_> {
+    VerifierTranscript::from_data(test_challenger(), data)
+}
+
+pub fn verifier_channel_with_commitment<'a>(
+    data: &'a TestTranscriptData,
+    commitment: &TestCommitment,
+) -> TestVerifierChannel<'a> {
+    let mut challenger = test_challenger();
+    challenger.observe(*commitment);
+    VerifierTranscript::from_data(challenger, data)
+}
+
+pub fn sample_indices<R: Rng>(rng: &mut R, upper: usize, count: usize) -> Vec<usize> {
+    let mut indices = Vec::with_capacity(count);
+    for _ in 0..count {
+        indices.push(rng.random_range(0..upper));
+    }
+    indices
+}
+
+pub fn evals_at<T: Copy>(values: &[T], indices: &[usize]) -> Vec<T> {
+    indices.iter().map(|&idx| values[idx]).collect()
+}
 
 // ============================================================================
 // End-to-end test
@@ -79,35 +120,41 @@ fn test_pcs_open_verify_roundtrip() {
     let trace_trees: &[&_] = &[&tree];
 
     // Prover
-    let mut prover_challenger = test_challenger();
-    prover_challenger.observe(commitment);
+    let mut prover_channel = prover_channel_with_commitment(&commitment);
 
-    let proof = open::<F, EF, _, _, _, 2>(
+    open_with_channel::<F, EF, _, _, _, 2>(
         &params,
         &lmcs,
         eval_points,
         trace_trees,
-        &mut prover_challenger,
+        &mut prover_channel,
     );
+    let transcript = prover_channel.into_data();
 
     // Create commitments slice for multi-commitment API (single commitment in this case)
     let commitments: &[_] = &[(commitment, widths)];
 
     // Verifier
-    let mut verifier_challenger = test_challenger();
-    verifier_challenger.observe(commitment);
+    let mut verifier_channel = verifier_channel_with_commitment(&transcript, &commitment);
 
-    let result = verify::<F, EF, _, _, 2>(
+    let result = verify_with_channel::<F, EF, _, _, 2>(
         &params,
         &lmcs,
         commitments,
         log_max_height,
         eval_points,
-        &proof,
-        &mut verifier_challenger,
+        &mut verifier_channel,
     );
 
     assert!(result.is_ok(), "Verification should succeed: {:?}", result);
     let verified_evals = result.unwrap();
-    assert_eq!(verified_evals.len(), 2, "Should have 2 evaluation points");
+    assert_eq!(
+        verified_evals.num_points(),
+        2,
+        "Should have 2 evaluation points"
+    );
+    assert!(
+        verifier_channel.is_empty(),
+        "transcript should be fully consumed"
+    );
 }

@@ -28,14 +28,16 @@
 //! `fᵢ(zʳ)` for degree-d polynomials, but this equals `fᵢ'(z)` where `fᵢ'(X) = fᵢ(Xʳ)`
 //! is the lifted polynomial. This uniformity enables the `f_reduced` factorization.
 
+mod evals;
 mod interpolate;
 mod proof;
 pub(crate) mod prover;
 mod utils;
 pub(crate) mod verifier;
 
+pub use evals::{BatchedEvals, BatchedGroupEvals, DeepEvals};
 pub use interpolate::PointQuotients;
-pub use proof::DeepProof;
+pub use proof::DeepTranscript;
 pub use verifier::DeepError;
 
 /// DEEP quotient parameters.

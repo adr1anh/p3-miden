@@ -1,14 +1,14 @@
+use alloc::vec;
 use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
 
-use super::DeepParams;
-use super::utils::{observe_evals, reduce_with_powers};
-use crate::deep::proof::DeepProof;
-use crate::utils::MatrixGroupEvals;
-use p3_challenger::{FieldChallenger, GrindingChallenger};
+use super::utils::reduce_with_powers_from;
+use super::{DeepEvals, DeepParams};
+use p3_challenger::CanSample;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_lmcs::{Lmcs, LmcsError};
+use p3_miden_transcript::VerifierChannel;
 use p3_util::reverse_bits_len;
 use thiserror::Error;
 
@@ -56,65 +56,45 @@ pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
 }
 
 impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L> {
-    /// Construct by observing evaluations, checking PoW, and sampling challenges.
-    pub fn new<Challenger, const N: usize>(
+    /// Construct by reading evaluations, checking PoW, and sampling challenges.
+    pub fn new<Ch>(
         params: &DeepParams,
-        eval_points: [EF; N],
-        evals: &[Vec<MatrixGroupEvals<EF>>],
+        eval_points: &[EF],
         commitments: Vec<(L::Commitment, Vec<usize>)>,
         log_max_height: usize,
-        challenger: &mut Challenger,
-        proof: &DeepProof<Challenger::Witness>,
-    ) -> Result<Self, DeepError>
+        channel: &mut Ch,
+    ) -> Result<(Self, DeepEvals<EF>), DeepError>
     where
-        Challenger: FieldChallenger<F> + GrindingChallenger,
+        Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F>,
     {
-        // 1. Observe evaluations into transcript
-        observe_evals::<F, EF, Challenger>(evals, challenger, params.alignment);
+        let widths: Vec<&[usize]> = commitments
+            .iter()
+            .map(|(_, widths)| widths.as_slice())
+            .collect();
+        let evals = DeepEvals::read_from_channel::<F, Ch>(
+            &widths,
+            eval_points.len(),
+            params.alignment,
+            channel,
+        )
+        .ok_or(DeepError::StructureMismatch)?;
 
-        // 2. Check grinding witness
-        if !challenger.check_witness(params.proof_of_work_bits, proof.pow_witness) {
-            return Err(DeepError::InvalidPowWitness);
-        }
+        // 1. Check grinding witness
+        let _pow_witness = channel
+            .grind(params.proof_of_work_bits)
+            .ok_or(DeepError::InvalidPowWitness)?;
 
-        // 3. Sample DEEP challenges
-        let challenge_columns: EF = challenger.sample_algebra_element();
-        let challenge_points: EF = challenger.sample_algebra_element();
-
-        // Validate structure: evals[point_idx] should have `commitments.len()` groups
-        // Structure: evals[point_idx][commit_idx][matrix_idx][col_idx]
-        for point_evals in evals {
-            if point_evals.len() != commitments.len() {
-                return Err(DeepError::StructureMismatch);
-            }
-            for (eval_group, (_, widths)) in zip(point_evals, &commitments) {
-                if eval_group.num_matrices() != widths.len() {
-                    return Err(DeepError::StructureMismatch);
-                }
-                for (matrix_evals, width) in zip(eval_group.iter_matrices(), widths.iter().copied())
-                {
-                    if matrix_evals.len() != width {
-                        return Err(DeepError::StructureMismatch);
-                    }
-                }
-            }
-        }
-
-        // Validate number of eval points matches
-        if evals.len() != N {
-            return Err(DeepError::StructureMismatch);
-        }
+        // 2. Sample DEEP challenges
+        let challenge_columns: EF = channel.sample_algebra_element();
+        let challenge_points: EF = channel.sample_algebra_element();
 
         // Reduce each opening's evaluations via Horner: (z_j, f_reduced(z_j))
-        let reduced_openings: Vec<(EF, EF)> = zip(&eval_points, evals)
-            .map(|(&point, point_evals)| {
-                let slices = point_evals.iter().flat_map(|g| g.iter_matrices());
-                let reduced_eval = reduce_with_powers(slices, challenge_columns, params.alignment);
-                (point, reduced_eval)
-            })
+        let reduced_evals = evals.reduce_all(challenge_columns, params.alignment);
+        let reduced_openings: Vec<(EF, EF)> = zip(eval_points, reduced_evals)
+            .map(|(&point, reduced_eval)| (point, reduced_eval))
             .collect();
 
-        Ok(Self {
+        let oracle = Self {
             commitments,
             log_max_height,
             reduced_openings,
@@ -122,42 +102,42 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
             challenge_points,
             alignment: params.alignment,
             _marker: PhantomData,
-        })
+        };
+
+        Ok((oracle, evals))
     }
 
-    /// Open the oracle at given indices, verifying proofs and computing DEEP evaluations.
-    ///
-    /// Returns a vector of DEEP evaluations, one per query index.
-    pub fn open_batch(
+    /// Open the oracle at given indices by reading proofs from a verifier channel.
+    pub fn open_batch<Ch>(
         &self,
         lmcs: &L,
         indices: &[usize],
-        proofs: &[L::Proof],
-    ) -> Result<Vec<EF>, DeepError> {
-        // Verify each commitment's proof and collect opened rows
-        // all_opened_rows[commit_idx][query_idx] = Vec<&[F]> (rows for that commitment)
-        let all_opened_rows: Vec<Vec<Vec<&[F]>>> = zip(&self.commitments, proofs)
-            .map(|((commit, widths), p)| {
-                lmcs.open_batch(commit, widths, self.log_max_height, indices, p)
-                    .map_err(DeepError::LmcsError)
-            })
-            .collect::<Result<_, _>>()?;
+        channel: &mut Ch,
+    ) -> Result<Vec<EF>, DeepError>
+    where
+        Ch: VerifierChannel<F = F, Commitment = L::Commitment>,
+    {
+        let mut reduced_rows = vec![EF::ZERO; indices.len()];
+        for (commit, widths) in &self.commitments {
+            let opened_rows = lmcs
+                .open_batch(commit, widths, self.log_max_height, indices, channel)
+                .map_err(DeepError::LmcsError)?;
+            for (acc, rows_for_query) in reduced_rows.iter_mut().zip(opened_rows) {
+                *acc = reduce_with_powers_from(
+                    *acc,
+                    rows_for_query.iter().map(Vec::as_slice),
+                    self.challenge_columns,
+                    self.alignment,
+                );
+            }
+        }
 
-        // Use stored log_max_height for domain reconstruction
         let generator = F::two_adic_generator(self.log_max_height);
         let shift = F::GENERATOR;
 
         // Compute DEEP evaluation for each query
-        let evals: Vec<EF> = indices
-            .iter()
-            .enumerate()
-            .map(|(query_idx, &index)| {
-                // Collect rows from all commitments for this query index
-                // Rows are combined in order: commitment 0's rows, then commitment 1's rows, etc.
-                let rows_iter = all_opened_rows
-                    .iter()
-                    .flat_map(|commit_rows| commit_rows[query_idx].iter().copied());
-
+        let evals: Vec<EF> = zip(indices, reduced_rows)
+            .map(|(&index, reduced_row)| {
                 // Reconstruct the domain point X from the query index.
                 // The LDE domain is the coset gK in bit-reversed order where:
                 //   g = F::GENERATOR (coset shift, avoids subgroup)
@@ -165,9 +145,6 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
                 // In bit-reversed order: X = g · ω^{bit_rev(index)}
                 let index_bit_rev = reverse_bits_len(index, self.log_max_height);
                 let row_point = shift * generator.exp_u64(index_bit_rev as u64);
-
-                let reduced_row =
-                    reduce_with_powers(rows_iter, self.challenge_columns, self.alignment);
 
                 zip(&self.reduced_openings, self.challenge_points.powers())
                     .map(|((point, reduced_eval), coeff_point)| {
@@ -188,7 +165,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
 /// Errors that can occur during DEEP oracle construction or verification.
 #[derive(Debug, Error)]
 pub enum DeepError {
-    #[error("evaluation structure doesn't match commitment")]
+    #[error("invalid transcript structure")]
     StructureMismatch,
     #[error("invalid proof-of-work witness")]
     InvalidPowWitness,

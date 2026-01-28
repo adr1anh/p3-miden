@@ -1,7 +1,7 @@
 //! FRI folding via polynomial interpolation.
 //!
 //! FRI (Fast Reed-Solomon IOP of Proximity) requires computing `f(β)` from evaluations
-//! of a polynomial `f` on a coset. This module provides an enum-based abstraction for
+//! of a polynomial `f` on a coset. This module provides a struct-based abstraction for
 //! FRI folding at different arities.
 //!
 //! ## Arity
@@ -26,13 +26,9 @@ use p3_maybe_rayon::prelude::*;
 
 use crate::utils::PackedFieldExtensionExt;
 
-// ============================================================================
-// FriFold Enum
-// ============================================================================
-
 /// FRI folding strategy.
 ///
-/// This enum encapsulates different folding arities (2, 4, 8).
+/// This struct encapsulates different folding arities (2, 4, 8).
 #[derive(Clone, Copy, Debug)]
 pub struct FriFold {
     log_arity: usize,

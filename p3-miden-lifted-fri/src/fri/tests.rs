@@ -1,9 +1,9 @@
 //! Integration tests for FRI protocol commit/verify cycles.
 
-use alloc::vec::Vec;
-
+use p3_challenger::CanObserve;
 use p3_field::{PrimeCharacteristicRing, TwoAdicField};
-use p3_util::reverse_bits_len;
+use p3_miden_transcript::VerifierTranscript;
+use p3_util::{log2_strict_usize, reverse_bits_len};
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -11,7 +11,10 @@ use rand::{Rng, SeedableRng};
 use super::prover::FriPolys;
 use super::verifier::FriOracle;
 use super::*;
-use crate::tests::{EF, F, random_lde_matrix, test_challenger, test_lmcs};
+use crate::tests::{
+    EF, F, evals_at, prover_channel, random_lde_matrix, sample_indices, test_challenger, test_lmcs,
+    verifier_channel,
+};
 
 // ============================================================================
 // Integration tests
@@ -38,30 +41,34 @@ fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
     let evals = random_lde_matrix(&mut rng, log_poly_degree, params.log_blowup, 1, F::ONE).values;
     let lde_size = evals.len();
 
-    // Prover: run commit phase (grinds per-round internally)
-    let mut prover_challenger = test_challenger();
-    let (fri_polys, fri_proof) =
-        FriPolys::<F, EF, _>::new(&params, &lmcs, evals.clone(), &mut prover_challenger);
-
-    // Verifier: replay challenger to get oracle with betas
-    let mut verifier_challenger = test_challenger();
-    let fri_oracle = FriOracle::new(
-        &fri_proof,
-        &mut verifier_challenger,
-        params.proof_of_work_bits,
-    )
-    .expect("FRI oracle construction should succeed");
-
     // Generate batch of query indices
-    let query_indices: Vec<usize> = (0..3).map(|_| rng.random_range(0..lde_size)).collect();
-    let initial_evals: Vec<EF> = query_indices.iter().map(|&idx| evals[idx]).collect();
+    let query_indices = sample_indices(&mut rng, lde_size, 3);
+    let initial_evals = evals_at(&evals, &query_indices);
+
+    // Prover: run commit phase (grinds per-round internally)
+    let mut prover_channel = prover_channel();
+    let fri_polys = FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut prover_channel);
 
     // Open all query indices at once
-    let openings = fri_polys.prove_queries(&params, &query_indices);
+    fri_polys.prove_queries(&params, &query_indices, &mut prover_channel);
+
+    let transcript = prover_channel.into_data();
+
+    // Verifier: replay challenger to get oracle with betas
+    let mut verifier_channel = verifier_channel(&transcript);
+    let log_domain_size = log2_strict_usize(lde_size);
+    let fri_oracle = FriOracle::new(&params, log_domain_size, &mut verifier_channel)
+        .expect("FRI oracle construction should succeed");
 
     // Test all queries at once
     fri_oracle
-        .test_low_degree(&lmcs, &params, &query_indices, &initial_evals, &openings)
+        .test_low_degree(
+            &lmcs,
+            &params,
+            &query_indices,
+            &initial_evals,
+            &mut verifier_channel,
+        )
         .expect("low-degree test should pass");
 }
 
@@ -96,28 +103,26 @@ fn test_fri_verify_wrong_eval() {
     let log_lde_size = log_poly_degree + log_blowup;
     let lde_size = 1 << log_lde_size;
 
-    let mut prover_challenger = test_challenger();
-    let (fri_polys, fri_proof) =
-        FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut prover_challenger);
-
-    let mut verifier_challenger = test_challenger();
-    let fri_oracle = FriOracle::new(
-        &fri_proof,
-        &mut verifier_challenger,
-        params.proof_of_work_bits,
-    )
-    .expect("oracle construction should succeed");
+    let mut prover_channel = prover_channel();
+    let fri_polys = FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut prover_channel);
 
     let index: usize = rng.random_range(0..lde_size);
     let wrong_eval: EF = rng.sample(StandardUniform); // Wrong!
-    let openings = fri_polys.prove_queries(&params, &[index]);
+    fri_polys.prove_queries(&params, &[index], &mut prover_channel);
+
+    let transcript = prover_channel.into_data();
+
+    let mut verifier_channel = verifier_channel(&transcript);
+    let log_domain_size = log2_strict_usize(lde_size);
+    let fri_oracle = FriOracle::new(&params, log_domain_size, &mut verifier_channel)
+        .expect("oracle construction should succeed");
 
     let result = fri_oracle.test_low_degree(
         &lmcs,
         &params,
         &[index],
         &[wrong_eval], // Should fail
-        &openings,
+        &mut verifier_channel,
     );
 
     assert!(
@@ -154,32 +159,43 @@ fn test_fri_verify_wrong_beta() {
     let log_lde_size = log_poly_degree + log_blowup;
     let lde_size = 1 << log_lde_size;
 
-    // Prover 1: generate FRI proof (grinds per-round internally)
-    let mut prover1_challenger = test_challenger();
-    let (fri_polys1, fri_proof) =
-        FriPolys::<F, EF, _>::new(&params, &lmcs, evals1.clone(), &mut prover1_challenger);
-
-    // Prover 2: generate different FRI proof (different commitments = different betas)
-    let mut prover2_challenger = test_challenger();
-    let _ = FriPolys::<F, EF, _>::new(&params, &lmcs, evals2, &mut prover2_challenger);
-
-    // Verifier: use prover1's proof structure but prover2's challenger state
-    // This simulates a scenario where the verifier has incorrect transcript state
-
-    // Use prover2's challenger (which observed different commitments)
-    // This gives us different betas than prover1 expected
-    let wrong_oracle = FriOracle::new(
-        &fri_proof,
-        &mut prover2_challenger,
-        params.proof_of_work_bits,
-    )
-    .expect("oracle construction should succeed");
-
+    // Prover 1: generate FRI transcript (grinds per-round internally)
     let index: usize = rng.random_range(0..lde_size);
     let initial_eval = evals1[index];
-    let openings = fri_polys1.prove_queries(&params, &[index]);
 
-    let result = wrong_oracle.test_low_degree(&lmcs, &params, &[index], &[initial_eval], &openings);
+    let mut prover1_channel = prover_channel();
+    let fri_polys1 = FriPolys::<F, EF, _>::new(&params, &lmcs, evals1, &mut prover1_channel);
+
+    // Prover 2: generate different transcript (different commitments = different betas)
+    let mut prover2_channel = prover_channel();
+    let _ = FriPolys::<F, EF, _>::new(&params, &lmcs, evals2, &mut prover2_channel);
+
+    fri_polys1.prove_queries(&params, &[index], &mut prover1_channel);
+
+    let transcript = prover1_channel.into_data();
+    let other_commitment = prover2_channel
+        .into_data()
+        .commitments()
+        .first()
+        .cloned()
+        .expect("prover2 should produce commitments");
+
+    // Verifier: use prover1's transcript but alter challenger state beforehand.
+    let mut wrong_challenger = test_challenger();
+    wrong_challenger.observe(other_commitment);
+    let mut verifier_channel = VerifierTranscript::from_data(wrong_challenger, &transcript);
+
+    let log_domain_size = log2_strict_usize(lde_size);
+    let wrong_oracle = FriOracle::new(&params, log_domain_size, &mut verifier_channel)
+        .expect("oracle construction should succeed");
+
+    let result = wrong_oracle.test_low_degree(
+        &lmcs,
+        &params,
+        &[index],
+        &[initial_eval],
+        &mut verifier_channel,
+    );
 
     // Should fail because wrong betas produce wrong folding results
     assert!(
@@ -212,13 +228,20 @@ fn test_final_polynomial_correctness() {
 
     let evals = random_lde_matrix(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
 
-    let mut chal = test_challenger();
-    let (_, fri_proof) = FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut chal);
+    let mut prover_channel = prover_channel();
+    let _fri_polys = FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut prover_channel);
+    let transcript = prover_channel.into_data();
+
+    let mut verifier_channel = verifier_channel(&transcript);
+    let log_domain_size = log_poly_degree + log_blowup;
+    let fri_transcript: FriTranscript<F, EF, _> =
+        FriTranscript::from_verifier_channel(&params, log_domain_size, &mut verifier_channel)
+            .expect("transcript parsing should succeed");
 
     // Verify final polynomial has correct degree
     let final_degree = 1 << log_final_degree;
     assert_eq!(
-        fri_proof.final_poly.len(),
+        fri_transcript.final_poly.len(),
         final_degree,
         "Final polynomial should have {} coefficients",
         final_degree
@@ -234,7 +257,7 @@ fn test_final_polynomial_correctness() {
         let x: F = g.exp_u64(reverse_bits_len(idx, log_final_height) as u64);
 
         // Evaluate polynomial via Horner
-        let poly_eval: EF = fri_proof
+        let poly_eval: EF = fri_transcript
             .final_poly
             .iter()
             .rev()

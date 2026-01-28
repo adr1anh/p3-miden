@@ -7,6 +7,8 @@ use p3_challenger::{
 };
 use p3_field::{BasedVectorSpace, Field};
 
+use crate::TranscriptData;
+
 /// Prover channel that records transcript data and observes into the challenger.
 #[derive(Clone, Debug)]
 pub struct ProverTranscript<F, C, Ch> {
@@ -23,6 +25,20 @@ impl<F, C, Ch> ProverTranscript<F, C, Ch> {
             fields: Vec::new(),
             commitments: Vec::new(),
         }
+    }
+
+    /// Consume the prover transcript and return the raw transcript data.
+    pub fn into_data(self) -> TranscriptData<F, C> {
+        TranscriptData::new(self.fields, self.commitments)
+    }
+
+    /// Returns a snapshot of the recorded transcript data.
+    pub fn data(&self) -> TranscriptData<F, C>
+    where
+        F: Clone,
+        C: Clone,
+    {
+        TranscriptData::new(self.fields.clone(), self.commitments.clone())
     }
 }
 

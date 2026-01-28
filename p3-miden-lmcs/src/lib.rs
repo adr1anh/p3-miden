@@ -10,24 +10,30 @@
 //! - [`Lmcs`]: Trait for LMCS configurations, providing type-erased access to commitment operations.
 //! - [`LmcsTree`]: Trait for built LMCS trees, providing opening operations.
 //! - [`LiftedMerkleTree`]: The underlying Merkle tree data structure.
-//! - [`Proof`]: Multi-opening proof with opened rows and compact Merkle siblings.
+//! - [`Proof`]: Single-opening proof with rows, optional salt, and authentication path.
 //!
 //! # API Overview
 //!
 //! ## Direct Usage (Simple)
 //!
 //! ```ignore
-//! use p3_miden_lmcs::{LmcsConfig, HidingLmcsConfig, Lmcs, LmcsTree};
+//! use p3_miden_lmcs::{HidingLmcsConfig, Lmcs, LmcsConfig, LmcsTree};
+//! use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
 //!
 //! // Config captures PF, PD (packed types), H, C, WIDTH, DIGEST
 //! // F = PF::Value and D = PD::Value are derived
 //! let config = LmcsConfig::<PF, PD, _, _, WIDTH, DIGEST>::new(sponge, compress);
+//! let challenger = /* ... */;
 //!
 //! // Build tree - no turbofish needed, packed types are known from config
 //! let tree = config.build_tree(matrices);
 //! let root = tree.root();
-//! let proof = tree.prove_batch(&indices);
-//! let rows = config.open_batch(&root, &widths, log_max_height, &indices, &proof)?;
+//! let mut prover_channel = ProverTranscript::new(challenger);
+//! tree.prove_batch(&indices, &mut prover_channel);
+//! let transcript = prover_channel.into_data();
+//!
+//! let mut verifier_channel = VerifierTranscript::from_data(challenger, &transcript);
+//! let rows = config.open_batch(&root, &widths, log_max_height, &indices, &mut verifier_channel)?;
 //!
 //! // For hiding commitment with salt, use HidingLmcsConfig with RNG
 //! let hiding_config = HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new(sponge, compress, rng);
@@ -38,14 +44,24 @@
 //!
 //! ```ignore
 //! use p3_miden_lmcs::{Lmcs, LmcsTree};
+//! use p3_miden_transcript::ProverTranscript;
 //!
 //! fn commit_and_open<L: Lmcs>(lmcs: &L, matrices: Vec<impl Matrix<L::F>>) {
 //!     let tree = lmcs.build_tree(matrices);
 //!     let commitment = tree.root();
-//!     let proof = tree.prove_batch(&[0, 1, 2]);
+//!     let challenger = /* ... */;
+//!     let mut channel = ProverTranscript::new(challenger);
+//!     tree.prove_batch(&[0, 1, 2], &mut channel);
 //!     // ...
 //! }
 //! ```
+//!
+//! ## Transcript Hints
+//!
+//! Batch openings are streamed as transcript hints: `prove_batch` writes rows/salt and
+//! sibling hashes without observing them into the Fiat-Shamir challenger, and
+//! `open_batch` reads and verifies those hints against a commitment. Use
+//! `read_batch_from_channel` if you need per-index [`Proof`] objects for inspection.
 //!
 //! # Mathematical Foundation
 //!
@@ -110,32 +126,28 @@
 
 extern crate alloc;
 
-pub mod batch_proof;
+mod hiding_lmcs;
 mod lifted_tree;
+mod lmcs;
 pub mod mmcs;
-pub mod opening;
 pub mod proof;
+#[cfg(test)]
+mod tests;
 pub mod utils;
-use alloc::vec::Vec;
-use core::cell::RefCell;
-use core::fmt::Debug;
-use core::marker::PhantomData;
 
-use p3_field::PackedValue;
+use alloc::vec::Vec;
+
 use p3_matrix::Matrix;
-use p3_miden_stateful_hasher::StatefulHasher;
-use p3_symmetric::{Hash, PseudoCompressionFunction};
-use rand::Rng;
-use rand::distr::{Distribution, StandardUniform};
+use p3_miden_transcript::{ProverChannel, VerifierChannel};
 use thiserror::Error;
 
 // ============================================================================
 // Public Re-exports
 // ============================================================================
 
-pub use batch_proof::BatchProof;
+pub use hiding_lmcs::HidingLmcsConfig;
 pub use lifted_tree::LiftedMerkleTree;
-pub use opening::Opening;
+pub use lmcs::LmcsConfig;
 pub use proof::Proof;
 
 // ============================================================================
@@ -150,31 +162,46 @@ pub trait Lmcs: Clone {
     type F: Clone + Send + Sync;
     /// Commitment type (root hash).
     type Commitment: Clone;
-    /// Multi-opening proof type.
-    type Proof: Clone;
+    /// Single-opening proof type.
+    type SingleProof;
     /// Tree type (prover data), parameterized by matrix type.
-    type Tree<M: Matrix<Self::F>>: LmcsTree<Self::F, Self::Commitment, Self::Proof, M>;
+    type Tree<M: Matrix<Self::F>>: LmcsTree<Self::F, Self::Commitment, M>;
 
     /// Build a tree from matrices.
     ///
     /// The packed types are known from `self`, so no turbofish is needed.
     fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M>;
 
-    /// Open a batch proof, verifying against the commitment.
-    fn open_batch<'a>(
+    /// Open a batch proof by reading it from a transcript channel.
+    fn open_batch<Ch>(
         &self,
         commitment: &Self::Commitment,
         widths: &[usize],
         log_max_height: usize,
         indices: &[usize],
-        proof: &'a Self::Proof,
-    ) -> Result<Vec<Vec<&'a [Self::F]>>, LmcsError>;
+        channel: &mut Ch,
+    ) -> Result<Vec<Vec<Vec<Self::F>>>, LmcsError>
+    where
+        Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>;
+
+    /// Read a batch opening from a transcript channel and reconstruct per-index proofs.
+    ///
+    /// This only parses hints; it does not verify against a commitment.
+    fn read_batch_from_channel<Ch>(
+        &self,
+        widths: &[usize],
+        log_max_height: usize,
+        indices: &[usize],
+        channel: &mut Ch,
+    ) -> Result<Vec<Self::SingleProof>, LmcsError>
+    where
+        Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>;
 }
 
 /// Trait for built LMCS trees.
 ///
 /// Provides methods for accessing tree data and generating proofs.
-pub trait LmcsTree<F, Commitment, Proof, M> {
+pub trait LmcsTree<F, Commitment, M> {
     /// Get the tree root (commitment).
     fn root(&self) -> Commitment;
 
@@ -187,228 +214,10 @@ pub trait LmcsTree<F, Commitment, Proof, M> {
     /// Get the opened rows for a given leaf index.
     fn rows(&self, index: usize) -> Vec<Vec<F>>;
 
-    /// Generate a batch proof for multiple indices.
-    fn prove_batch(&self, indices: &[usize]) -> Proof;
-}
-
-// ============================================================================
-// Configuration
-// ============================================================================
-
-/// LMCS configuration holding cryptographic primitives (sponge + compression).
-///
-/// For hiding commitments with salt, use [`HidingLmcsConfig`] instead.
-#[derive(Clone, Debug)]
-pub struct LmcsConfig<PF, PD, H, C, const WIDTH: usize, const DIGEST: usize> {
-    /// Stateful sponge for hashing matrix rows into leaf digests.
-    pub sponge: H,
-    /// 2-to-1 compression function for building internal tree nodes.
-    pub compress: C,
-    _phantom: PhantomData<(PF, PD)>,
-}
-
-impl<PF, PD, H, C, const WIDTH: usize, const DIGEST: usize>
-    LmcsConfig<PF, PD, H, C, WIDTH, DIGEST>
-{
-    /// Create a new LMCS configuration.
-    #[inline]
-    pub const fn new(sponge: H, compress: C) -> Self {
-        Self {
-            sponge,
-            compress,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<PF, PD, H, C, const WIDTH: usize, const DIGEST: usize> Lmcs
-    for LmcsConfig<PF, PD, H, C, WIDTH, DIGEST>
-where
-    PF: PackedValue + Default,
-    PD: PackedValue + Default,
-    H: StatefulHasher<PF::Value, [PD::Value; DIGEST], State = [PD::Value; WIDTH]>
-        + StatefulHasher<PF, [PD; DIGEST], State = [PD; WIDTH]>
-        + Sync,
-    C: PseudoCompressionFunction<[PD::Value; DIGEST], 2>
-        + PseudoCompressionFunction<[PD; DIGEST], 2>
-        + Sync,
-{
-    type F = PF::Value;
-    type Commitment = Hash<PF::Value, PD::Value, DIGEST>;
-    type Proof = BatchProof<PF::Value, PD::Value, DIGEST, 0>;
-    type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, 0>;
-
-    fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
-        LiftedMerkleTree::build::<PF, PD, H, C, WIDTH>(&self.sponge, &self.compress, leaves, None)
-    }
-
-    fn open_batch<'a>(
-        &self,
-        commitment: &Self::Commitment,
-        widths: &[usize],
-        log_max_height: usize,
-        indices: &[usize],
-        proof: &'a Self::Proof,
-    ) -> Result<Vec<Vec<&'a [Self::F]>>, LmcsError> {
-        proof.open::<H, C, WIDTH>(
-            &self.sponge,
-            &self.compress,
-            commitment,
-            widths,
-            log_max_height,
-            indices,
-        )
-    }
-}
-
-// ============================================================================
-// Hiding Configuration
-// ============================================================================
-
-/// Configuration for hiding LMCS with random salt.
-///
-/// This type wraps a [`LmcsConfig`] and adds an RNG for generating salt
-/// during tree construction. The RNG is stored in a `RefCell` to allow
-/// salt generation without `&mut self` (required by `Mmcs::commit`).
-///
-/// # Type Parameters
-///
-/// - `PF`: Packed field element type for SIMD operations.
-/// - `PD`: Packed digest element type.
-/// - `H`: Stateful hasher/sponge type.
-/// - `C`: 2-to-1 compression function type.
-/// - `R`: Random number generator type.
-/// - `WIDTH`: State width for the hasher.
-/// - `DIGEST`: Number of elements in a digest.
-/// - `SALT`: Number of salt elements per leaf (must be > 0).
-///
-/// # Example
-///
-/// ```ignore
-/// use p3_miden_lmcs::{HidingLmcsConfig, Lmcs, LmcsTree};
-/// use rand::rngs::StdRng;
-/// use rand::SeedableRng;
-///
-/// let rng = StdRng::seed_from_u64(42);
-/// let config = HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new(sponge, compress, rng);
-///
-/// let tree = config.build_tree(matrices);
-/// let root = tree.root();
-/// ```
-#[derive(Clone, Debug)]
-pub struct HidingLmcsConfig<
-    PF,
-    PD,
-    H,
-    C,
-    R,
-    const WIDTH: usize,
-    const DIGEST: usize,
-    const SALT: usize,
-> {
-    /// Inner non-hiding config with sponge and compression.
-    pub inner: LmcsConfig<PF, PD, H, C, WIDTH, DIGEST>,
-    /// RNG for salt generation. Uses `RefCell` for interior mutability.
-    rng: RefCell<R>,
-}
-
-impl<PF, PD, H, C, R, const WIDTH: usize, const DIGEST: usize, const SALT: usize>
-    HidingLmcsConfig<PF, PD, H, C, R, WIDTH, DIGEST, SALT>
-{
-    /// Create a new hiding LMCS configuration.
-    ///
-    /// # Compile-time Error
-    ///
-    /// Fails to compile if `SALT == 0`. Use [`LmcsConfig`] for non-hiding commitments.
-    #[inline]
-    pub fn new(sponge: H, compress: C, rng: R) -> Self {
-        const { assert!(SALT > 0) }
-        Self {
-            inner: LmcsConfig::new(sponge, compress),
-            rng: RefCell::new(rng),
-        }
-    }
-}
-
-impl<PF, PD, H, C, R, const WIDTH: usize, const DIGEST: usize, const SALT: usize> Lmcs
-    for HidingLmcsConfig<PF, PD, H, C, R, WIDTH, DIGEST, SALT>
-where
-    PF: PackedValue + Default,
-    PD: PackedValue + Default,
-    R: Rng + Clone,
-    StandardUniform: Distribution<PF::Value>,
-    H: StatefulHasher<PF::Value, [PD::Value; DIGEST], State = [PD::Value; WIDTH]>
-        + StatefulHasher<PF, [PD; DIGEST], State = [PD; WIDTH]>
-        + Sync,
-    C: PseudoCompressionFunction<[PD::Value; DIGEST], 2>
-        + PseudoCompressionFunction<[PD; DIGEST], 2>
-        + Sync,
-{
-    type F = PF::Value;
-    type Commitment = Hash<PF::Value, PD::Value, DIGEST>;
-    type Proof = BatchProof<PF::Value, PD::Value, DIGEST, SALT>;
-    type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, SALT>;
-
-    fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
-        use p3_matrix::dense::RowMajorMatrix;
-
-        let tree_height = leaves.last().map(|m| m.height()).unwrap_or(0);
-        let salt = RowMajorMatrix::rand(&mut *self.rng.borrow_mut(), tree_height, SALT);
-
-        LiftedMerkleTree::build::<PF, PD, H, C, WIDTH>(
-            &self.inner.sponge,
-            &self.inner.compress,
-            leaves,
-            Some(salt),
-        )
-    }
-
-    fn open_batch<'a>(
-        &self,
-        commitment: &Self::Commitment,
-        widths: &[usize],
-        log_max_height: usize,
-        indices: &[usize],
-        proof: &'a Self::Proof,
-    ) -> Result<Vec<Vec<&'a [Self::F]>>, LmcsError> {
-        proof.open::<H, C, WIDTH>(
-            &self.inner.sponge,
-            &self.inner.compress,
-            commitment,
-            widths,
-            log_max_height,
-            indices,
-        )
-    }
-}
-
-impl<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
-    LmcsTree<F, Hash<F, D, DIGEST_ELEMS>, BatchProof<F, D, DIGEST_ELEMS, SALT_ELEMS>, M>
-    for LiftedMerkleTree<F, D, M, DIGEST_ELEMS, SALT_ELEMS>
-where
-    F: Copy + Default + Send + Sync,
-    D: Copy + PartialEq + Send + Sync,
-    M: Matrix<F>,
-{
-    fn root(&self) -> Hash<F, D, DIGEST_ELEMS> {
-        LiftedMerkleTree::root(self)
-    }
-
-    fn height(&self) -> usize {
-        LiftedMerkleTree::height(self)
-    }
-
-    fn leaves(&self) -> &[M] {
-        &self.leaves
-    }
-
-    fn rows(&self, index: usize) -> Vec<Vec<F>> {
-        LiftedMerkleTree::rows(self, index)
-    }
-
-    fn prove_batch(&self, indices: &[usize]) -> BatchProof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
-        LiftedMerkleTree::prove_batch(self, indices)
-    }
+    /// Prove a batch opening and stream it into a transcript channel.
+    fn prove_batch<Ch>(&self, indices: &[usize], channel: &mut Ch)
+    where
+        Ch: ProverChannel<F = F, Commitment = Commitment>;
 }
 
 // ============================================================================
@@ -418,25 +227,8 @@ where
 /// Errors that can occur during LMCS operations.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum LmcsError {
-    #[error("wrong batch size")]
-    WrongBatchSize,
-    #[error("wrong width at matrix {matrix}")]
-    WrongWidth { matrix: usize },
-    #[error("wrong matrix count (expected {expected}, got {actual})")]
-    WrongMatrixCount { expected: usize, actual: usize },
-    #[error("wrong salt width")]
-    WrongSalt,
-    #[error("wrong proof length")]
-    WrongProofLen,
-    #[error("index out of bounds")]
-    IndexOutOfBounds,
-    #[error("root mismatch")]
-    RootMismatch,
     #[error("invalid proof")]
     InvalidProof,
-    #[error("conflicting leaf")]
-    ConflictingLeaf,
+    #[error("root mismatch")]
+    RootMismatch,
 }
-
-#[cfg(test)]
-mod tests;

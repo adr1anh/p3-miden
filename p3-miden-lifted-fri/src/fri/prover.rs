@@ -1,21 +1,17 @@
 use alloc::vec::Vec;
 use core::ops::Deref;
 
-use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
+use p3_challenger::CanSample;
 use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::extension::FlatMatrixView;
 use p3_maybe_rayon::prelude::*;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
+use p3_miden_transcript::ProverChannel;
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
 
 use crate::fri::FriParams;
-use crate::fri::proof::FriProof;
-
-// ============================================================================
-// Type Aliases
-// ============================================================================
 
 /// Tree type for FRI folding rounds.
 ///
@@ -29,8 +25,8 @@ type FoldedTree<F, EF, L> = <L as Lmcs>::Tree<FlatMatrixView<F, EF, RowMajorMatr
 /// Prover's state from the FRI commit phase.
 ///
 /// Contains the data needed to answer queries (LMCS trees).
-/// The proof data (commitments, final polynomial, pow witnesses) is returned
-/// separately as `FriProof` from the constructor.
+/// Commitments, PoW witnesses, and the final polynomial are written to the
+/// transcript channel during construction.
 ///
 /// Uses a single base-field LMCS. Extension field evaluations are flattened
 /// to base field before commitment.
@@ -86,23 +82,14 @@ where
 {
     /// Execute the FRI commit phase.
     ///
-    /// Returns `(FriPolys, FriProof)` where `FriProof` contains commitments,
-    /// final polynomial, and per-round grinding witnesses.
-    pub fn new<Challenger>(
-        params: &FriParams,
-        lmcs: &L,
-        evals: Vec<EF>,
-        challenger: &mut Challenger,
-    ) -> (Self, FriProof<EF, L, Challenger::Witness>)
+    pub fn new<Ch>(params: &FriParams, lmcs: &L, evals: Vec<EF>, channel: &mut Ch) -> Self
     where
-        Challenger: FieldChallenger<F> + CanObserve<L::Commitment> + GrindingChallenger,
+        Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F>,
     {
         let log_arity = params.fold.log_arity();
         let arity = params.fold.arity();
 
-        let mut commitments = Vec::new();
         let mut folded_trees = Vec::new();
-        let mut pow_witnesses = Vec::new();
 
         let mut domain_size = evals.len();
         let log_domain_size = log2_strict_usize(domain_size); // needed for two_adic_generator
@@ -141,14 +128,13 @@ where
             let flat_view = FlatMatrixView::new(matrix);
             let tree = lmcs.build_tree(alloc::vec![flat_view]);
             let commitment = tree.root();
-            challenger.observe(commitment.clone());
+            channel.send_commitment(commitment.clone());
 
             // ─────────────────────────────────────────────────────────────────────
             // Grind and sample folding challenge β
             // ─────────────────────────────────────────────────────────────────────
-            let pow_witness = challenger.grind(params.proof_of_work_bits);
-            pow_witnesses.push(pow_witness);
-            let beta: EF = challenger.sample_algebra_element();
+            let _pow_witness = channel.grind(params.proof_of_work_bits);
+            let beta: EF = channel.sample_algebra_element();
 
             // ─────────────────────────────────────────────────────────────────────
             // Fold all rows: f(β) = interpolate coset evaluations at β
@@ -160,7 +146,6 @@ where
             // No bit-reversal needed: folded evals maintain bit-reversed order
             // because s_invs are already bit-reversed to match
 
-            commitments.push(commitment);
             folded_trees.push(tree);
 
             domain_size /= arity;
@@ -200,41 +185,27 @@ where
         let final_poly = Radix2DFTSmallBatch::default().idft_algebra(folded_evals);
 
         // Observe final polynomial coefficients for Fiat-Shamir
-        for &coeff in &final_poly {
-            challenger.observe_algebra_element(coeff);
-        }
+        channel.send_algebra_slice(&final_poly);
 
-        (
-            Self { folded_trees },
-            FriProof {
-                commitments,
-                final_poly,
-                pow_witnesses,
-            },
-        )
+        Self { folded_trees }
     }
 
-    /// Generate compact multi-opening proofs for all FRI commit phase rounds.
-    ///
-    /// Returns one proof per FRI round, each covering all query indices.
-    /// Each round's indices are progressively reduced by shifting off `log_arity` bits.
-    /// Proofs contain base field values; the verifier reconstructs extension field.
-    pub fn prove_queries(&self, params: &FriParams, indices: &[usize]) -> Vec<L::Proof> {
+    /// Stream all FRI query proofs into a transcript channel.
+    pub fn prove_queries<Ch>(&self, params: &FriParams, indices: &[usize], channel: &mut Ch)
+    where
+        Ch: ProverChannel<F = F, Commitment = L::Commitment>,
+    {
         let log_arity = params.fold.log_arity();
 
         // For each round, compute the corresponding indices (shifted from previous round)
-        self.folded_trees
-            .iter()
-            .enumerate()
-            .map(|(round, tree)| {
-                // Compute indices for this round: shift each index by log_arity * (round + 1)
-                // The +1 accounts for the initial fold from evaluation domain to first round
-                let round_indices: Vec<usize> = indices
-                    .iter()
-                    .map(|&idx| idx >> (log_arity * (round + 1)))
-                    .collect();
-                tree.prove_batch(&round_indices)
-            })
-            .collect()
+        for (round, tree) in self.folded_trees.iter().enumerate() {
+            // Compute indices for this round: shift each index by log_arity * (round + 1)
+            // The +1 accounts for the initial fold from evaluation domain to first round
+            let round_indices: Vec<usize> = indices
+                .iter()
+                .map(|&idx| idx >> (log_arity * (round + 1)))
+                .collect();
+            tree.prove_batch(&round_indices, channel);
+        }
     }
 }

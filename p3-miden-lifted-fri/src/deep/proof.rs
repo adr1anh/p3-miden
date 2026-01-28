@@ -1,12 +1,58 @@
-//! DEEP proof data structures.
+//! DEEP transcript data structures.
 
-/// DEEP proof-of-work witness.
-pub struct DeepProof<Witness> {
-    pub(super) pow_witness: Witness,
+use crate::deep::DeepEvals;
+use crate::deep::DeepParams;
+use alloc::vec::Vec;
+use p3_challenger::CanSample;
+use p3_field::{ExtensionField, Field, TwoAdicField};
+use p3_miden_transcript::VerifierChannel;
+
+/// Structured transcript view for the DEEP interaction.
+///
+/// This records the prover's PoW witness and the two challenges sampled
+/// from the Fiat-Shamir transcript after observing evaluations.
+pub struct DeepTranscript<F: Field, EF: ExtensionField<F>> {
+    /// `evals.groups()[commit_idx][matrix_idx]` stores rows by point.
+    pub evals: DeepEvals<EF>,
+    /// Proof-of-work witness sampled before DEEP challenges.
+    pub pow_witness: F,
+    /// Challenge `α` for batching columns into `f_reduced`.
+    pub challenge_columns: EF,
+    /// Challenge `β` for batching opening points.
+    pub challenge_points: EF,
 }
 
-impl<Witness> DeepProof<Witness> {
-    pub fn pow_witness(&self) -> &Witness {
-        &self.pow_witness
+impl<F, EF> DeepTranscript<F, EF>
+where
+    F: TwoAdicField,
+    EF: ExtensionField<F>,
+{
+    /// Parse DEEP transcript data from a verifier channel.
+    pub fn from_verifier_channel<Ch>(
+        params: &DeepParams,
+        commitments: &[(<Ch as VerifierChannel>::Commitment, Vec<usize>)],
+        num_eval_points: usize,
+        channel: &mut Ch,
+    ) -> Option<Self>
+    where
+        Ch: VerifierChannel<F = F> + CanSample<F>,
+    {
+        let widths: Vec<&[usize]> = commitments
+            .iter()
+            .map(|(_, widths)| widths.as_slice())
+            .collect();
+        let evals =
+            DeepEvals::read_from_channel(&widths, num_eval_points, params.alignment, channel)?;
+
+        let pow_witness = channel.grind(params.proof_of_work_bits)?;
+        let challenge_columns: EF = channel.sample_algebra_element();
+        let challenge_points: EF = channel.sample_algebra_element();
+
+        Some(Self {
+            evals,
+            pow_witness,
+            challenge_columns,
+            challenge_points,
+        })
     }
 }

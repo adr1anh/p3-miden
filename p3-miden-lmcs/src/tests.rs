@@ -3,21 +3,22 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use p3_commit::BatchOpeningRef;
 use p3_field::PrimeCharacteristicRing;
-use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Dimensions, Matrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_stateful_hasher::StatefulHasher;
-use p3_symmetric::Hash;
+use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
 use p3_util::log2_strict_usize;
 use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
-use crate::{HidingLmcsConfig, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsTree, Opening};
+use crate::{HidingLmcsConfig, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, LmcsTree, Proof};
 
 // ============================================================================
-// Re-exports from dev-utils (for external use)
+// Test Helpers and Re-exports
 // ============================================================================
 
 pub use bb::{Compress, DIGEST, F, P, RATE, Sponge, WIDTH};
@@ -56,11 +57,12 @@ pub fn build_leaves_single(matrix: &RowMajorMatrix<F>, sponge: &Sponge) -> Vec<[
 }
 
 // ============================================================================
-// Type Aliases
+// Hiding LMCS Types and Helpers
 // ============================================================================
 
-type HidingTree<M> = LiftedMerkleTree<F, F, M, DIGEST, 4>;
-type HidingConfig = HidingLmcsConfig<P, P, Sponge, Compress, SmallRng, WIDTH, DIGEST, 4>;
+const SALT: usize = 4;
+type HidingTree<M> = LiftedMerkleTree<F, F, M, DIGEST, SALT>;
+type HidingConfig = HidingLmcsConfig<P, P, Sponge, Compress, SmallRng, WIDTH, DIGEST, SALT>;
 
 fn hiding_lmcs(rng: SmallRng) -> HidingConfig {
     let (_, sponge, compress) = bb::test_components();
@@ -76,7 +78,6 @@ fn lmcs_roundtrip() {
     let test = |seed: u64, matrices: &[(usize, usize)], num_queries: usize| {
         let mut rng = SmallRng::seed_from_u64(seed);
         let lmcs = lmcs();
-
         let matrices: Vec<_> = matrices
             .iter()
             .map(|&(h, w)| RowMajorMatrix::rand(&mut rng, h, w))
@@ -86,16 +87,26 @@ fn lmcs_roundtrip() {
         let widths: Vec<_> = tree.leaves().iter().map(|m| m.width()).collect();
         let max_height = tree.leaves().last().map(|m| m.height()).unwrap_or(0);
         let log_max_height = log2_strict_usize(max_height);
-        let commitment = tree.root();
 
         let indices: Vec<usize> = (0..num_queries)
             .map(|_| rng.random_range(0..max_height))
             .collect();
 
-        let proof = tree.prove_batch(&indices);
+        let mut prover_channel = ProverTranscript::new(bb::test_challenger());
+        tree.prove_batch(&indices, &mut prover_channel);
+        let transcript = prover_channel.into_data();
+
+        let mut verifier_channel =
+            VerifierTranscript::from_data(bb::test_challenger(), &transcript);
         let opened_rows = lmcs
-            .open_batch(&commitment, &widths, log_max_height, &indices, &proof)
-            .expect("verification should succeed");
+            .open_batch(
+                &tree.root(),
+                &widths,
+                log_max_height,
+                &indices,
+                &mut verifier_channel,
+            )
+            .expect("batch opening should verify");
 
         assert_eq!(opened_rows.len(), indices.len());
         for rows_for_query in &opened_rows {
@@ -106,7 +117,7 @@ fn lmcs_roundtrip() {
             let expected_rows = tree.rows(leaf_idx);
             for (matrix_idx, expected_row) in expected_rows.iter().enumerate() {
                 assert_eq!(
-                    opened_rows[query_idx][matrix_idx],
+                    opened_rows[query_idx][matrix_idx].as_slice(),
                     expected_row.as_slice(),
                     "mismatch at query {query_idx} (leaf {leaf_idx}), matrix {matrix_idx}"
                 );
@@ -133,21 +144,29 @@ fn hiding_roundtrip() {
         let widths: Vec<_> = tree.leaves().iter().map(|m| m.width()).collect();
         let max_height = tree.leaves().last().map(|m| m.height()).unwrap_or(0);
         let log_max_height = log2_strict_usize(max_height);
-        let commitment = tree.root();
+        let mut prover_channel = ProverTranscript::new(bb::test_challenger());
+        tree.prove_batch(indices, &mut prover_channel);
+        let transcript = prover_channel.into_data();
 
-        let proof = tree.prove_batch(indices);
+        let mut verifier_channel =
+            VerifierTranscript::from_data(bb::test_challenger(), &transcript);
         let opened_rows = config
-            .open_batch(&commitment, &widths, log_max_height, indices, &proof)
-            .unwrap();
+            .open_batch(
+                &tree.root(),
+                &widths,
+                log_max_height,
+                indices,
+                &mut verifier_channel,
+            )
+            .expect("batch opening should verify");
 
         assert_eq!(opened_rows.len(), indices.len());
-        assert_eq!(proof.openings.len(), indices.len());
 
         for (query_idx, &leaf_idx) in indices.iter().enumerate() {
             let expected_rows = tree.rows(leaf_idx);
             for (matrix_idx, expected_row) in expected_rows.iter().enumerate() {
                 assert_eq!(
-                    opened_rows[query_idx][matrix_idx],
+                    opened_rows[query_idx][matrix_idx].as_slice(),
                     expected_row.as_slice(),
                     "mismatch at query {query_idx} (leaf {leaf_idx}), matrix {matrix_idx}"
                 );
@@ -192,38 +211,140 @@ fn extract_proofs_roundtrip() {
         let log_max_height = log2_strict_usize(max_height);
         let commitment = tree.root();
 
-        let proof = tree.prove_batch(indices);
-        let paths = proof
-            .extract_proofs::<_, _, WIDTH>(&sponge, &compress, &widths, log_max_height, indices)
-            .unwrap();
+        let mut prover_channel = ProverTranscript::new(bb::test_challenger());
+        tree.prove_batch(indices, &mut prover_channel);
+        let transcript = prover_channel.into_data();
 
-        assert_eq!(paths.len(), indices.len());
+        let mut verifier_channel =
+            VerifierTranscript::from_data(bb::test_challenger(), &transcript);
+        let proofs = Proof::<F, F, DIGEST>::read_batch_from_channel(
+            &sponge,
+            &compress,
+            &widths,
+            log_max_height,
+            indices,
+            &mut verifier_channel,
+        )
+        .expect("batch proofs should parse from transcript");
+        assert_eq!(proofs.len(), indices.len());
 
-        // Each extracted path should match tree's individual authentication path
-        for (i, &idx) in indices.iter().enumerate() {
-            let expected_path = tree.authentication_path(idx);
+        for (pos, &idx) in indices.iter().enumerate() {
+            let proof = &proofs[pos];
+            let proof_expected = tree.single_proof(idx);
             assert_eq!(
-                paths[i].siblings, expected_path,
-                "path mismatch for index {idx}"
+                proof, &proof_expected,
+                "path mismatch for index {idx} at position {pos}"
             );
-        }
 
-        // Each path should compute same root
-        for (i, &idx) in indices.iter().enumerate() {
-            let rows = tree.rows(idx);
-            let opening: Opening<F, 0> = Opening { rows, salt: [] };
-            let leaf_digest = opening
-                .digest::<F, Sponge, WIDTH, DIGEST>(&sponge, &widths)
-                .unwrap();
-            let root = paths[i].compute_root(idx, leaf_digest, &compress);
-            assert_eq!(
-                Hash::from(root),
-                commitment,
-                "root mismatch for index {idx}"
-            );
+            let dimensions: Vec<Dimensions> = tree
+                .leaves()
+                .iter()
+                .map(|m| Dimensions {
+                    width: m.width(),
+                    height: m.height(),
+                })
+                .collect();
+            let opening_proof = (proof.salt, proof.siblings.clone());
+            let batch_opening = BatchOpeningRef {
+                opened_values: &proof.rows,
+                opening_proof: &opening_proof,
+            };
+            p3_commit::Mmcs::verify_batch(&lmcs, &commitment, &dimensions, idx, batch_opening)
+                .expect("proof should verify");
+
+            let expected_rows = tree.rows(idx);
+            for (matrix_idx, expected_row) in expected_rows.iter().enumerate() {
+                assert_eq!(
+                    proof.rows[matrix_idx].as_slice(),
+                    expected_row.as_slice(),
+                    "row mismatch for index {idx}, matrix {matrix_idx}"
+                );
+            }
         }
     };
 
     test(42, &[(4, 3), (8, 5)], &[0, 1, 5]); // adjacent + non-adjacent
     test(55, &[(4, 2), (16, 3)], &[0, 5, 10, 15]); // larger tree
+}
+
+#[test]
+fn open_batch_handles_empty_or_oob() {
+    let mut rng = SmallRng::seed_from_u64(7);
+    let lmcs = lmcs();
+    let matrices = vec![RowMajorMatrix::rand(&mut rng, 4, 3)];
+    let tree = lmcs.build_tree(matrices);
+    let widths: Vec<_> = tree.leaves().iter().map(|m| m.width()).collect();
+    let log_max_height = log2_strict_usize(tree.height());
+    let commitment = tree.root();
+
+    let transcript = ProverTranscript::new(bb::test_challenger()).into_data();
+
+    let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
+    assert_eq!(
+        lmcs.open_batch(
+            &commitment,
+            &widths,
+            log_max_height,
+            &[],
+            &mut verifier_channel,
+        ),
+        Err(LmcsError::InvalidProof)
+    );
+
+    let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
+    assert_eq!(
+        lmcs.open_batch(
+            &commitment,
+            &widths,
+            log_max_height,
+            &[tree.height()],
+            &mut verifier_channel,
+        ),
+        Err(LmcsError::InvalidProof)
+    );
+}
+
+#[test]
+fn read_batch_handles_empty_or_oob() {
+    let mut rng = SmallRng::seed_from_u64(9);
+    let lmcs = lmcs();
+    let matrices = vec![RowMajorMatrix::rand(&mut rng, 4, 3)];
+    let tree = lmcs.build_tree(matrices);
+    let widths: Vec<_> = tree.leaves().iter().map(|m| m.width()).collect();
+    let log_max_height = log2_strict_usize(tree.height());
+
+    let mut prover_channel = ProverTranscript::new(bb::test_challenger());
+    tree.prove_batch(&[0], &mut prover_channel);
+    let transcript = prover_channel.into_data();
+
+    let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
+    assert_eq!(
+        lmcs.read_batch_from_channel(&widths, log_max_height, &[], &mut verifier_channel),
+        Ok(vec![])
+    );
+
+    let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
+    let proofs = lmcs
+        .read_batch_from_channel(&[], log_max_height, &[0], &mut verifier_channel)
+        .unwrap();
+    assert_eq!(proofs.len(), 1);
+    let Proof {
+        rows,
+        salt,
+        siblings,
+    } = &proofs[0];
+    assert!(rows.is_empty());
+    assert!(salt.is_empty());
+    assert_eq!(siblings.len(), 2);
+
+    let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
+    assert_eq!(
+        lmcs.read_batch_from_channel(
+            &widths,
+            log_max_height,
+            &[tree.height()],
+            &mut verifier_channel,
+        ),
+        Err(LmcsError::InvalidProof)
+    );
 }

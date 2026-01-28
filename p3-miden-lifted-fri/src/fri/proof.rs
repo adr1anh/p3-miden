@@ -1,45 +1,63 @@
-//! FRI proof data structures.
+//! FRI transcript data structures.
 
+use crate::fri::FriParams;
 use alloc::vec::Vec;
+use p3_challenger::CanSample;
+use p3_field::{ExtensionField, TwoAdicField};
+use p3_miden_transcript::VerifierChannel;
 
-use p3_field::{ExtensionField, Field};
-use p3_miden_lmcs::Lmcs;
-
-/// FRI proof data including per-round grinding witnesses.
-///
-/// Contains the FRI round commitments, final polynomial, and the proof-of-work
-/// witnesses for each folding round's beta challenge.
-///
-/// Uses LMCS for commitments. Extension field evaluations are flattened to base
-/// field before commitment and reconstructed after opening.
-pub struct FriProof<EF, L: Lmcs, Witness>
-where
-    L::F: Field,
-{
-    /// Merkle commitments for each folding round.
-    pub(super) commitments: Vec<L::Commitment>,
-
-    /// Coefficients of the final low-degree polynomial.
-    pub(super) final_poly: Vec<EF>,
-
-    /// Proof-of-work witnesses for each round's beta challenge grinding.
-    pub(super) pow_witnesses: Vec<Witness>,
+/// Structured transcript view for a single FRI folding round.
+pub struct FriRoundTranscript<F, EF, Commitment> {
+    /// Commitment to the folded evaluation matrix for this round.
+    pub commitment: Commitment,
+    /// Proof-of-work witness sampled before `beta`.
+    pub pow_witness: F,
+    /// Folding challenge `β` for this round.
+    pub beta: EF,
 }
 
-impl<EF, L: Lmcs, Witness> FriProof<EF, L, Witness>
+/// Structured transcript view for the full FRI interaction.
+pub struct FriTranscript<F, EF, Commitment> {
+    /// Per-round commitments and challenges.
+    pub rounds: Vec<FriRoundTranscript<F, EF, Commitment>>,
+    /// Coefficients of the final low-degree polynomial.
+    pub final_poly: Vec<EF>,
+}
+
+impl<F, EF, Commitment> FriTranscript<F, EF, Commitment>
 where
-    L::F: Field,
-    EF: ExtensionField<L::F>,
+    F: TwoAdicField,
+    EF: ExtensionField<F>,
+    Commitment: Clone,
 {
-    pub fn commitments(&self) -> &[L::Commitment] {
-        &self.commitments
-    }
+    /// Parse a FRI transcript view from a verifier channel.
+    pub fn from_verifier_channel<Ch>(
+        params: &FriParams,
+        log_domain_size: usize,
+        channel: &mut Ch,
+    ) -> Option<Self>
+    where
+        Ch: VerifierChannel<F = F, Commitment = Commitment> + CanSample<F>,
+    {
+        let num_rounds = params.num_rounds(log_domain_size);
+        let mut rounds = Vec::with_capacity(num_rounds);
 
-    pub fn final_poly(&self) -> &[EF] {
-        &self.final_poly
-    }
+        for _ in 0..num_rounds {
+            let commitment = channel.receive_commitment()?.clone();
 
-    pub fn pow_witnesses(&self) -> &[Witness] {
-        &self.pow_witnesses
+            let pow_witness = channel.grind(params.proof_of_work_bits)?;
+
+            let beta: EF = channel.sample_algebra_element();
+            rounds.push(FriRoundTranscript {
+                commitment,
+                pow_witness,
+                beta,
+            });
+        }
+
+        let final_degree = params.final_poly_degree(log_domain_size);
+        let final_poly = channel.receive_algebra_slice(final_degree)?;
+
+        Some(Self { rounds, final_poly })
     }
 }
