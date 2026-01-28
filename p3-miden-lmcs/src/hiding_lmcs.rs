@@ -12,7 +12,7 @@ use p3_symmetric::{Hash, PseudoCompressionFunction};
 use rand::Rng;
 use rand::distr::{Distribution, StandardUniform};
 
-use crate::{LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, Proof};
+use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError};
 
 /// Configuration for hiding LMCS with random salt.
 ///
@@ -20,8 +20,8 @@ use crate::{LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, Proof};
 /// during tree construction. The RNG is stored in a `RefCell` to allow
 /// salt generation without `&mut self` (required by `Mmcs::commit`).
 ///
-/// `open_batch` and `read_batch_from_channel` delegate to the inner `LmcsConfig`,
-/// so hint layout and proof shape match the non-hiding implementation except for
+/// `open_batch` delegates to the inner `LmcsConfig`, so hint layout and proof shape
+/// match the non-hiding implementation except for
 /// the presence of salt. The RNG is only used during `build_tree`.
 ///
 /// # Type Parameters
@@ -128,7 +128,7 @@ where
 {
     type F = PF::Value;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST>;
-    type SingleProof = Proof<PF::Value, PD::Value, DIGEST, SALT>;
+    type BatchProof = BatchProof<PF::Value, PD::Value, DIGEST, SALT>;
     type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, SALT>;
 
     /// Build a tree with per-leaf salt sampled from the RNG.
@@ -166,17 +166,17 @@ where
             .open_batch(commitment, widths, log_max_height, indices, channel)
     }
 
-    fn read_batch_from_channel<Ch>(
+    fn read_batch_proof_from_channel<Ch>(
         &self,
         widths: &[usize],
         log_max_height: usize,
         indices: &[usize],
         channel: &mut Ch,
-    ) -> Result<Vec<Self::SingleProof>, LmcsError>
+    ) -> Result<Self::BatchProof, LmcsError>
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>,
     {
         self.inner
-            .read_batch_from_channel(widths, log_max_height, indices, channel)
+            .read_batch_proof_from_channel(widths, log_max_height, indices, channel)
     }
 }

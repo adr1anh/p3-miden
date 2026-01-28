@@ -11,6 +11,7 @@
 //! - [`LmcsTree`]: Trait for built LMCS trees, providing opening operations.
 //! - [`LiftedMerkleTree`]: The underlying Merkle tree data structure.
 //! - [`Proof`]: Single-opening proof with rows, optional salt, and authentication path.
+//! - [`BatchProof`]: Parsed batch opening from transcript hints.
 //!
 //! # API Overview
 //!
@@ -68,8 +69,10 @@
 //! `LmcsConfig::open_batch` consumes only the hints it needs to reconstruct the root;
 //! extra hint data is left unread. It expects `widths` and `log_max_height` to match the
 //! committed tree and treats empty `indices` as invalid. Use
-//! `LmcsConfig::read_batch_from_channel` if you need per-index [`Proof`] objects without
-//! verifying against a commitment.
+//! [`BatchProof::read_from_channel`](crate::BatchProof::read_from_channel) if you need to
+//! parse hints without hashing; then call [`BatchProof::single_proofs`](crate::BatchProof::single_proofs)
+//! with a sponge/compress pair to reconstruct per-index proofs (keyed by index) without verifying against
+//! a commitment.
 //!
 //! # Mathematical Foundation
 //!
@@ -156,7 +159,7 @@ use thiserror::Error;
 pub use hiding_lmcs::HidingLmcsConfig;
 pub use lifted_tree::LiftedMerkleTree;
 pub use lmcs::LmcsConfig;
-pub use proof::Proof;
+pub use proof::{BatchProof, LeafOpening, Proof};
 
 // ============================================================================
 // Traits
@@ -170,8 +173,8 @@ pub trait Lmcs: Clone {
     type F: Clone + Send + Sync;
     /// Commitment type (root hash).
     type Commitment: Clone;
-    /// Single-opening proof type.
-    type SingleProof;
+    /// Parsed batch opening type.
+    type BatchProof;
     /// Tree type (prover data), parameterized by matrix type.
     type Tree<M: Matrix<Self::F>>: LmcsTree<Self::F, Self::Commitment, M>;
 
@@ -203,18 +206,16 @@ pub trait Lmcs: Clone {
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>;
 
-    /// Read a batch opening from a transcript channel and reconstruct per-index proofs.
+    /// Read a batch opening from a transcript channel without hashing.
     ///
-    /// This only parses hints; it does not verify against a commitment. The hint
-    /// format is implementation-defined and must match the corresponding
-    /// `LmcsTree::prove_batch` implementation.
-    fn read_batch_from_channel<Ch>(
+    /// This parses hints according to the implementation's transcript layout.
+    fn read_batch_proof_from_channel<Ch>(
         &self,
         widths: &[usize],
         log_max_height: usize,
         indices: &[usize],
         channel: &mut Ch,
-    ) -> Result<Vec<Self::SingleProof>, LmcsError>
+    ) -> Result<Self::BatchProof, LmcsError>
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>;
 }

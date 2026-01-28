@@ -135,7 +135,7 @@ where
         }
 
         if index >= max_height {
-            return Err(LmcsError::InvalidProof)
+            return Err(LmcsError::InvalidProof);
         }
 
         let computed_root = {

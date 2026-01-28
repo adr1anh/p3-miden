@@ -11,13 +11,13 @@ use p3_miden_transcript::VerifierChannel;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 
 use crate::utils::digest_rows_and_salt;
-use crate::{LiftedMerkleTree, Lmcs, LmcsError, Proof};
+use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsError};
 
 /// LMCS configuration holding cryptographic primitives (sponge + compression).
 ///
 /// This implementation defines the transcript hint layout used by
 /// [`LiftedMerkleTree::prove_batch`](crate::LiftedMerkleTree::prove_batch) and consumed by
-/// `open_batch` and `read_batch_from_channel`:
+/// `open_batch` and [`BatchProof::read_from_channel`](crate::BatchProof::read_from_channel):
 /// - For each query index (in caller order): one row per matrix (in leaf order), then
 ///   `SALT_ELEMS` field elements of salt.
 /// - After all indices: missing sibling hashes, level-by-level, left-to-right, bottom-to-top.
@@ -27,9 +27,10 @@ use crate::{LiftedMerkleTree, Lmcs, LmcsError, Proof};
 /// `open_batch` expects `widths` and `log_max_height` to match the committed tree,
 /// rejects empty `indices`, and ignores extra hint data. Widths must already include
 /// alignment padding. Duplicate indices must yield identical rows/salt or `InvalidProof`
-/// is returned. `read_batch_from_channel` parses the same hint stream into per-index
-/// proofs without verifying against a commitment; empty indices return `Ok(vec![])`
-/// and out-of-range indices return `InvalidProof`.
+/// is returned. [`BatchProof::read_from_channel`](crate::BatchProof::read_from_channel) parses
+/// the same hint stream without hashing, and [`BatchProof::single_proofs`](crate::BatchProof::single_proofs)
+/// can reconstruct per-index proofs (keyed by index) without verifying against a commitment. Empty indices
+/// yield an empty `BatchProof`, and out-of-range indices return `InvalidProof`.
 ///
 /// Padding note:
 /// - LMCS does not enforce that aligned padding values are zero. Verifiers cannot
@@ -101,7 +102,7 @@ where
 {
     type F = PF::Value;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST>;
-    type SingleProof = Proof<PF::Value, PD::Value, DIGEST, SALT_ELEMS>;
+    type BatchProof = BatchProof<PF::Value, PD::Value, DIGEST, SALT_ELEMS>;
     type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, SALT_ELEMS>;
 
     /// Build a tree from matrices.
@@ -256,35 +257,29 @@ where
         Ok(openings)
     }
 
-    /// Parse batch hints into per-index proofs without verifying a commitment.
+    /// Parse batch hints without hashing.
     ///
     /// Security notes:
     /// - `widths` and `log_max_height` are trusted parameters.
     /// - `widths` must already include alignment padding; LMCS does not enforce that padded
     ///   values are zero. Verifiers cannot distinguish zero padding from arbitrary values
     ///   unless they check the opened rows or constrain them elsewhere.
-    /// - Empty `indices` returns `Ok(vec![])` and consumes no hints.
+    /// - Empty `indices` returns `Ok(BatchProof { openings: BTreeMap::new(), siblings: BTreeMap::new() })`
+    ///   and consumes no hints.
     /// - Out-of-range indices return `InvalidProof`.
     /// - Extra hints are ignored and left unread.
-    fn read_batch_from_channel<Ch>(
+    fn read_batch_proof_from_channel<Ch>(
         &self,
         widths: &[usize],
         log_max_height: usize,
         indices: &[usize],
         channel: &mut Ch,
-    ) -> Result<Vec<Self::SingleProof>, LmcsError>
+    ) -> Result<Self::BatchProof, LmcsError>
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>,
     {
-        Proof::read_batch_from_channel(
-            &self.sponge,
-            &self.compress,
-            widths,
-            log_max_height,
-            indices,
-            channel,
-        )
-        .ok_or(LmcsError::InvalidProof)
+        BatchProof::read_from_channel(widths, log_max_height, indices, channel)
+            .ok_or(LmcsError::InvalidProof)
     }
 }
 // ============================================================================

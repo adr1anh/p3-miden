@@ -14,7 +14,9 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
-use crate::{HidingLmcsConfig, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, LmcsTree, Proof};
+use crate::{
+    BatchProof, HidingLmcsConfig, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, LmcsTree, Proof,
+};
 
 // ============================================================================
 // Test Helpers and Re-exports
@@ -230,7 +232,7 @@ fn open_batch_handles_empty_or_oob() {
 }
 
 #[test]
-fn read_batch_handles_empty_or_oob() {
+fn batch_proof_handles_empty_or_oob() {
     let mut rng = SmallRng::seed_from_u64(9);
     let lmcs = lmcs();
     let matrices = vec![RowMajorMatrix::rand(&mut rng, 4, 3)];
@@ -243,33 +245,55 @@ fn read_batch_handles_empty_or_oob() {
     let transcript = prover_channel.into_data();
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    assert_eq!(
-        lmcs.read_batch_from_channel(&widths, log_max_height, &[], &mut verifier_channel),
-        Ok(vec![])
-    );
+    let batch = BatchProof::<F, F, DIGEST>::read_from_channel(
+        &widths,
+        log_max_height,
+        &[],
+        &mut verifier_channel,
+    )
+    .unwrap();
+    assert!(batch.openings.is_empty());
+    assert!(batch.siblings.is_empty());
+    let proofs = batch
+        .single_proofs::<Sponge, Compress, WIDTH>(
+            &lmcs.sponge,
+            &lmcs.compress,
+            &widths,
+            log_max_height,
+        )
+        .unwrap();
+    assert!(proofs.is_empty());
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    let proofs = lmcs
-        .read_batch_from_channel(&[], log_max_height, &[0], &mut verifier_channel)
+    let batch = BatchProof::<F, F, DIGEST>::read_from_channel(
+        &[],
+        log_max_height,
+        &[0],
+        &mut verifier_channel,
+    )
+    .unwrap();
+    let proofs = batch
+        .single_proofs::<Sponge, Compress, WIDTH>(&lmcs.sponge, &lmcs.compress, &[], log_max_height)
         .unwrap();
     assert_eq!(proofs.len(), 1);
+    let proof = proofs.get(&0).expect("proof for index 0");
     let Proof {
         rows,
         salt,
         siblings,
-    } = &proofs[0];
+    } = proof;
     assert!(rows.is_empty());
     assert!(salt.is_empty());
     assert_eq!(siblings.len(), 2);
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    assert_eq!(
-        lmcs.read_batch_from_channel(
+    assert!(
+        BatchProof::<F, F, DIGEST>::read_from_channel(
             &widths,
             log_max_height,
             &[tree.height()],
             &mut verifier_channel,
-        ),
-        Err(LmcsError::InvalidProof)
+        )
+        .is_none()
     );
 }

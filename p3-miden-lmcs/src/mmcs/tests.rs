@@ -14,7 +14,7 @@ use p3_util::log2_strict_usize;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
-use crate::{HidingLmcsConfig, Lmcs, LmcsConfig, LmcsError, LmcsTree, Proof};
+use crate::{BatchProof, HidingLmcsConfig, Lmcs, LmcsConfig, LmcsError, LmcsTree};
 
 type BaseMmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 type RowMatrix = RowMajorMatrix<F>;
@@ -106,19 +106,20 @@ fn extract_proofs_roundtrip() {
         let transcript = prover_channel.into_data();
 
         let mut verifier_channel = VerifierTranscript::from_data(test_challenger(), &transcript);
-        let proofs = Proof::<F, F, DIGEST>::read_batch_from_channel(
-            &sponge,
-            &compress,
+        let batch = BatchProof::<F, F, DIGEST>::read_from_channel(
             &widths,
             log_max_height,
             indices,
             &mut verifier_channel,
         )
-        .expect("batch proofs should parse from transcript");
+        .expect("batch proof should parse from transcript");
+        let proofs = batch
+            .single_proofs::<Sponge, Compress, WIDTH>(&sponge, &compress, &widths, log_max_height)
+            .expect("batch proof should reconstruct proofs");
         assert_eq!(proofs.len(), indices.len());
 
         for (pos, &idx) in indices.iter().enumerate() {
-            let proof = &proofs[pos];
+            let proof = proofs.get(&idx).expect("proof for index");
             let proof_expected = tree.single_proof(idx);
             assert_eq!(
                 proof, &proof_expected,

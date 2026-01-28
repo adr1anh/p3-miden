@@ -9,12 +9,9 @@ use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::VerifierChannel;
 
-/// Ordered per-index proofs, aligned with the sampled query indices.
-pub struct OrderedProofs<P>(pub Vec<P>);
-
 /// Structured transcript view for the full PCS interaction.
 ///
-/// Captures observed transcript data plus reconstructed LMCS proofs for inspection.
+/// Captures observed transcript data plus parsed LMCS batch openings for inspection.
 pub struct PcsTranscript<EF, L>
 where
     L: Lmcs,
@@ -29,10 +26,10 @@ where
     pub query_pow_witness: L::F,
     /// Query indices sampled for openings.
     pub indices: Vec<usize>,
-    /// Per-index Merkle proofs per trace tree, ordered by query indices.
-    pub deep_openings: Vec<OrderedProofs<L::SingleProof>>,
-    /// Per-index Merkle proofs per FRI round, ordered by query indices.
-    pub fri_openings: Vec<OrderedProofs<L::SingleProof>>,
+    /// Batch openings per trace tree, aligned with `indices`.
+    pub deep_openings: Vec<L::BatchProof>,
+    /// Batch openings per FRI round, aligned with per-round indices.
+    pub fri_openings: Vec<L::BatchProof>,
 }
 
 impl<EF, L> PcsTranscript<EF, L>
@@ -80,9 +77,8 @@ where
         let deep_openings: Vec<_> = commitments
             .iter()
             .map(|(_commitment, widths)| {
-                lmcs.read_batch_from_channel(widths, log_max_height, &indices, channel)
+                lmcs.read_batch_proof_from_channel(widths, log_max_height, &indices, channel)
                     .ok()
-                    .map(OrderedProofs)
             })
             .collect::<Option<Vec<_>>>()?;
 
@@ -98,11 +94,10 @@ where
                 .map(|&idx| idx >> (log_arity * (round + 1)))
                 .collect();
             let widths = [arity * EF::DIMENSION];
-            let proofs = lmcs
-                .read_batch_from_channel(&widths, log_num_rows, &round_indices, channel)
-                .ok()
-                .map(OrderedProofs)?;
-            fri_openings.push(proofs);
+            let batch = lmcs
+                .read_batch_proof_from_channel(&widths, log_num_rows, &round_indices, channel)
+                .ok()?;
+            fri_openings.push(batch);
         }
 
         Some(Self {
