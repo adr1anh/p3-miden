@@ -48,6 +48,15 @@ use serde::{Deserialize, Serialize};
 ///
 /// Use [`root`](Self::root) to fetch the final digest once the tree is built.
 ///
+/// ## Transcript Hints
+///
+/// `prove_batch` streams transcript hints in the format expected by
+/// [`LmcsConfig::open_batch`](crate::LmcsConfig::open_batch):
+/// - For each query index (in caller order): one row per matrix (in leaf order), then
+///   `SALT_ELEMS` field elements of salt.
+/// - After all indices: missing sibling hashes, level-by-level, left-to-right, bottom-to-top.
+/// Hints are not observed into the Fiat-Shamir challenger.
+///
 /// This generally shouldn't be used directly. If you're using a Merkle tree as an MMCS,
 /// see the MMCS wrapper types.
 #[derive(Debug, Serialize, Deserialize)]

@@ -58,10 +58,17 @@
 //!
 //! ## Transcript Hints
 //!
-//! Batch openings are streamed as transcript hints: `prove_batch` writes rows/salt and
-//! sibling hashes without observing them into the Fiat-Shamir challenger, and
-//! `open_batch` reads and verifies those hints against a commitment. Use
-//! `read_batch_from_channel` if you need per-index [`Proof`] objects for inspection.
+//! For the `LmcsConfig`/`LiftedMerkleTree` implementation in this crate, batch openings
+//! are streamed as transcript hints: for each query index, `prove_batch` writes one row
+//! per matrix (in tree leaf order) followed by optional salt. After all indices, missing
+//! sibling hashes are emitted level-by-level in canonical left-to-right, bottom-to-top
+//! order. Hints are not observed into the Fiat-Shamir challenger.
+//!
+//! `LmcsConfig::open_batch` consumes only the hints it needs to reconstruct the root;
+//! extra hint data is left unread. It expects `widths` and `log_max_height` to match the
+//! committed tree and treats empty `indices` as invalid. Use
+//! `LmcsConfig::read_batch_from_channel` if you need per-index [`Proof`] objects without
+//! verifying against a commitment.
 //!
 //! # Mathematical Foundation
 //!
@@ -168,11 +175,13 @@ pub trait Lmcs: Clone {
     type Tree<M: Matrix<Self::F>>: LmcsTree<Self::F, Self::Commitment, M>;
 
     /// Build a tree from matrices.
-    ///
-    /// The packed types are known from `self`, so no turbofish is needed.
     fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M>;
 
-    /// Open a batch proof by reading it from a transcript channel.
+    /// Open a batch proof by reading hint data from a transcript channel.
+    ///
+    /// The hint format is implementation-defined; callers must use the matching
+    /// `LmcsTree::prove_batch` implementation to produce compatible hints.
+    /// `widths` and `log_max_height` must match the committed tree.
     fn open_batch<Ch>(
         &self,
         commitment: &Self::Commitment,
@@ -186,7 +195,9 @@ pub trait Lmcs: Clone {
 
     /// Read a batch opening from a transcript channel and reconstruct per-index proofs.
     ///
-    /// This only parses hints; it does not verify against a commitment.
+    /// This only parses hints; it does not verify against a commitment. The hint
+    /// format is implementation-defined and must match the corresponding
+    /// `LmcsTree::prove_batch` implementation.
     fn read_batch_from_channel<Ch>(
         &self,
         widths: &[usize],
@@ -215,6 +226,9 @@ pub trait LmcsTree<F, Commitment, M> {
     fn rows(&self, index: usize) -> Vec<Vec<F>>;
 
     /// Prove a batch opening and stream it into a transcript channel.
+    ///
+    /// The hint format is implementation-defined and must be consumed by the
+    /// corresponding `Lmcs::open_batch` implementation.
     fn prove_batch<Ch>(&self, indices: &[usize], channel: &mut Ch)
     where
         Ch: ProverChannel<F = F, Commitment = Commitment>;

@@ -15,6 +15,20 @@ use crate::{LiftedMerkleTree, Lmcs, LmcsError, Proof};
 
 /// LMCS configuration holding cryptographic primitives (sponge + compression).
 ///
+/// This implementation defines the transcript hint layout used by
+/// [`LiftedMerkleTree::prove_batch`](crate::LiftedMerkleTree::prove_batch) and consumed by
+/// `open_batch` and `read_batch_from_channel`:
+/// - For each query index (in caller order): one row per matrix (in leaf order), then
+///   `SALT_ELEMS` field elements of salt.
+/// - After all indices: missing sibling hashes, level-by-level, left-to-right, bottom-to-top.
+/// Hints are not observed into the Fiat-Shamir challenger.
+///
+/// `open_batch` expects `widths` and `log_max_height` to match the committed tree,
+/// rejects empty `indices`, and ignores extra hint data. Duplicate indices must yield
+/// identical rows/salt or `InvalidProof` is returned. `read_batch_from_channel` parses
+/// the same hint stream into per-index proofs without verifying against a commitment;
+/// empty indices return `Ok(vec![])` and out-of-range indices return `InvalidProof`.
+///
 /// For hiding commitments with salt, use [`crate::HidingLmcsConfig`] instead.
 #[derive(Clone, Debug)]
 pub struct LmcsConfig<

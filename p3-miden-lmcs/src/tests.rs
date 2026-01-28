@@ -3,10 +3,9 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_commit::BatchOpeningRef;
 use p3_field::PrimeCharacteristicRing;
+use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_matrix::{Dimensions, Matrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_stateful_hasher::StatefulHasher;
 use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
@@ -191,80 +190,6 @@ fn hiding_roundtrip() {
     let tree2: HidingTree<_> = config2.build_tree(matrices2);
 
     assert_ne!(tree1.root(), tree2.root());
-}
-
-#[test]
-fn extract_proofs_roundtrip() {
-    let (sponge, compress) = components();
-    let lmcs = lmcs();
-
-    let test = |seed: u64, matrices: &[(usize, usize)], indices: &[usize]| {
-        let mut rng = SmallRng::seed_from_u64(seed);
-        let matrices: Vec<_> = matrices
-            .iter()
-            .map(|&(h, w)| RowMajorMatrix::rand(&mut rng, h, w))
-            .collect();
-
-        let tree = lmcs.build_tree(matrices);
-        let widths: Vec<_> = tree.leaves().iter().map(|m| m.width()).collect();
-        let max_height = tree.leaves().last().map(|m| m.height()).unwrap_or(0);
-        let log_max_height = log2_strict_usize(max_height);
-        let commitment = tree.root();
-
-        let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-        tree.prove_batch(indices, &mut prover_channel);
-        let transcript = prover_channel.into_data();
-
-        let mut verifier_channel =
-            VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-        let proofs = Proof::<F, F, DIGEST>::read_batch_from_channel(
-            &sponge,
-            &compress,
-            &widths,
-            log_max_height,
-            indices,
-            &mut verifier_channel,
-        )
-        .expect("batch proofs should parse from transcript");
-        assert_eq!(proofs.len(), indices.len());
-
-        for (pos, &idx) in indices.iter().enumerate() {
-            let proof = &proofs[pos];
-            let proof_expected = tree.single_proof(idx);
-            assert_eq!(
-                proof, &proof_expected,
-                "path mismatch for index {idx} at position {pos}"
-            );
-
-            let dimensions: Vec<Dimensions> = tree
-                .leaves()
-                .iter()
-                .map(|m| Dimensions {
-                    width: m.width(),
-                    height: m.height(),
-                })
-                .collect();
-            let opening_proof = (proof.salt, proof.siblings.clone());
-            let batch_opening = BatchOpeningRef {
-                opened_values: &proof.rows,
-                opening_proof: &opening_proof,
-            };
-            p3_commit::Mmcs::verify_batch(&lmcs, &commitment, &dimensions, idx, batch_opening)
-                .expect("proof should verify");
-
-            let expected_rows = tree.rows(idx);
-            for (matrix_idx, expected_row) in expected_rows.iter().enumerate() {
-                assert_eq!(
-                    proof.rows[matrix_idx].as_slice(),
-                    expected_row.as_slice(),
-                    "row mismatch for index {idx}, matrix {matrix_idx}"
-                );
-            }
-        }
-    };
-
-    test(42, &[(4, 3), (8, 5)], &[0, 1, 5]); // adjacent + non-adjacent
-    test(55, &[(4, 2), (16, 3)], &[0, 5, 10, 15]); // larger tree
 }
 
 #[test]

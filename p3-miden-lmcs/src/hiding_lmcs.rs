@@ -20,6 +20,10 @@ use crate::{LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, Proof};
 /// during tree construction. The RNG is stored in a `RefCell` to allow
 /// salt generation without `&mut self` (required by `Mmcs::commit`).
 ///
+/// `open_batch` and `read_batch_from_channel` delegate to the inner `LmcsConfig`,
+/// so hint layout and proof shape match the non-hiding implementation except for
+/// the presence of salt. The RNG is only used during `build_tree`.
+///
 /// # Type Parameters
 ///
 /// - `PF`: Packed field element type for SIMD operations.

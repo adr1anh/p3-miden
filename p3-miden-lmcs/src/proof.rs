@@ -2,7 +2,8 @@
 //!
 //! - [`Proof`]: Single-opening proof with rows, optional salt, and authentication path.
 //!
-//! For batched openings via transcript hints, see [`Lmcs`](crate::Lmcs)::open_batch.
+//! For batched openings via transcript hints in this crate, see
+//! [`LmcsConfig`](crate::LmcsConfig) and [`LiftedMerkleTree`](crate::LiftedMerkleTree).
 //! The [`Proof`] type stores opened rows (and optional salt) alongside its Merkle path.
 
 use crate::utils::digest_rows_and_salt;
@@ -40,7 +41,10 @@ impl<F, D, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
 {
     /// Read a batch opening from a transcript channel and reconstruct per-index proofs.
     ///
-    /// This only parses hints; it does not verify against a commitment.
+    /// This only parses hints; it does not verify against a commitment. The hint
+    /// layout matches the `LmcsConfig`/`LiftedMerkleTree` implementation in this crate.
+    /// Empty `indices` return `Some(vec![])` and consume no hints; out-of-range indices
+    /// return `None`.
     pub fn read_batch_from_channel<H, C, Ch, const WIDTH: usize>(
         sponge: &H,
         compress: &C,
