@@ -69,24 +69,26 @@ where
             // Then, apply any additional boundary constraints as needed
             let aux = builder.permutation();
             let aux_current = aux.row_slice(0).unwrap();
-            let aux_bus_boundary_values = builder.aux_bus_boundary_values().to_vec();
 
             for (idx, bus_type) in self.inner.bus_types().iter().enumerate() {
+                let aux_value: AB::ExprEF = aux_current[idx].into();
+                let boundary_value: AB::ExprEF = builder.aux_bus_boundary_values()[idx].into();
+
                 match bus_type {
                     BusType::Multiset => {
                         builder
                             .when_first_row()
-                            .assert_zero_ext(aux_current[idx].into() - AB::ExprEF::ONE);
+                            .assert_zero_ext(aux_value.clone() - AB::ExprEF::ONE);
                     }
                     BusType::Logup => {
                         builder
                             .when_first_row()
-                            .assert_zero_ext(aux_current[idx].into());
+                            .assert_zero_ext(aux_value.clone());
                     }
                 }
                 builder
                     .when_last_row()
-                    .assert_zero_ext(aux_current[idx].into() - aux_bus_boundary_values[idx].into());
+                    .assert_zero_ext(aux_value - boundary_value);
             }
         }
     }
