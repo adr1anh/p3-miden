@@ -81,9 +81,7 @@ where
                             .assert_zero_ext(aux_value.clone() - AB::ExprEF::ONE);
                     }
                     BusType::Logup => {
-                        builder
-                            .when_first_row()
-                            .assert_zero_ext(aux_value.clone());
+                        builder.when_first_row().assert_zero_ext(aux_value.clone());
                     }
                 }
                 builder

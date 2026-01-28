@@ -14,9 +14,7 @@ use p3_miden_air::MidenAir;
 use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
-use crate::periodic_tables::{
-    compute_periodic_on_quotient_eval_domain, fill_periodic_values,
-};
+use crate::periodic_tables::{compute_periodic_on_quotient_eval_domain, fill_periodic_values};
 use crate::util::prover_row_to_ext;
 use crate::{
     AirWithBoundaryConstraints, Commitments, Domain, OpenedValues, PackedChallenge, PackedVal,
@@ -563,8 +561,8 @@ where
         });
 
     // Pack challenges once for constraint evaluation
-    let packed_randomness: Vec<PackedChallenge<SC>> =
-        info_span!("pack randomness").in_scope(|| randomness.iter().copied().map(Into::into).collect());
+    let packed_randomness: Vec<PackedChallenge<SC>> = info_span!("pack randomness")
+        .in_scope(|| randomness.iter().copied().map(Into::into).collect());
 
     let num_periodic_cols = periodic_on_quotient.width();
     let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
@@ -605,7 +603,9 @@ where
         }
     }
 
-    let eval_chunk_into = |buffers: &mut ChunkBuffers<SC>, i_start: usize, out_chunk: &mut [SC::Challenge]| {
+    let eval_chunk_into = |buffers: &mut ChunkBuffers<SC>,
+                           i_start: usize,
+                           out_chunk: &mut [SC::Challenge]| {
         let packed_idx = i_start / PackedVal::<SC>::WIDTH;
         let is_first_row = packed_is_first_row[packed_idx];
         let is_last_row = packed_is_last_row[packed_idx];
@@ -663,9 +663,9 @@ where
 
         let accumulator = PackedChallenge::<SC>::ZERO;
         let mut folder: ProverConstraintFolder<'_, SC> = ProverConstraintFolder {
-            main: main,
-            aux: aux,
-            preprocessed: preprocessed,
+            main,
+            aux,
+            preprocessed,
             public_values,
             periodic_values: buffers.periodic_values.as_slice(),
             is_first_row,
@@ -675,11 +675,15 @@ where
             decomposed_alpha_powers: &decomposed_alpha_powers,
             accumulator,
             constraint_index: 0,
+            pending_base_start: 0,
+            pending_base_len: 0,
+            pending_base: core::array::from_fn(|_| PackedVal::<SC>::ZERO),
             packed_randomness: &packed_randomness,
             aux_bus_boundary_values: &packed_aux_bus_boundary_values,
         };
 
         air.eval(&mut folder);
+        folder.flush_pending_base();
 
         // quotient(x) = constraints(x) / Z_H(x)
         let quotient = folder.accumulator * inv_vanishing;
@@ -689,8 +693,8 @@ where
         // this loop is typically over a full chunk. We still guard the tail for correctness.
         let basis_coeffs = quotient.as_basis_coefficients_slice();
         let len = core::cmp::min(quotient_size - i_start, out_chunk.len());
-        for idx_in_packing in 0..len {
-            out_chunk[idx_in_packing] = SC::Challenge::from_basis_coefficients_fn(|coeff_idx| {
+        for (idx_in_packing, c) in out_chunk.iter_mut().enumerate().take(len) {
+            *c = SC::Challenge::from_basis_coefficients_fn(|coeff_idx| {
                 basis_coeffs[coeff_idx].as_slice()[idx_in_packing]
             });
         }
@@ -700,23 +704,21 @@ where
         let mut out = vec![SC::Challenge::default(); quotient_size];
 
         #[cfg(feature = "parallel")]
-        out.par_chunks_mut(chunk_size)
-            .enumerate()
-            .for_each_init(
-                || {
-                    ChunkBuffers::<SC>::new(
-                        num_periodic_cols,
-                        width,
-                        aux_base_width,
-                        aux_ef_width,
-                        preprocessed_width,
-                    )
-                },
-                |buffers, (chunk_idx, out_chunk)| {
-                    let i_start = chunk_idx * chunk_size;
-                    eval_chunk_into(buffers, i_start, out_chunk);
-                },
-            );
+        out.par_chunks_mut(chunk_size).enumerate().for_each_init(
+            || {
+                ChunkBuffers::<SC>::new(
+                    num_periodic_cols,
+                    width,
+                    aux_base_width,
+                    aux_ef_width,
+                    preprocessed_width,
+                )
+            },
+            |buffers, (chunk_idx, out_chunk)| {
+                let i_start = chunk_idx * chunk_size;
+                eval_chunk_into(buffers, i_start, out_chunk);
+            },
+        );
 
         #[cfg(not(feature = "parallel"))]
         {

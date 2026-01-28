@@ -219,6 +219,31 @@ where
     PeriodicLdeTable::new(RowMajorMatrix::new(row_major_values, num_cols))
 }
 
+/// Extract packed periodic values for a quotient chunk using modular indexing.
+///
+/// This always fills `out` with `PackedVal::WIDTH`-sized values; callers should handle
+/// the tail chunk length separately.
+pub(crate) fn fill_periodic_values<F, P>(
+    periodic_table: &PeriodicLdeTable<F>,
+    i_start: usize,
+    out: &mut Vec<P>,
+) where
+    F: Clone + Send + Sync,
+    P: p3_field::PackedValue<Value = F>,
+{
+    let num_cols = periodic_table.width();
+    out.clear();
+    if num_cols == 0 {
+        return;
+    }
+    for col_idx in 0..num_cols {
+        let packed = <P as p3_field::PackedValue>::from_fn(|j| {
+            periodic_table.get(i_start + j, col_idx).clone()
+        });
+        out.push(packed);
+    }
+}
+
 /// Evaluates periodic columns at an out-of-domain challenge point `zeta`.
 ///
 /// Used by the verifier to check constraint satisfaction. This function evaluates all

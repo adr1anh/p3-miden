@@ -51,10 +51,6 @@ impl<AB: MidenAirBuilder> MidenAirBuilder for FilteredMidenAirBuilder<'_, AB> {
         self.inner.is_transition_window(size)
     }
 
-    fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
-        self.inner.assert_zero(self.condition() * x.into());
-    }
-
     fn public_values(&self) -> &[Self::PublicVar] {
         self.inner.public_values()
     }
@@ -65,6 +61,19 @@ impl<AB: MidenAirBuilder> MidenAirBuilder for FilteredMidenAirBuilder<'_, AB> {
 
     fn preprocessed(&self) -> Self::M {
         self.inner.preprocessed()
+    }
+
+    fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
+        self.inner.assert_zero(self.condition() * x.into());
+    }
+
+    fn assert_zeros<const N: usize, I: Into<Self::Expr>>(&mut self, array: [I; N]) {
+        // Preserve batching in downstream builders by forwarding as a single `assert_zeros`
+        // call instead of falling back to N `assert_zero` calls. This keeps constraint ordering
+        // intact for buffered accumulation in the prover.
+        let condition = self.condition();
+        self.inner
+            .assert_zeros(array.map(|x| condition.clone() * x.into()));
     }
 
     fn assert_zero_ext<I>(&mut self, x: I)

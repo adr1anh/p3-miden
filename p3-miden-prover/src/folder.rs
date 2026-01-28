@@ -1,10 +1,14 @@
 use alloc::vec::Vec;
-
+use p3_field::{BasedVectorSpace, PackedField, PrimeCharacteristicRing};
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::ViewPair;
 use p3_miden_air::MidenAirBuilder;
 
 use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
+
+// Batch size for buffered base-field constraints. This is a small fixed window to reduce
+// per-constraint overhead without growing stack/regs too much in the hot path.
+const PENDING_BASE_BATCH: usize = 16;
 
 /// Handles constraint accumulation for the prover in a STARK system.
 ///
@@ -43,6 +47,52 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     pub accumulator: PackedChallenge<SC>,
     /// Current constraint index being processed
     pub constraint_index: usize,
+
+    // Small batching buffer for base-field `assert_zero` calls. We flush this buffer before any
+    // extension-field constraint to preserve constraint ordering across the full stream.
+    pub(crate) pending_base_start: usize,
+    pub(crate) pending_base_len: usize,
+    pub(crate) pending_base: [PackedVal<SC>; PENDING_BASE_BATCH],
+}
+
+impl<'a, SC: StarkGenericConfig> ProverConstraintFolder<'a, SC> {
+    #[inline]
+    pub fn flush_pending_base(&mut self) {
+        let n = self.pending_base_len;
+        if n == 0 {
+            return;
+        }
+
+        let start = self.pending_base_start;
+        // Pull out references so we can update `accumulator` without tripping borrowck.
+        let decomposed_alpha_powers = self.decomposed_alpha_powers;
+        let pending_base = &self.pending_base;
+
+        if n == PENDING_BASE_BATCH {
+            // Fast path for the common case: flush a full batch using the const-generic kernel.
+            self.accumulator += PackedChallenge::<SC>::from_basis_coefficients_fn(|i| {
+                let alpha_powers = &decomposed_alpha_powers[i][start..(start + PENDING_BASE_BATCH)];
+                PackedVal::<SC>::packed_linear_combination::<PENDING_BASE_BATCH>(
+                    alpha_powers,
+                    pending_base,
+                )
+            });
+        } else {
+            // Tail flush (end-of-eval / before `assert_zero_ext`): keep it simple and avoid a big
+            // const-generic match ladder for small `n`.
+            let pending_base = &pending_base[..n];
+            self.accumulator += PackedChallenge::<SC>::from_basis_coefficients_fn(|i| {
+                let alpha_powers = &decomposed_alpha_powers[i][start..(start + n)];
+                let mut acc = PackedVal::<SC>::ZERO;
+                for (coeff, expr) in alpha_powers.iter().zip(pending_base.iter()) {
+                    acc += *expr * *coeff;
+                }
+                acc
+            });
+        }
+
+        self.pending_base_len = 0;
+    }
 }
 
 impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, SC> {
@@ -83,13 +133,6 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
     }
 
     #[inline]
-    fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
-        let alpha_power = self.alpha_powers[self.constraint_index];
-        self.accumulator += Into::<PackedChallenge<SC>>::into(alpha_power) * x.into();
-        self.constraint_index += 1;
-    }
-
-    #[inline]
     fn public_values(&self) -> &[Self::PublicVar] {
         self.public_values
     }
@@ -101,10 +144,44 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
     }
 
     #[inline]
+    fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
+        let x = x.into();
+        if self.pending_base_len == 0 {
+            self.pending_base_start = self.constraint_index;
+        }
+
+        self.pending_base[self.pending_base_len] = x;
+        self.pending_base_len += 1;
+        self.constraint_index += 1;
+
+        if self.pending_base_len == PENDING_BASE_BATCH {
+            self.flush_pending_base();
+        }
+    }
+
+    #[inline]
+    fn assert_zeros<const N: usize, I: Into<Self::Expr>>(&mut self, array: [I; N]) {
+        // `assert_zero` is buffered for batching. `assert_zeros` must flush first to avoid
+        // interleaving constraints and breaking the pending base batch bookkeeping.
+        self.flush_pending_base();
+
+        let expr_array = array.map(Into::into);
+        self.accumulator += PackedChallenge::<SC>::from_basis_coefficients_fn(|i| {
+            let alpha_powers = &self.decomposed_alpha_powers[i]
+                [self.constraint_index..(self.constraint_index + N)];
+            PackedVal::<SC>::packed_linear_combination::<N>(alpha_powers, &expr_array)
+        });
+        self.constraint_index += N;
+    }
+
+    #[inline]
     fn assert_zero_ext<I>(&mut self, x: I)
     where
         I: Into<Self::ExprEF>,
     {
+        // Ensure base-field pending constraints remain contiguous in the constraint stream.
+        self.flush_pending_base();
+
         let alpha_power = self.alpha_powers[self.constraint_index];
         self.accumulator += Into::<PackedChallenge<SC>>::into(alpha_power) * x.into();
         self.constraint_index += 1;
