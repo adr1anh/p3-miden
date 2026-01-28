@@ -51,7 +51,7 @@ pub fn prove<SC, A>(
 where
     SC: StarkGenericConfig + Sync,
     A: MidenAir<Val<SC>, SC::Challenge>,
-    Val<SC>: TwoAdicField,
+    Val<SC>: TwoAdicField + Ord,
 {
     let air = &AirWithBoundaryConstraints {
         inner: air,
@@ -458,7 +458,7 @@ where
     SC: StarkGenericConfig + Sync,
     A: MidenAir<Val<SC>, SC::Challenge>,
     Mat: Matrix<Val<SC>> + Sync,
-    Val<SC>: TwoAdicField,
+    Val<SC>: TwoAdicField + Ord,
 {
     let quotient_size = quotient_domain.size();
     let width = trace_on_quotient_domain.width();
@@ -476,26 +476,9 @@ where
     // shared by prover and verifier.
     let periodic_table = air.periodic_table();
 
-    // Precompute the quotient-domain points for easy lookups.
-    let quotient_points: Vec<Val<SC>> = {
-        let mut pts = Vec::with_capacity(quotient_size);
-        let mut point = quotient_domain.first_point();
-        pts.push(point);
-        for _ in 1..quotient_size {
-            point = quotient_domain
-                .next_point(point)
-                .expect("quotient_domain should yield enough points");
-            pts.push(point);
-        }
-        pts
-    };
-
     // Compute periodic values
-    let periodic_on_quotient = compute_periodic_on_quotient_eval_domain::<Val<SC>, Val<SC>>(
-        periodic_table,
-        trace_domain,
-        &quotient_points,
-    );
+    let periodic_on_quotient =
+        compute_periodic_on_quotient_eval_domain(&periodic_table, &trace_domain, &quotient_domain);
 
     // =====================================
     // normal eval section
@@ -529,10 +512,11 @@ where
         .map(Into::into)
         .collect();
 
-    (0..quotient_size)
-        .into_par_iter()
-        .step_by(PackedVal::<SC>::WIDTH)
-        .flat_map_iter(|i_start| {
+    info_span!("evaluate constraints on quotient domain").in_scope(|| {
+        (0..quotient_size)
+            .into_par_iter()
+            .step_by(PackedVal::<SC>::WIDTH)
+            .flat_map_iter(|i_start| {
             let i_range = i_start..i_start + PackedVal::<SC>::WIDTH;
 
             let is_first_row = *PackedVal::<SC>::from_slice(&sels.is_first_row[i_range.clone()]);
@@ -582,17 +566,20 @@ where
                 randomness.iter().copied().map(Into::into).collect();
 
             // Grab precomputed periodic evaluations for this packed chunk.
-            let periodic_values: Vec<PackedVal<SC>> = periodic_on_quotient
-                .as_ref()
-                .map(|cols| {
-                    cols.iter()
-                        .map(|values| {
-                            let slice = &values[i_range.clone()];
-                            *PackedVal::<SC>::from_slice(slice)
+            let periodic_values: Vec<PackedVal<SC>> = if periodic_table.is_empty() {
+                Vec::new()
+            } else {
+                let num_cols = periodic_on_quotient.width();
+                (0..num_cols)
+                    .map(|col_idx| {
+                        PackedVal::<SC>::from_fn(|j| {
+                            periodic_on_quotient
+                                .get(i_start + j, col_idx)
+                                .clone()
                         })
-                        .collect()
-                })
-                .unwrap_or_default();
+                    })
+                    .collect()
+            };
 
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder: ProverConstraintFolder<'_, SC> = ProverConstraintFolder {
@@ -623,6 +610,7 @@ where
                     quotient.as_basis_coefficients_slice()[coeff_idx].as_slice()[idx_in_packing]
                 })
             })
-        })
-        .collect()
+            })
+            .collect()
+    })
 }
