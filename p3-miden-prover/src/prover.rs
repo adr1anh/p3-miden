@@ -558,9 +558,8 @@ where
                 let preprocessed = preprocessed_on_quotient_domain.map(|preprocessed| {
                     let preprocessed_width = preprocessed.width();
                     RowMajorMatrix::new(
-                        preprocessed.vertically_packed_row_pair::<PackedVal<SC>>(
-                            i_start, next_step,
-                        ),
+                        preprocessed
+                            .vertically_packed_row_pair::<PackedVal<SC>>(i_start, next_step),
                         preprocessed_width,
                     )
                 });
@@ -577,7 +576,7 @@ where
                     (0..num_cols)
                         .map(|col_idx| {
                             PackedVal::<SC>::from_fn(|j| {
-                                periodic_on_quotient.get(i_start + j, col_idx).clone()
+                                *periodic_on_quotient.get(i_start + j, col_idx)
                             })
                         })
                         .collect()
