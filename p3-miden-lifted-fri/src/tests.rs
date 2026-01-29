@@ -130,6 +130,7 @@ fn test_pcs_open_verify_roundtrip() {
     open_with_channel::<F, EF, _, _, _, 2>(
         &params,
         &lmcs,
+        log_max_height,
         eval_points,
         trace_trees,
         &mut prover_channel,

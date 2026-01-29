@@ -150,6 +150,8 @@ impl<T: Send + Sync + Clone, M: Matrix<T>> MatrixExt<T> for M {
 
 /// Coset points `gK` in bit-reversed order.
 ///
+/// Note: the coset shift `g` is fixed to `F::GENERATOR` by convention in this PCS.
+///
 /// Bit-reversal gives two properties essential for lifting:
 /// - **Adjacent negation**: `gK[2i+1] = -gK[2i]`, so both square to the same value
 /// - **Prefix nesting**: `gK[0..n/r]` equals the r-th power coset `(gK)ʳ`

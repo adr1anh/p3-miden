@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_miden_lmcs::Lmcs;
+use p3_miden_lmcs::utils::aligned_len;
 use p3_miden_transcript::VerifierChannel;
 
 /// Structured transcript view for the full PCS interaction.
@@ -40,7 +41,8 @@ where
 {
     /// Parse a PCS transcript view from a verifier channel.
     ///
-    /// Commitment widths must already include any alignment padding.
+    /// Commitment widths must already include any alignment padding, and all
+    /// commitments are expected to be lifted to the same `log_max_height`.
     pub fn from_verifier_channel<Ch, const N: usize>(
         params: &PcsParams,
         lmcs: &L,
@@ -93,7 +95,9 @@ where
                 .iter()
                 .map(|&idx| idx >> (log_arity * (round + 1)))
                 .collect();
-            let widths = [arity * EF::DIMENSION];
+            let base_width = arity * EF::DIMENSION;
+            let aligned_width = aligned_len(base_width, lmcs.alignment());
+            let widths = [aligned_width];
             let batch = lmcs
                 .read_batch_proof_from_channel(&widths, log_num_rows, &round_indices, channel)
                 .ok()?;

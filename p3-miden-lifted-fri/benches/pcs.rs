@@ -44,6 +44,7 @@ use p3_miden_lifted_fri::fri::{FriFold, FriParams};
 use p3_miden_lifted_fri::{PcsParams, prover as lifted_prover};
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_miden_transcript::ProverTranscript;
+use p3_util::log2_strict_usize;
 use utils::LmcsScenario;
 
 // =============================================================================
@@ -199,6 +200,7 @@ macro_rules! bench_scenario {
                     // Build a single LMCS tree with all matrices
                     let tree = lmcs.build_tree(all_lde_matrices);
                     let commitment = tree.root();
+                    let log_max_height = log2_strict_usize(tree.height());
 
                     let base_challenger = S::challenger();
 
@@ -233,6 +235,7 @@ macro_rules! bench_scenario {
                                 lifted_prover::open_with_channel::<F, EF, _, _, _, 2>(
                                     &params,
                                     &lmcs,
+                                    log_max_height,
                                     [z1, z2],
                                     trace_trees,
                                     &mut channel,

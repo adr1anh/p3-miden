@@ -19,6 +19,10 @@ use crate::fri::verifier::FriOracle;
 
 /// Verify polynomial evaluation claims against commitments using a verifier channel.
 ///
+/// # Preconditions
+/// - `eval_points` must be outside the evaluation domain `gK` (caller must ensure this).
+/// - All commitments are expected to be lifted to the same max height `2^log_max_height`.
+///
 /// Commitment widths are expected to be aligned to the LMCS alignment.
 ///
 /// Returns `Ok(evals)` where each group/matrix is a row-major matrix with one row per point.

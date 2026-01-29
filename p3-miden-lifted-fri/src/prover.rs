@@ -9,7 +9,6 @@ use p3_field::{ExtensionField, FieldArray, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_miden_transcript::ProverChannel;
-use p3_util::log2_strict_usize;
 
 use crate::PcsParams;
 use crate::deep::PointQuotients;
@@ -19,10 +18,16 @@ use crate::utils::bit_reversed_coset_points;
 
 /// Open committed matrices at N evaluation points, writing to a prover channel.
 ///
+/// # Preconditions
+/// - `eval_points` must be outside the evaluation domain `gK` (caller must ensure this).
+/// - All trace trees must be built at the same max height `2^log_max_height`.
+///   Multiple max heights are not supported yet and will panic.
+///
 /// Alignment is derived from the LMCS instance to pad DEEP evaluations consistently.
 pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
+    log_max_height: usize,
     eval_points: [EF; N],
     trace_trees: &[&L::Tree<M>],
     channel: &mut Ch,
@@ -41,14 +46,17 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
         .map(|tree| tree.leaves().iter().collect())
         .collect();
 
-    // Determine LDE domain size from tallest matrix across all trees
-    let max_height = trace_trees
-        .iter()
-        .flat_map(|tree| tree.leaves().iter().map(|m| m.height()))
-        .max()
-        .expect("at least one matrix required");
-    let log_n = log2_strict_usize(max_height);
-    let coset_points = bit_reversed_coset_points::<F>(log_n);
+    // Determine LDE domain size from the supplied max height.
+    // For now, all trace trees must share this height; mixed max heights are not supported yet.
+    assert!(!trace_trees.is_empty(), "at least one trace tree required");
+    let expected_height = 1usize << log_max_height;
+    assert!(
+        trace_trees
+            .iter()
+            .all(|tree| tree.height() == expected_height),
+        "mixed max heights are not supported yet",
+    );
+    let coset_points = bit_reversed_coset_points::<F>(log_max_height);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Compute evaluations at all N opening points (batched)
@@ -86,7 +94,7 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     // Sample query indices
     // ─────────────────────────────────────────────────────────────────────────
     let query_indices: Vec<usize> = (0..params.num_queries)
-        .map(|_| channel.sample_bits(log_n))
+        .map(|_| channel.sample_bits(log_max_height))
         .collect();
 
     // ─────────────────────────────────────────────────────────────────────────
