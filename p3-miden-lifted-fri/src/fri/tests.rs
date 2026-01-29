@@ -15,6 +15,7 @@ use crate::tests::{
     EF, F, evals_at, prover_channel, random_lde_matrix, sample_indices, test_challenger, test_lmcs,
     verifier_channel,
 };
+use crate::utils::horner;
 
 // ============================================================================
 // Integration tests
@@ -257,11 +258,7 @@ fn test_final_polynomial_correctness() {
         let x: F = g.exp_u64(reverse_bits_len(idx, log_final_height) as u64);
 
         // Evaluate polynomial via Horner
-        let poly_eval: EF = fri_transcript
-            .final_poly
-            .iter()
-            .rev()
-            .fold(EF::ZERO, |acc, &coeff| acc * x + coeff);
+        let poly_eval: EF = horner(x, fri_transcript.final_poly.iter().rev().copied());
 
         // The polynomial should be well-defined (just check it doesn't panic)
         let _ = poly_eval;

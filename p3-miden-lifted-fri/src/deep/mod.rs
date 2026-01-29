@@ -32,7 +32,6 @@ mod evals;
 mod interpolate;
 mod proof;
 pub(crate) mod prover;
-mod utils;
 pub(crate) mod verifier;
 
 pub use evals::{BatchedEvals, BatchedGroupEvals, DeepEvals};

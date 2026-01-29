@@ -275,8 +275,8 @@ mod tests {
     use alloc::vec::Vec;
 
     use super::derive_coeffs_from_challenge;
-    use crate::deep::utils::reduce_with_powers_from;
-    use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, dot_product};
+    use crate::utils::horner;
+    use p3_field::{PrimeCharacteristicRing, dot_product};
     use p3_miden_lmcs::utils::{aligned_widths, pad_rows_to_alignment};
 
     use crate::tests::{EF, F};
@@ -303,7 +303,7 @@ mod tests {
         );
 
         // Horner using reduce_with_powers (same as used in verifier)
-        let horner: EF = reduce_with_powers(padded_rows.iter().map(|r| r.as_slice()), c);
+        let horner: EF = horner(c, padded_rows.iter().flatten().copied());
 
         assert_eq!(explicit, horner);
     }
@@ -341,25 +341,8 @@ mod tests {
             coeffs.iter().flatten().copied(),
             padded_rows.iter().flatten().copied(),
         );
-        let horner: EF = reduce_with_powers(padded_rows.iter().map(|r| r.as_slice()), c);
+        let horner: EF = horner(c, padded_rows.iter().flatten().copied());
 
         assert_eq!(explicit, horner);
-    }
-
-    /// Horner reduction: computes `Σᵢ αⁿ⁻¹⁻ⁱ · vᵢ` via left-to-right accumulation.
-    ///
-    /// For each value v, computes `acc = α·acc + v`. The reversed coefficient order
-    /// (from [`super::prover::derive_coeffs_from_challenge`]) makes this produce the
-    /// same result as explicit `Σᵢ coeffs[i] · vals[i]`.
-    ///
-    pub fn reduce_with_powers<'a, F, EF>(
-        slices: impl IntoIterator<Item = &'a [F]>,
-        challenge: EF,
-    ) -> EF
-    where
-        F: Field + 'a,
-        EF: ExtensionField<F>,
-    {
-        reduce_with_powers_from(EF::ZERO, slices, challenge)
     }
 }

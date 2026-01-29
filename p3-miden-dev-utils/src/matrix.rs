@@ -7,7 +7,6 @@ use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_lmcs::utils::aligned_len;
 use rand::SeedableRng;
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
@@ -136,4 +135,13 @@ pub fn concatenate_matrices<F: Field + PrimeCharacteristicRing, const R: usize>(
         })
         .collect();
     RowMajorMatrix::new(concatenated_data, width)
+}
+
+#[inline]
+const fn aligned_len(len: usize, alignment: usize) -> usize {
+    if alignment <= 1 {
+        len
+    } else {
+        len.next_multiple_of(alignment)
+    }
 }

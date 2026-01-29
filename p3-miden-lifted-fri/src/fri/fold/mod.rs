@@ -188,19 +188,10 @@ pub mod tests {
 
     use super::*;
     pub(super) use crate::tests::{EF, F};
+    use crate::utils::horner;
 
     // Type alias for tests using packed fields
     type Pf = <F as Field>::Packing;
-
-    /// Evaluate polynomial using Horner's method.
-    fn horner<Base: Field, Ext: ExtensionField<Base>>(coeffs: &[Ext], x: Base) -> Ext {
-        coeffs
-            .iter()
-            .rev()
-            .copied()
-            .reduce(|acc, c| acc * x + c)
-            .unwrap_or(Ext::ZERO)
-    }
 
     /// Test fold_evals against NaiveDft coset evaluations for a specific arity.
     ///
@@ -232,7 +223,7 @@ pub mod tests {
         let result = fold.fold_evals(&evals, s_inv, beta);
 
         // Expected: direct Horner evaluation at beta
-        let expected = horner(&coeffs, beta);
+        let expected = horner(beta, coeffs.iter().rev().copied());
         assert_eq!(result, expected, "fold_evals mismatch for arity {arity}");
     }
 
@@ -265,10 +256,13 @@ pub mod tests {
         let s_inv = s.inverse();
 
         // Evaluate polynomial at coset points: [f(s·root) for root in roots]
-        let evals: Vec<Ext> = roots.iter().map(|&root| horner(&poly, root * s)).collect();
+        let evals: Vec<Ext> = roots
+            .iter()
+            .map(|&root| horner(root * s, poly.iter().rev().copied()))
+            .collect();
 
         // Expected: f(beta)
-        let expected = horner::<Ext, Ext>(&poly, beta);
+        let expected = horner(beta, poly.iter().rev().copied());
 
         // Test fold_evals
         let result = fold.fold_evals(&evals, s_inv, beta);

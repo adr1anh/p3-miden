@@ -9,7 +9,7 @@ use p3_challenger::CanObserve;
 use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_lmcs::{Lmcs, LmcsTree};
+use p3_miden_lmcs::{Lmcs, LmcsConfig, LmcsTree};
 use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript};
 use p3_util::log2_strict_usize;
 use rand::distr::StandardUniform;
@@ -20,13 +20,19 @@ use crate::deep::DeepParams;
 use crate::fri::{FriFold, FriParams};
 use crate::{PcsParams, prover::open_with_channel, verifier::verify_with_channel};
 
-pub use p3_miden_dev_utils::configs::baby_bear_poseidon2::{base_lmcs as test_lmcs, *};
+pub use p3_miden_dev_utils::configs::baby_bear_poseidon2::*;
 pub use p3_miden_dev_utils::matrix::random_lde_matrix;
 
+pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 pub type TestCommitment = <BaseLmcs as Lmcs>::Commitment;
 pub type TestTranscriptData = TranscriptData<F, TestCommitment>;
 pub type TestProverChannel = ProverTranscript<F, TestCommitment, Challenger>;
 pub type TestVerifierChannel<'a> = VerifierTranscript<'a, F, TestCommitment, Challenger>;
+
+pub fn test_lmcs() -> BaseLmcs {
+    let (_, sponge, compress) = test_components();
+    LmcsConfig::new_aligned(sponge, compress)
+}
 
 pub fn prover_channel() -> TestProverChannel {
     ProverTranscript::new(test_challenger())

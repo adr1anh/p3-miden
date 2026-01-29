@@ -15,8 +15,10 @@ use p3_miden_stateful_hasher::{SerializingStatefulSponge, StatefulSponge};
 // Poseidon2 LMCS types
 // =============================================================================
 
-pub type BabyBearLmcs = bb::BaseLmcs;
-pub type GoldilocksLmcs = gl::BaseLmcs;
+pub type BabyBearLmcs =
+    LmcsConfig<bb::P, bb::P, bb::Sponge, bb::Compress, { bb::WIDTH }, { bb::DIGEST }>;
+pub type GoldilocksLmcs =
+    LmcsConfig<gl::P, gl::P, gl::Sponge, gl::Compress, { gl::WIDTH }, { gl::DIGEST }>;
 
 // =============================================================================
 // Keccak LMCS types
@@ -69,7 +71,8 @@ impl LmcsScenario for BabyBearPoseidon2 {
     type Lmcs = BabyBearLmcs;
 
     fn lmcs() -> Self::Lmcs {
-        bb::base_lmcs()
+        let (_, sponge, compress) = bb::test_components();
+        LmcsConfig::new_aligned(sponge, compress)
     }
 }
 
@@ -77,7 +80,8 @@ impl LmcsScenario for GoldilocksPoseidon2 {
     type Lmcs = GoldilocksLmcs;
 
     fn lmcs() -> Self::Lmcs {
-        gl::base_lmcs()
+        let (_, sponge, compress) = gl::test_components();
+        LmcsConfig::new_aligned(sponge, compress)
     }
 }
 

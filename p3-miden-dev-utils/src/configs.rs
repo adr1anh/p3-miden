@@ -156,7 +156,6 @@ macro_rules! impl_poseidon2_config {
         use p3_field::Field;
         use p3_field::extension::BinomialExtensionField;
         use p3_merkle_tree::MerkleTreeMmcs;
-        use p3_miden_lmcs::LmcsConfig;
         use p3_miden_stateful_hasher::StatefulSponge;
         use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
         use rand::SeedableRng;
@@ -206,9 +205,6 @@ macro_rules! impl_poseidon2_config {
         /// Base Merkle tree MMCS over packed field.
         pub type BaseMmcs = MerkleTreeMmcs<P, P, MmcsSponge, Compress, DIGEST>;
 
-        /// Base LMCS config (Lifted Matrix Commitment Scheme) over packed field.
-        pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
-
         /// Duplex challenger for Fiat-Shamir.
         pub type Challenger = DuplexChallenger<F, Perm, WIDTH, RATE>;
 
@@ -235,12 +231,6 @@ macro_rules! impl_poseidon2_config {
         /// Create a standard challenger for Fiat-Shamir.
         pub fn test_challenger() -> Challenger {
             Challenger::new(create_perm())
-        }
-
-        /// Create standard base LMCS config for testing (packed field).
-        pub fn base_lmcs() -> BaseLmcs {
-            let (_, sponge, compress) = test_components();
-            LmcsConfig::new_aligned(sponge, compress)
         }
 
         // =====================================================================

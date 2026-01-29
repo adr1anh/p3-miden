@@ -32,6 +32,8 @@ use p3_miden_transcript::VerifierChannel;
 use p3_util::reverse_bits_len;
 use thiserror::Error;
 
+use crate::utils::horner;
+
 use crate::fri::FriParams;
 
 /// FRI low-degree test oracle.
@@ -196,11 +198,7 @@ where
             let x = F::two_adic_generator(log_domain_size).exp_u64(x_power);
 
             // Evaluate final polynomial via Horner's method: p(x) = Σᵢ cᵢ·xⁱ
-            let final_eval = self
-                .final_poly
-                .iter()
-                .rev()
-                .fold(EF::ZERO, |acc, &coeff| acc * x + coeff);
+            let final_eval: EF = horner(x, self.final_poly.iter().rev().copied());
 
             if final_eval != eval {
                 return Err(FriError::FinalPolyMismatch);

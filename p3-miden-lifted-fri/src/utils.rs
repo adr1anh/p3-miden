@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 use core::array;
+use core::ops::{Add, Mul};
 
 use p3_field::coset::TwoAdicMultiplicativeCoset;
 use p3_field::{
@@ -13,6 +14,28 @@ use p3_util::reverse_slice_index_bits;
 // ============================================================================
 // Extension trait for PackedFieldExtension methods not in upstream
 // ============================================================================
+
+/// Horner fold with an explicit accumulator.
+#[inline]
+pub(crate) fn horner_acc<Acc, Val, X, I>(acc: Acc, x: X, vals: I) -> Acc
+where
+    I: IntoIterator<Item = Val>,
+    Acc: Mul<X, Output = Acc> + Add<Val, Output = Acc>,
+    X: Clone,
+{
+    vals.into_iter().fold(acc, |acc, val| acc * x.clone() + val)
+}
+
+/// Horner fold starting from `Acc::default()`.
+#[inline]
+pub(crate) fn horner<Acc, Val, X, I>(x: X, vals: I) -> Acc
+where
+    I: IntoIterator<Item = Val>,
+    Acc: Default + Mul<X, Output = Acc> + Add<Val, Output = Acc>,
+    X: Clone,
+{
+    horner_acc(Acc::default(), x, vals)
+}
 
 /// Extension trait adding `pack_ext_columns` and `to_ext_slice` methods.
 ///

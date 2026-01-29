@@ -6,6 +6,8 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lmcs::utils::pad_row_to_alignment;
 use p3_miden_transcript::{ProverChannel, VerifierChannel};
 
+use crate::utils::horner;
+
 /// Out-of-domain evaluations organized per commitment group and matrix.
 ///
 /// Structure: `groups[group_idx][matrix_idx]` is a row-major matrix where rows are points.
@@ -44,14 +46,12 @@ impl<EF: Field> DeepEvals<EF> {
     }
 
     pub(crate) fn reduce_point(&self, point_idx: usize, challenge: EF) -> EF {
-        self.groups
-            .iter()
-            .flat_map(move |group| {
-                group
-                    .iter()
-                    .flat_map(move |matrix| matrix.row(point_idx).expect("point index in range"))
-            })
-            .fold(EF::ZERO, |acc, val| acc * challenge + val)
+        let values = self.groups.iter().flat_map(move |group| {
+            group
+                .iter()
+                .flat_map(move |matrix| matrix.row(point_idx).expect("point index in range"))
+        });
+        horner(challenge, values)
     }
 
     pub(crate) fn read_from_channel<F, Ch>(
@@ -166,11 +166,12 @@ impl<EF: Field, const N: usize> BatchedEvals<EF, N> {
     }
 
     pub(crate) fn reduce(&self, challenge: EF) -> FieldArray<EF, N> {
-        let zero = FieldArray::default();
-        self.groups
+        let values = self
+            .groups
             .iter()
             .flat_map(|group| group.iter_evals())
-            .fold(zero, |acc, val| acc * challenge + *val)
+            .copied();
+        horner(challenge, values)
     }
 
     pub fn write_to_channel<F, Ch>(&self, channel: &mut Ch)

@@ -3,8 +3,8 @@ use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
 
-use super::utils::reduce_with_powers_from;
 use super::{DeepEvals, DeepParams};
+use crate::utils::horner_acc;
 use p3_challenger::CanSample;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_lmcs::{Lmcs, LmcsError};
@@ -114,10 +114,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
                 .open_batch(commit, widths, self.log_max_height, indices, channel)
                 .map_err(DeepError::LmcsError)?;
             for (acc, rows_for_query) in reduced_rows.iter_mut().zip(opened_rows) {
-                *acc = reduce_with_powers_from(
+                *acc = horner_acc(
                     *acc,
-                    rows_for_query.iter().map(Vec::as_slice),
                     self.challenge_columns,
+                    rows_for_query.iter().flatten().copied(),
                 );
             }
         }
