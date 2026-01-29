@@ -135,6 +135,8 @@ pub struct FriParams {
 }
 ```
 
+**Note:** `num_queries` is expected to be > 0; zero queries are not meaningful and will fail verification.
+
 ## Usage (Channel-Based)
 
 ### Prover

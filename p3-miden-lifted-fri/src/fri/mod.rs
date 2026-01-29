@@ -2,6 +2,12 @@
 //!
 //! Fast Reed-Solomon Interactive Oracle Proof for low-degree testing.
 //! Proves that a committed polynomial has degree below a target bound.
+//!
+//! ## Domain Convention
+//!
+//! This FRI implementation treats inputs as evaluations over the unshifted two-adic subgroup.
+//! If the PCS evaluates over a coset `gK`, the shift is absorbed into the polynomial:
+//! `Q'(X) = Q(g·X)`. The low-degree test is run on `Q'` using subgroup points.
 
 mod fold;
 mod proof;

@@ -18,6 +18,7 @@ pub struct PcsParams {
     /// Number of query repetitions for soundness amplification.
     ///
     /// Each query provides ~`log_blowup` bits of security.
+    /// Expected to be > 0; zero queries are not meaningful and will fail verification.
     pub num_queries: usize,
 
     /// Number of bits for proof-of-work grinding before query sampling.
