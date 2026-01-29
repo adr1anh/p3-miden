@@ -257,6 +257,7 @@ where
             + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
             + Sync,
     {
+        const { assert!(PF::WIDTH == PD::WIDTH) }
         assert!(!leaves.is_empty(), "cannot commit empty batch");
         debug_assert!(alignment > 0, "alignment must be non-zero");
 
