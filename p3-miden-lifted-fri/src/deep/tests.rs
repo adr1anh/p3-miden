@@ -27,8 +27,8 @@ fn deep_quotient_end_to_end() {
 
     // Parameters
     let log_blowup: usize = 2;
-    let log_max_height = 10;
-    let max_height = 1 << log_max_height;
+    let log_lde_height = 10;
+    let lde_height = 1 << log_lde_height;
 
     let params = DeepParams {
         proof_of_work_bits: 1, // Low for fast tests
@@ -40,7 +40,7 @@ fn deep_quotient_end_to_end() {
     let z2: EF = rng.sample(StandardUniform);
 
     // Coset points in bit-reversed order
-    let coset_points = bit_reversed_coset_points::<F>(log_max_height);
+    let coset_points = bit_reversed_coset_points::<F>(log_lde_height);
 
     // Create matrices of varying heights (ascending order required)
     // specs: (log_scaling, width) where height = n >> log_scaling
@@ -48,7 +48,7 @@ fn deep_quotient_end_to_end() {
     let matrices: Vec<RowMajorMatrix<F>> = specs
         .iter()
         .map(|&(log_scaling, width)| {
-            let height = max_height >> log_scaling;
+            let height = lde_height >> log_scaling;
             RowMajorMatrix::rand(rng, height, width)
         })
         .collect();
@@ -75,7 +75,7 @@ fn deep_quotient_end_to_end() {
         alignment,
         &mut prover_channel,
     );
-    let sample_indices = vec![0, 1, max_height / 4, max_height / 2, max_height - 1];
+    let sample_indices = vec![0, 1, lde_height / 4, lde_height / 2, lde_height - 1];
     tree.prove_batch(&sample_indices, &mut prover_channel);
     let transcript = prover_channel.into_data();
 
@@ -88,7 +88,7 @@ fn deep_quotient_end_to_end() {
         &params,
         &[z1, z2],
         commitments,
-        log_max_height,
+        log_lde_height,
         &mut verifier_channel,
     )
     .expect("DeepOracle construction should succeed");

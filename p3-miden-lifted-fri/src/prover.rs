@@ -19,18 +19,24 @@ use crate::utils::bit_reversed_coset_points;
 /// Open committed matrices at N evaluation points, writing to a prover channel.
 ///
 /// # Preconditions
-/// - `eval_points` must lie outside both the subgroup `H` (size `2^log_max_height`) and
-///   the evaluation coset `gK` used by the PCS. If a point lies in either set,
+/// - `eval_points` must lie outside both the trace-domain subgroup `H` and the
+///   LDE evaluation coset `gK` used by the PCS. If a point lies in either set,
 ///   denominators `(z_j - X)` in the DEEP quotient become zero for some domain element,
 ///   making the quotient undefined.
-/// - All trace trees must be built at the same max height `2^log_max_height`.
-///   Multiple max heights are not supported yet and will panic.
+/// - All trace trees must be built at the same LDE height `2^log_lde_height`.
+///   Multiple LDE heights are not supported yet and will panic.
+///
+/// `log_lde_height` is the log₂ of the LDE evaluation domain height (i.e. the height of
+/// the committed LDE matrices). When a trace degree is known, it is typically
+/// `log_trace_height + params.fri.log_blowup` (plus any extension used by the caller).
+/// In that common case, the trace subgroup `H` has size `2^(log_lde_height - params.fri.log_blowup)`,
+/// while the LDE coset `gK` has size `2^log_lde_height`.
 ///
 /// Alignment is derived from the LMCS instance to pad DEEP evaluations consistently.
 pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
-    log_max_height: usize,
+    log_lde_height: usize,
     eval_points: [EF; N],
     trace_trees: &[&L::Tree<M>],
     channel: &mut Ch,
@@ -49,17 +55,17 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
         .map(|tree| tree.leaves().iter().collect())
         .collect();
 
-    // Determine LDE domain size from the supplied max height.
-    // For now, all trace trees must share this height; mixed max heights are not supported yet.
+    // Determine LDE domain size from the supplied LDE height.
+    // For now, all trace trees must share this height; mixed LDE heights are not supported yet.
     assert!(!trace_trees.is_empty(), "at least one trace tree required");
-    let expected_height = 1usize << log_max_height;
+    let expected_height = 1usize << log_lde_height;
     assert!(
         trace_trees
             .iter()
             .all(|tree| tree.height() == expected_height),
-        "mixed max heights are not supported yet",
+        "mixed LDE heights are not supported yet",
     );
-    let coset_points = bit_reversed_coset_points::<F>(log_max_height);
+    let coset_points = bit_reversed_coset_points::<F>(log_lde_height);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Compute evaluations at all N opening points (batched)
@@ -84,7 +90,7 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     // ─────────────────────────────────────────────────────────────────────────
     // FRI commit phase (observes commitments, grinds per-round, samples betas)
     // ─────────────────────────────────────────────────────────────────────────
-    // The deep_poly contains evaluations on the LDE domain (size max_height).
+    // The deep_poly contains evaluations on the LDE domain (size 2^log_lde_height).
     // FRI will prove that this polynomial is low-degree.
     let fri_polys = FriPolys::<F, EF, L>::new(&params.fri, lmcs, deep_poly.deep_evals, channel);
 
@@ -97,7 +103,7 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     // Sample query indices
     // ─────────────────────────────────────────────────────────────────────────
     let query_indices: Vec<usize> = (0..params.num_queries)
-        .map(|_| channel.sample_bits(log_max_height))
+        .map(|_| channel.sample_bits(log_lde_height))
         .collect();
 
     // ─────────────────────────────────────────────────────────────────────────

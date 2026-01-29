@@ -118,9 +118,9 @@ fn test_fri_verify_wrong_eval() {
 
     let transcript = prover_channel.into_data();
 
-    let mut verifier_channel = verifier_channel(&transcript);
+    let mut v_channel = verifier_channel(&transcript);
     let log_domain_size = log2_strict_usize(lde_size);
-    let fri_oracle = FriOracle::new(&params, log_domain_size, &mut verifier_channel)
+    let fri_oracle = FriOracle::new(&params, log_domain_size, &mut v_channel)
         .expect("oracle construction should succeed");
 
     let result = fri_oracle.test_low_degree(
@@ -128,7 +128,7 @@ fn test_fri_verify_wrong_eval() {
         &params,
         &indices,
         &initial_evals, // Should fail (one eval is wrong)
-        &mut verifier_channel,
+        &mut v_channel,
     );
 
     assert!(
@@ -189,10 +189,10 @@ fn test_fri_verify_wrong_beta() {
     // Verifier: use prover1's transcript but alter challenger state beforehand.
     let mut wrong_challenger = test_challenger();
     wrong_challenger.observe(other_commitment);
-    let mut verifier_channel = VerifierTranscript::from_data(wrong_challenger, &transcript);
+    let mut v_channel = VerifierTranscript::from_data(wrong_challenger, &transcript);
 
     let log_domain_size = log2_strict_usize(lde_size);
-    let wrong_oracle = FriOracle::new(&params, log_domain_size, &mut verifier_channel)
+    let wrong_oracle = FriOracle::new(&params, log_domain_size, &mut v_channel)
         .expect("oracle construction should succeed");
 
     let result = wrong_oracle.test_low_degree(
@@ -200,7 +200,7 @@ fn test_fri_verify_wrong_beta() {
         &params,
         &indices,
         &initial_evals,
-        &mut verifier_channel,
+        &mut v_channel,
     );
 
     // Should fail because wrong betas produce wrong folding results
@@ -258,8 +258,8 @@ fn test_fri_zero_rounds_final_poly_only() {
         "final polynomial should match domain size"
     );
 
-    let mut verifier_channel = verifier_channel(&transcript);
-    let fri_oracle = FriOracle::new(&params, log_domain_size, &mut verifier_channel)
+    let mut v_channel = verifier_channel(&transcript);
+    let fri_oracle = FriOracle::new(&params, log_domain_size, &mut v_channel)
         .expect("oracle construction should succeed");
     fri_oracle
         .test_low_degree(
@@ -267,7 +267,7 @@ fn test_fri_zero_rounds_final_poly_only() {
             &params,
             &indices,
             &initial_evals,
-            &mut verifier_channel,
+            &mut v_channel,
         )
         .expect("zero-round FRI should verify");
 }
@@ -299,9 +299,9 @@ fn test_fri_blowup_zero_with_rounds() {
     fri_polys.prove_queries(&params, &indices, &mut prover_channel);
     let transcript = prover_channel.into_data();
 
-    let mut verifier_channel = verifier_channel(&transcript);
+    let mut v_channel = verifier_channel(&transcript);
     let log_domain_size = log2_strict_usize(lde_size);
-    let fri_oracle = FriOracle::new(&params, log_domain_size, &mut verifier_channel)
+    let fri_oracle = FriOracle::new(&params, log_domain_size, &mut v_channel)
         .expect("oracle construction should succeed");
     fri_oracle
         .test_low_degree(
@@ -309,7 +309,7 @@ fn test_fri_blowup_zero_with_rounds() {
             &params,
             &indices,
             &initial_evals,
-            &mut verifier_channel,
+            &mut v_channel,
         )
         .expect("FRI with blowup=0 should verify");
 }
@@ -338,10 +338,10 @@ fn test_final_polynomial_correctness() {
     let _fri_polys = FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut prover_channel);
     let transcript = prover_channel.into_data();
 
-    let mut verifier_channel = verifier_channel(&transcript);
+    let mut v_channel = verifier_channel(&transcript);
     let log_domain_size = log_poly_degree + log_blowup;
     let fri_transcript: FriTranscript<F, EF, _> =
-        FriTranscript::from_verifier_channel(&params, log_domain_size, &mut verifier_channel)
+        FriTranscript::from_verifier_channel(&params, log_domain_size, &mut v_channel)
             .expect("transcript parsing should succeed");
 
     // Verify final polynomial has correct degree

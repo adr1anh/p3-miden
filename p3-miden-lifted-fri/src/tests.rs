@@ -112,8 +112,8 @@ fn test_pcs_open_verify_roundtrip() {
     let tree = lmcs.build_tree(matrices);
     let commitment = tree.root();
     let widths = tree.widths();
-    let max_height = tree.leaves().last().map(|m| m.height()).unwrap_or(0);
-    let log_max_height = log2_strict_usize(max_height);
+    let lde_height = tree.leaves().last().map(|m| m.height()).unwrap_or(0);
+    let log_lde_height = log2_strict_usize(lde_height);
 
     // Evaluation points
     let z1: EF = rng.sample(StandardUniform);
@@ -129,7 +129,7 @@ fn test_pcs_open_verify_roundtrip() {
     open_with_channel::<F, EF, _, _, _, 2>(
         &params,
         &lmcs,
-        log_max_height,
+        log_lde_height,
         eval_points,
         trace_trees,
         &mut prover_channel,
@@ -146,7 +146,7 @@ fn test_pcs_open_verify_roundtrip() {
         &params,
         &lmcs,
         commitments,
-        log_max_height,
+        log_lde_height,
         eval_points,
         &mut verifier_channel,
     );

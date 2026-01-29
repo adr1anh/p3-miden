@@ -42,12 +42,16 @@ where
     /// Parse a PCS transcript view from a verifier channel.
     ///
     /// Commitment widths must already include any alignment padding, and all
-    /// commitments are expected to be lifted to the same `log_max_height`.
+    /// commitments are expected to be lifted to the same `log_lde_height`.
+    ///
+    /// `log_lde_height` is the log₂ of the LDE evaluation domain height (i.e. the height of
+    /// the committed LDE matrices). When a trace degree is known, it is typically
+    /// `log_trace_height + params.fri.log_blowup` (plus any extension used by the caller).
     pub fn from_verifier_channel<Ch, const N: usize>(
         params: &PcsParams,
         lmcs: &L,
         commitments: &[(L::Commitment, Vec<usize>)],
-        log_max_height: usize,
+        log_lde_height: usize,
         eval_points: [EF; N],
         channel: &mut Ch,
     ) -> Option<Self>
@@ -68,29 +72,29 @@ where
         )?;
 
         let fri_transcript =
-            FriTranscript::from_verifier_channel(&params.fri, log_max_height, channel)?;
+            FriTranscript::from_verifier_channel(&params.fri, log_lde_height, channel)?;
 
         let query_pow_witness = channel.grind(params.query_proof_of_work_bits)?;
 
         let indices: Vec<usize> = (0..params.num_queries)
-            .map(|_| channel.sample_bits(log_max_height))
+            .map(|_| channel.sample_bits(log_lde_height))
             .collect();
 
         let deep_openings: Vec<_> = commitments
             .iter()
             .map(|(_commitment, widths)| {
-                lmcs.read_batch_proof_from_channel(widths, log_max_height, &indices, channel)
+                lmcs.read_batch_proof_from_channel(widths, log_lde_height, &indices, channel)
                     .ok()
             })
             .collect::<Option<Vec<_>>>()?;
 
         let log_arity = params.fri.fold.log_arity();
         let arity = params.fri.fold.arity();
-        let num_rounds = params.fri.num_rounds(log_max_height);
+        let num_rounds = params.fri.num_rounds(log_lde_height);
 
         let mut fri_openings = Vec::with_capacity(num_rounds);
         for round in 0..num_rounds {
-            let log_num_rows = log_max_height.saturating_sub(log_arity * (round + 1));
+            let log_num_rows = log_lde_height.saturating_sub(log_arity * (round + 1));
             let round_indices: Vec<usize> = indices
                 .iter()
                 .map(|&idx| idx >> (log_arity * (round + 1)))

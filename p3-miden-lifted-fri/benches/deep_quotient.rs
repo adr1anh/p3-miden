@@ -46,8 +46,8 @@ fn bench_scenario<S: LmcsScenario>(c: &mut Criterion)
 where
     StandardUniform: Distribution<S::F> + Distribution<S::EF>,
 {
-    for &log_max_height in LOG_HEIGHTS {
-        let n_leaves = 1usize << log_max_height;
+    for &log_lde_height in LOG_HEIGHTS {
+        let n_leaves = 1usize << log_lde_height;
         let group_name = format!(
             "DEEP_Quotient/{}/{}/{}/{}",
             n_leaves,
@@ -59,7 +59,7 @@ where
 
         // Generate matrices using canonical specs
         let matrix_groups: Vec<Vec<RowMajorMatrix<S::F>>> =
-            generate_matrices_from_specs(RELATIVE_SPECS, log_max_height);
+            generate_matrices_from_specs(RELATIVE_SPECS, log_lde_height);
         group.throughput(Throughput::Elements(total_elements(&matrix_groups)));
 
         // Setup LMCS and commit
@@ -72,7 +72,7 @@ where
         let prover_data: Vec<_> = committed.iter().map(|(_, pd)| pd).collect();
 
         // Precompute coset points (LDE domain matches max matrix height)
-        let coset_points = bit_reversed_coset_points::<S::F>(log_max_height);
+        let coset_points = bit_reversed_coset_points::<S::F>(log_lde_height);
 
         // Get matrix references from prover data
         let matrices_refs: Vec<Vec<_>> = prover_data
