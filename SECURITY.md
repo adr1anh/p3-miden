@@ -10,6 +10,52 @@ This document provides a focused guide for security auditors reviewing the Lifte
 | `p3-miden-lifted-fri` | ~1500 | **High** - DEEP quotient + FRI protocol |
 | `p3-miden-stateful-hasher` | ~200 | **Medium** - Sponge construction |
 
+## Protocol Contracts (High Level)
+
+### LMCS (p3-miden-lmcs)
+
+**What LMCS proves**:
+- Given a commitment (root) and query indices, the opened rows are consistent
+  with some committed leaf preimages, under the configured hash and compression
+  functions.
+- The openings are for the lifted, uniform-height view of the input matrices.
+
+**What LMCS does not prove**:
+- It does not prove that any matrix "really had height n" beyond the supplied
+  dimensions. A lifted height-n matrix is indistinguishable from an explicit
+  height-N matrix that repeats rows.
+- It does not enforce periodicity or other structure on columns; upstream
+  protocols must enforce such semantics if required.
+- It assigns no meaning to matrix positions; the higher-level protocol must
+  bind the ordering.
+
+**Trusted inputs / statement data**:
+- `widths` (matrix widths, in commitment order).
+- `log_max_height` (Merkle tree height / max domain size).
+- The ordered list of matrices; permutation changes the commitment.
+
+**Commitment preimage**:
+- Each leaf hashes the concatenation of lifted rows in matrix order, with an
+  optional salt appended:
+  `leaf(i) = H(row_0(i) || row_1(i) || ... || row_{t-1}(i) || salt?)`.
+
+### Lifted FRI PCS (p3-miden-lifted-fri)
+
+**What the PCS proves**:
+- Given commitments and transcript data, the claimed evaluations are consistent
+  with a low-degree polynomial that matches the committed evaluations, as
+  enforced by the DEEP quotient and FRI checks.
+
+**What the PCS does not prove**:
+- It does not validate that domain sizes, blowup factors, or folding arities are
+  appropriate for a specific security level; these are parameter choices.
+- It does not reinterpret LMCS lifting; smaller matrices are treated as lifted
+  evaluations on the max domain.
+
+**Trusted inputs / statement data**:
+- Domain sizes, folding arities, and other `PcsParams`.
+- Transcript ordering and challenge sampling must follow the prescribed flow.
+
 ## Security-Critical Code Paths
 
 ### 1. Merkle Verification (`p3-miden-lmcs`)
