@@ -6,6 +6,8 @@ This crate hosts the end-to-end verification flow for the lifted STARK protocol.
 - Replays the transcript to reconstruct params, layout, periodic tables, and commitments.
 - Uses `p3-miden-lifted-fri::verifier::verify_with_channel` to open [zeta, zeta_next].
 - Recomputes folded constraints at zeta^r per AIR and checks the combined quotient.
+- Channel-first API: `verify_with_channel` accepts a `VerifierChannel`; `verify` is a wrapper.
+- Transcript parameters are encoded as checked `u32` values (reads return `Option`).
 
 ## TODO / follow-ups
 - Consider a dedicated error type for periodic table validation failures.

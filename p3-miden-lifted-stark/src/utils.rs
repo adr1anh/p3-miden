@@ -163,6 +163,14 @@ where
         .collect()
 }
 
+pub fn trim_row<F, I>(row: I, width: usize) -> Vec<F>
+where
+    F: Field,
+    I: IntoIterator<Item = F>,
+{
+    row.into_iter().take(width).collect()
+}
+
 pub fn row_pair_matrix<EF: Field>(row0: &[EF], row1: &[EF]) -> RowMajorMatrix<EF> {
     let mut combined = Vec::with_capacity(row0.len() + row1.len());
     combined.extend_from_slice(row0);

@@ -7,6 +7,8 @@ This crate hosts the end-to-end proving flow for the lifted STARK protocol.
 - Aux trace is required; preprocessed trace is ignored in this scaffold.
 - Combines per-AIR constraint numerators on the max domain via upsample + Horner.
 - Opens all committed trees via `p3-miden-lifted-fri::prover::open_with_channel`.
+- Channel-first API: `prove_with_channel` accepts a `ProverChannel`; `prove` is a wrapper.
+- Transcript parameters are encoded as checked `u32` values (writes return `Option`).
 
 ## TODO / follow-ups
 - Move quotient helpers into a shared `quotient.rs` once the API stabilizes.

@@ -22,7 +22,9 @@ use core::marker::PhantomData;
 
 use p3_challenger::{CanObserve, CanSample, CanSampleBits, GrindingChallenger};
 use p3_dft::TwoAdicSubgroupDft;
-use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64, TwoAdicField};
+use p3_field::{
+    BasedVectorSpace, ExtensionField, Field, PrimeCharacteristicRing, PrimeField64, TwoAdicField,
+};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_air::MidenAir;
@@ -35,7 +37,7 @@ use p3_util::log2_strict_usize;
 use p3_miden_lifted_stark::{
     ConstraintFolder, LayoutSnapshot, LiftedStarkConfig, ParamsSnapshot, Proof, align_width,
     eval_periodic_values, read_periodic_tables, row_pair_matrix, sample_ext, sample_ood_zeta,
-    selectors_at,
+    selectors_at, trim_row,
 };
 
 // -----------------------------------------------------------------------------
@@ -313,7 +315,12 @@ where
     // The quotient matrix stores base-field coefficients for EF; recompose.
     let quotient_matrix = &groups[2][0];
     let chunk_coeffs = trim_row(quotient_matrix.row(0).unwrap(), EF::DIMENSION);
-    let quotient_zeta = recompose_ext_from_base_evals::<F, EF>(&chunk_coeffs)?;
+    let chunk_coeffs_base: Vec<F> = chunk_coeffs
+        .iter()
+        .map(|coeff| coeff.as_basis_coefficients_slice()[0])
+        .collect();
+    let quotient_zeta = EF::from_basis_coefficients_slice(&chunk_coeffs_base)
+        .ok_or(VerifierError::InvalidAuxShape)?;
 
     // Combined constraint numerator at zeta (Horner in permutation order).
     let mut combined = EF::ZERO;
@@ -340,8 +347,24 @@ where
 
         let aux_local_base = trim_row(aux_matrix.row(0).unwrap(), aux_width_base);
         let aux_next_base = trim_row(aux_matrix.row(1).unwrap(), aux_width_base);
-        let aux_local = row_to_ext_from_base_evals::<F, EF>(&aux_local_base)?;
-        let aux_next = row_to_ext_from_base_evals::<F, EF>(&aux_next_base)?;
+        let aux_local_base: Vec<F> = aux_local_base
+            .iter()
+            .map(|coeff| coeff.as_basis_coefficients_slice()[0])
+            .collect();
+        let aux_local = if aux_local_base.len().is_multiple_of(EF::DIMENSION) {
+            EF::reconstitute_from_base(aux_local_base)
+        } else {
+            return Err(VerifierError::InvalidAuxShape);
+        };
+        let aux_next_base: Vec<F> = aux_next_base
+            .iter()
+            .map(|coeff| coeff.as_basis_coefficients_slice()[0])
+            .collect();
+        let aux_next = if aux_next_base.len().is_multiple_of(EF::DIMENSION) {
+            EF::reconstitute_from_base(aux_next_base)
+        } else {
+            return Err(VerifierError::InvalidAuxShape);
+        };
 
         let zeta_r = zeta.exp_u64(r as u64);
         let _zeta_next_r = (zeta * EF::from(h_max)).exp_u64(r as u64);
@@ -412,55 +435,4 @@ where
 {
     let mut channel = VerifierTranscript::from_data(challenger, &proof.transcript);
     verify_with_channel::<F, EF, A, L, Dft, _>(config, airs, public_values, &mut channel)
-}
-
-// -----------------------------------------------------------------------------
-// Verifier helpers
-// -----------------------------------------------------------------------------
-
-fn trim_row<EF: Field, I>(row: I, width: usize) -> Vec<EF>
-where
-    I: IntoIterator<Item = EF>,
-{
-    row.into_iter().take(width).collect()
-}
-
-fn row_to_ext_from_base_evals<F, EF>(row: &[EF]) -> Result<Vec<EF>, VerifierError>
-where
-    F: Field,
-    EF: ExtensionField<F>,
-{
-    let dim = EF::DIMENSION;
-    if !row.len().is_multiple_of(dim) {
-        return Err(VerifierError::InvalidAuxShape);
-    }
-
-    let mut out = Vec::with_capacity(row.len() / dim);
-    for chunk in row.chunks(dim) {
-        out.push(combine_basis::<F, EF>(chunk));
-    }
-    Ok(out)
-}
-
-fn recompose_ext_from_base_evals<F, EF>(coeffs: &[EF]) -> Result<EF, VerifierError>
-where
-    F: Field,
-    EF: ExtensionField<F>,
-{
-    if coeffs.len() != EF::DIMENSION {
-        return Err(VerifierError::InvalidAuxShape);
-    }
-    Ok(combine_basis::<F, EF>(coeffs))
-}
-
-fn combine_basis<F, EF>(coeffs: &[EF]) -> EF
-where
-    F: Field,
-    EF: ExtensionField<F>,
-{
-    coeffs
-        .iter()
-        .enumerate()
-        .map(|(i, c)| EF::ith_basis_element(i).unwrap() * *c)
-        .fold(EF::ZERO, |acc, v| acc + v)
 }

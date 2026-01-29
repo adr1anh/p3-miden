@@ -22,3 +22,6 @@ p3-util.workspace = true
 
 rand.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+p3-miden-dev-utils.workspace = true

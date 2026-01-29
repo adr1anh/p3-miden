@@ -46,7 +46,9 @@ use core::marker::PhantomData;
 
 use p3_challenger::{CanObserve, CanSample, CanSampleBits, GrindingChallenger};
 use p3_dft::TwoAdicSubgroupDft;
-use p3_field::{ExtensionField, PrimeCharacteristicRing, PrimeField64, TwoAdicField};
+use p3_field::{
+    BasedVectorSpace, ExtensionField, PrimeCharacteristicRing, PrimeField64, TwoAdicField,
+};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_air::MidenAir;
@@ -180,6 +182,17 @@ where
         let aux_trace = air
             .build_aux_trace(trace, randomness)
             .expect("aux trace required in this prototype");
+        let expected_aux_width = air.aux_width() * EF::DIMENSION;
+        assert_eq!(
+            aux_trace.height(),
+            trace.height(),
+            "aux trace height mismatch for air index {idx}"
+        );
+        assert_eq!(
+            aux_trace.width(),
+            expected_aux_width,
+            "aux trace width mismatch for air index {idx}"
+        );
         let lde = lde_matrix(
             &config.dft,
             &aux_trace,
@@ -238,6 +251,17 @@ where
         let aux_trace = air
             .build_aux_trace(trace, randomness)
             .expect("aux trace required in this prototype");
+        let expected_aux_width = air.aux_width() * EF::DIMENSION;
+        assert_eq!(
+            aux_trace.height(),
+            trace.height(),
+            "aux trace height mismatch for air index {idx}"
+        );
+        assert_eq!(
+            aux_trace.width(),
+            expected_aux_width,
+            "aux trace width mismatch for air index {idx}"
+        );
         let aux_lde_nat = lde_matrix(
             &config.dft,
             &aux_trace,
@@ -280,7 +304,10 @@ where
 
     // === Commit combined quotient ===
     // Single quotient for now: one column of EF split into base-field coefficients.
-    let chunk = RowMajorMatrix::new_col(combined).flatten_to_base();
+    let chunk = RowMajorMatrix::new(
+        <EF as BasedVectorSpace<F>>::flatten_to_base(combined),
+        EF::DIMENSION,
+    );
     let chunk = pad_matrix(&chunk, config.alignment);
     let quotient_tree = config.lmcs.build_tree(vec![chunk]);
     channel.send_commitment(quotient_tree.root());
@@ -301,6 +328,7 @@ where
     open_with_channel::<F, EF, L, RowMajorMatrix<F>, _, 2>(
         &config.params,
         &config.lmcs,
+        layout.log_max_height,
         [zeta, zeta_next],
         &[&main_tree, &aux_tree, &quotient_tree],
         channel,

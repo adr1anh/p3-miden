@@ -5,7 +5,7 @@ Purpose: shared scaffolding for the lifted STARK prover/verifier (LMCS-based).
 ## Module map
 - `config.rs`: `LiftedStarkConfig` + `ParamsSnapshot` (public params serialized in transcript).
 - `layout.rs`: prover `TraceLayout` and serialized `LayoutSnapshot`.
-- `transcript.rs`: read/write helpers for layout + periodic tables.
+- `transcript.rs`: read/write helpers for layout + periodic tables; params are encoded as checked `u32`.
 - `periodic.rs`: periodic column LDE builder (prover) and evaluation (verifier).
 - `selectors.rs`: two-adic selector polynomials.
 - `folder.rs`: EF-only `ConstraintFolder` implementing `MidenAirBuilder`.
@@ -189,4 +189,3 @@ Add a commitment helper to the lifted FRI PCS or the new STARK crate:
   multi-AIR layout, transcript-driven flow, and periodic handling.
 - `verifier.rs`: standalone verifier prototype with transcript replay,
   periodic interpolation at `(zeta^r)^(n/p)`, and combined quotient check.
-

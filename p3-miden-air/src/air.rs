@@ -11,7 +11,8 @@ pub trait BaseAirWithAuxTrace<F, EF>: BaseAir<F> {
         0
     }
 
-    /// Number of columns (in extension field) that is required for aux trace
+    /// Number of columns in the extension field required for the aux trace.
+    /// The flattened base-field width is `aux_width * EF::DIMENSION`.
     fn aux_width(&self) -> usize {
         0
     }
@@ -92,7 +93,8 @@ pub trait MidenAir<F, EF>: Sync {
         0
     }
 
-    /// Number of columns (in based field) that is required for aux trace
+    /// Number of columns in the extension field required for the aux trace.
+    /// The flattened base-field width is `aux_width * EF::DIMENSION`.
     fn aux_width(&self) -> usize {
         0
     }

@@ -63,13 +63,7 @@ fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
 
     // Test all queries at once
     fri_oracle
-        .test_low_degree(
-            &lmcs,
-            &params,
-            &query_indices,
-            &initial_evals,
-            &mut channel,
-        )
+        .test_low_degree(&lmcs, &params, &query_indices, &initial_evals, &mut channel)
         .expect("low-degree test should pass");
 }
 
