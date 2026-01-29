@@ -1,8 +1,10 @@
 //! FRI folding via polynomial interpolation.
 //!
-//! FRI (Fast Reed-Solomon IOP of Proximity) requires computing `f(β)` from evaluations
-//! of a polynomial `f` on a coset. This module provides a struct-based abstraction for
-//! FRI folding at different arities.
+//! FRI (Fast Reed-Solomon IOP of Proximity) folds evaluations on a coset into a
+//! lower-degree polynomial value parameterized by a challenge `β`. Each row fold
+//! returns the folded value `g(s^r)` for its coset `s·⟨ω_r⟩` (and when `deg f < r`,
+//! this equals `f(β)`). This module provides a struct-based abstraction for FRI
+//! folding at different arities.
 //!
 //! ## Arity
 //!
