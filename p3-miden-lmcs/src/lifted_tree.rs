@@ -18,10 +18,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// # Type Parameters
 ///
-/// * `F` – scalar field element type used in both matrices and digests.
-/// * `D` – digest element type.
+/// * `F` – scalar field element type used in both matrices and hash words.
+/// * `D` – hash word element type.
 /// * `M` – matrix type. Must implement [`Matrix<F>`].
-/// * `DIGEST_ELEMS` – number of elements in one digest.
+/// * `DIGEST_ELEMS` – number of elements in one hash.
 /// * `SALT_ELEMS` – number of salt elements per leaf (0 = non-hiding, >0 = hiding).
 ///
 /// Unlike the standard `MerkleTree`, this uniform variant requires:
@@ -43,14 +43,14 @@ use serde::{Deserialize, Serialize};
 /// Equivalent single-matrix view: this commitment is equivalent to first forming a single
 /// height-`N` matrix by (a) lifting every input matrix to height `N`, (b) padding each lifted
 /// matrix horizontally with zero columns to reflect the sponge's absorption alignment (if any),
-/// and (c) concatenating the results side-by-side. The leaf digest at index `j` is then the
+/// and (c) concatenating the results side-by-side. The leaf hash at index `j` is then the
 /// sponge of that single concatenated matrix's row `j`. This is a conceptual view: LMCS does
 /// not enforce that those padded columns are zero unless the caller checks them.
 ///
 /// Since [`StatefulHasher`] operates on a single field type, this tree uses the same type `F`
-/// for both matrix elements and digest words, unlike `MerkleTree` which can hash `F → W`.
+/// for both matrix elements and hash words, unlike `MerkleTree` which can hash `F → W`.
 ///
-/// Use [`root`](Self::root) to fetch the final digest once the tree is built.
+/// Use [`root`](Self::root) to fetch the final commitment once the tree is built.
 ///
 /// ## Transcript Hints
 ///
@@ -79,10 +79,10 @@ pub struct LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS
     /// after construction time.
     pub(crate) leaves: Vec<M>,
 
-    /// All intermediate digest layers, index 0 being the leaf digest layer
-    /// and the last layer containing exactly one root digest.
+    /// All intermediate hash layers (digest arrays), index 0 being the leaf hash layer
+    /// and the last layer containing exactly one root hash.
     ///
-    /// Every inner vector holds contiguous digests. Higher layers are built by
+    /// Every inner vector holds contiguous hashes. Higher layers are built by
     /// compressing pairs from the previous layer.
     #[serde(bound(
         serialize = "[D; DIGEST_ELEMS]: Serialize",
@@ -157,19 +157,22 @@ where
         let depth = log2_strict_usize(final_height);
         let alignment = self.alignment;
 
-        // Validate indices
+        // Deduplicate in *input order*: serialize each leaf opening once, skipping repeats.
+        // This defines the transcript order for leaf openings.
+        let mut known = BTreeSet::new();
         for &index in indices {
             assert!(
                 index < final_height,
                 "index {index} out of range {final_height}"
             );
-        }
+            if !known.insert(index) {
+                continue;
+            }
 
-        for &idx in indices {
             for m in self.leaves.iter() {
                 let height = m.height();
                 let log_scaling_factor = log2_strict_usize(final_height / height);
-                let row_index = idx >> log_scaling_factor;
+                let row_index = index >> log_scaling_factor;
                 let row = m
                     .row_slice(row_index)
                     .expect("row_index must be valid after upsampling")
@@ -178,14 +181,12 @@ where
                 channel.hint_field_slice(&row);
             }
             if SALT_ELEMS > 0 {
-                let salt = self.salt(idx);
+                let salt = self.salt(index);
                 channel.hint_field_slice(&salt);
             }
         }
 
-        let mut known: BTreeSet<usize> = indices.iter().copied().collect();
-
-        // Walk up the tree level by level
+        // Walk up the tree level by level using the same deduplicated set.
         for layer_idx in 0..depth {
             let mut parents = BTreeSet::new();
 
@@ -272,7 +273,7 @@ where
             absorb_matrix::<PF, PD, _, _, WIDTH, DIGEST_ELEMS>(&mut leaf_states, salt_matrix, h);
         }
 
-        // Squeeze the final digests from the states
+        // Squeeze the final hashes from the states
         let leaf_digests: Vec<[PD::Value; DIGEST_ELEMS]> = leaf_states
             .into_par_iter()
             .map(|state| h.squeeze(&state))
@@ -303,7 +304,7 @@ where
     ///
     /// Rows are padded to `alignment` and LMCS does not enforce that padding is zero.
     /// Panics if `index` is out of range for the tree height.
-    pub fn single_proof(&self, index: usize) -> Proof<F, D, DIGEST_ELEMS, SALT_ELEMS> {
+    pub fn single_proof(&self, index: usize) -> Proof<F, Hash<F, D, DIGEST_ELEMS>, SALT_ELEMS> {
         let mut siblings = Vec::with_capacity(self.digest_layers.len().saturating_sub(1));
         let mut layer_index = index;
         for layer in &self.digest_layers {
@@ -311,7 +312,7 @@ where
                 break;
             }
             let sibling = layer[layer_index ^ 1];
-            siblings.push(sibling);
+            siblings.push(Hash::from(sibling));
             layer_index >>= 1;
         }
 
@@ -356,7 +357,7 @@ where
 /// Build leaf states using the upsampled view (nearest-neighbor upsampling).
 ///
 /// Returns the sponge states after absorbing all matrix rows but **before squeezing**.
-/// Callers must squeeze the states to obtain final leaf digests.
+/// Callers must squeeze the states to obtain final leaf hashes.
 ///
 /// Conceptually, each matrix is virtually extended to height `H` by repeating each row
 /// `L = H / h` times (width unchanged), and the leaf `r` absorbs the `r`-th row from each
@@ -433,7 +434,7 @@ where
 /// construction, callers ensure that `states` is the correct lifted view for the current matrix
 /// (either the "nearest-neighbor" duplication or the "modulo" duplication across the final
 /// height). This helper performs exactly one absorption round for that matrix and returns with the
-/// states mutated; it does not change the lifting shape or squeeze digests.
+/// states mutated; it does not change the lifting shape or squeeze hashes.
 fn absorb_matrix<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     states: &mut [[PD::Value; WIDTH]],
     matrix: &M,
@@ -472,9 +473,9 @@ fn absorb_matrix<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     }
 }
 
-/// Compress a layer of digests in a uniform Merkle tree.
+/// Compress a layer of hashes in a uniform Merkle tree.
 ///
-/// Takes a layer of digests and compresses pairs into a new layer with half as many elements.
+/// Takes a layer of hashes and compresses pairs into a new layer with half as many elements.
 /// The layer length must be a power of two.
 ///
 /// When the result would be smaller than the packing width, uses a pure scalar path.

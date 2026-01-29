@@ -26,12 +26,12 @@ use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError};
 /// # Type Parameters
 ///
 /// - `PF`: Packed field element type for SIMD operations.
-/// - `PD`: Packed digest element type.
+/// - `PD`: Packed hash word element type.
 /// - `H`: Stateful hasher/sponge type.
 /// - `C`: 2-to-1 compression function type.
 /// - `R`: Random number generator type.
 /// - `WIDTH`: State width for the hasher.
-/// - `DIGEST`: Number of elements in a digest.
+/// - `DIGEST`: Number of elements in a hash.
 /// - `SALT`: Number of salt elements per leaf (must be > 0).
 ///
 /// # Example
@@ -117,7 +117,7 @@ where
 {
     type F = PF::Value;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST>;
-    type BatchProof = BatchProof<PF::Value, PD::Value, DIGEST, SALT>;
+    type BatchProof = BatchProof<PF::Value, Self::Commitment, SALT>;
     type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, SALT>;
 
     /// Build a tree with per-leaf salt sampled from the RNG.
@@ -138,6 +138,18 @@ where
 
     fn alignment(&self) -> usize {
         self.inner.alignment()
+    }
+
+    fn hash<'a, I>(&self, rows: I) -> Self::Commitment
+    where
+        I: IntoIterator<Item = &'a [Self::F]>,
+        Self::F: 'a,
+    {
+        self.inner.hash(rows)
+    }
+
+    fn compress(&self, left: Self::Commitment, right: Self::Commitment) -> Self::Commitment {
+        self.inner.compress(left, right)
     }
 
     fn open_batch<Ch>(

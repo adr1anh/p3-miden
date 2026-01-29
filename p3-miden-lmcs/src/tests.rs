@@ -9,6 +9,7 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_stateful_hasher::StatefulHasher;
 use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
+use p3_symmetric::Hash;
 use p3_util::log2_strict_usize;
 use rand::Rng;
 use rand::SeedableRng;
@@ -45,7 +46,7 @@ pub fn matrix_scenarios() -> Vec<Vec<(usize, usize)>> {
     p3_miden_dev_utils::fixtures::matrix_scenarios::<P>(RATE)
 }
 
-/// Build leaf digests for a single matrix (used for equivalence testing).
+/// Build leaf hashes for a single matrix (used for equivalence testing).
 pub fn build_leaves_single(matrix: &RowMajorMatrix<F>, sponge: &Sponge) -> Vec<[F; DIGEST]> {
     matrix
         .rows()
@@ -245,7 +246,7 @@ fn batch_proof_handles_empty_or_oob() {
     let transcript = prover_channel.into_data();
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    let batch = BatchProof::<F, F, DIGEST>::read_from_channel(
+    let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
         &widths,
         log_max_height,
         &[],
@@ -254,27 +255,18 @@ fn batch_proof_handles_empty_or_oob() {
     .unwrap();
     assert!(batch.openings.is_empty());
     assert!(batch.siblings.is_empty());
-    let proofs = batch
-        .single_proofs::<Sponge, Compress, WIDTH>(
-            &lmcs.sponge,
-            &lmcs.compress,
-            &widths,
-            log_max_height,
-        )
-        .unwrap();
+    let proofs = batch.single_proofs(&lmcs, &widths, log_max_height).unwrap();
     assert!(proofs.is_empty());
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    let batch = BatchProof::<F, F, DIGEST>::read_from_channel(
+    let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
         &[],
         log_max_height,
         &[0],
         &mut verifier_channel,
     )
     .unwrap();
-    let proofs = batch
-        .single_proofs::<Sponge, Compress, WIDTH>(&lmcs.sponge, &lmcs.compress, &[], log_max_height)
-        .unwrap();
+    let proofs = batch.single_proofs(&lmcs, &[], log_max_height).unwrap();
     assert_eq!(proofs.len(), 1);
     let proof = proofs.get(&0).expect("proof for index 0");
     let Proof {
@@ -288,7 +280,7 @@ fn batch_proof_handles_empty_or_oob() {
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
     assert!(
-        BatchProof::<F, F, DIGEST>::read_from_channel(
+        BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
             &widths,
             log_max_height,
             &[tree.height()],

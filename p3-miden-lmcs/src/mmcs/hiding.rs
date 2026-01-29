@@ -43,8 +43,8 @@ where
 {
     type ProverData<M> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST_ELEMS, SALT_ELEMS>;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST_ELEMS>;
-    /// Proof includes salt and siblings: `([F; SALT_ELEMS], Vec<[D; DIGEST_ELEMS]>)`
-    type Proof = ([PF::Value; SALT_ELEMS], Vec<[PD::Value; DIGEST_ELEMS]>);
+    /// Proof includes salt and siblings: `([F; SALT_ELEMS], Vec<Self::Commitment>)`
+    type Proof = ([PF::Value; SALT_ELEMS], Vec<Self::Commitment>);
     type Error = LmcsError;
 
     fn commit<M: Matrix<PF::Value>>(
@@ -76,7 +76,7 @@ where
 
     fn verify_batch(
         &self,
-        commit: &Self::Commitment,
+        commitment: &Self::Commitment,
         dimensions: &[Dimensions],
         index: usize,
         batch_opening: BatchOpeningRef<'_, PF::Value, Self>,
@@ -86,6 +86,6 @@ where
             opening_proof: batch_opening.opening_proof,
         };
         self.inner
-            .verify_batch(commit, dimensions, index, batch_opening)
+            .verify_batch(commitment, dimensions, index, batch_opening)
     }
 }

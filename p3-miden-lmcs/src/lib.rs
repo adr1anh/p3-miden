@@ -71,8 +71,8 @@
 //! committed tree and treats empty `indices` as invalid. Use
 //! [`BatchProof::read_from_channel`](crate::BatchProof::read_from_channel) if you need to
 //! parse hints without hashing; then call [`BatchProof::single_proofs`](crate::BatchProof::single_proofs)
-//! with a sponge/compress pair to reconstruct per-index proofs (keyed by index) without verifying against
-//! a commitment.
+//! with an LMCS config to reconstruct per-index proofs (keyed by index) without verifying against a
+//! commitment.
 //!
 //! # Mathematical Foundation
 //!
@@ -188,6 +188,18 @@ pub trait Lmcs: Clone {
     /// Callers should align widths to this value before opening; LMCS does not enforce
     /// that padding is zero.
     fn alignment(&self) -> usize;
+
+    /// Hash a sequence of field slices into a leaf hash.
+    ///
+    /// Inputs are absorbed in order. For salted leaves, append the salt slice to the
+    /// iterator (or call this with a chained iterator).
+    fn hash<'a, I>(&self, rows: I) -> Self::Commitment
+    where
+        I: IntoIterator<Item = &'a [Self::F]>,
+        Self::F: 'a;
+
+    /// Compress two hashes into their parent (2-to-1 compression).
+    fn compress(&self, left: Self::Commitment, right: Self::Commitment) -> Self::Commitment;
 
     /// Open a batch proof by reading hint data from a transcript channel.
     ///

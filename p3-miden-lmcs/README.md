@@ -16,9 +16,9 @@ order.
 Let a polynomial f be evaluated over a coset gK with |K| = n, stored in
 bit-reversed order. Let N = r * n be the max height. Lifting repeats each row r
 times, which corresponds to evaluating f'(X) = f(X^r) over a larger coset of
-size N. The commitment is the Merkle root of leaf digests computed by absorbing
+size N. The commitment is the Merkle root of leaf hashes computed by absorbing
 lifted rows (in matrix order) into the configured `StatefulHasher`, optionally
-absorbing a salt, and then squeezing a digest:
+absorbing a salt, and then squeezing a hash:
 
 ```
 leaf(i) = squeeze(absorb(row_0(i) || row_1(i) || ... || row_{t-1}(i) || salt?))
@@ -60,6 +60,8 @@ binding.
 - `widths` and `log_max_height` are statement data chosen by the protocol.
 - Evaluation rows are in bit-reversed order.
 - Query indices are in range of the max height.
+- Duplicate indices are coalesced in the transcript (first-occurrence order); verifiers
+  return the same opening for each occurrence.
 - Alignment padding (if any) must be included in absorbed rows; LMCS does not
   enforce zero-padding.
 - Hash and compression functions are collision-resistant.

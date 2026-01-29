@@ -2,7 +2,7 @@
 
 use p3_challenger::CanObserve;
 use p3_field::{PrimeCharacteristicRing, TwoAdicField};
-use p3_miden_transcript::VerifierTranscript;
+use p3_miden_transcript::{VerifierChannel, VerifierTranscript};
 use p3_util::{log2_strict_usize, reverse_bits_len};
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
