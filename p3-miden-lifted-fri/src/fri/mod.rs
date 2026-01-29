@@ -40,10 +40,7 @@ pub struct FriParams {
     /// Final polynomial is sent in clear (coefficients, not evaluations).
     pub log_final_degree: usize,
 
-    /// Number of bits for proof-of-work grinding before each beta challenge.
-    ///
-    /// Set to 0 to disable grinding. Applied per folding round, so total grinding
-    /// work scales with `num_rounds * 2^proof_of_work_bits`.
+    /// Grinding bits per folding round.
     pub proof_of_work_bits: usize,
 }
 

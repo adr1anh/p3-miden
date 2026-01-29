@@ -104,12 +104,17 @@ fn test_fri_verify_wrong_eval() {
     let log_lde_size = log_poly_degree + log_blowup;
     let lde_size = 1 << log_lde_size;
 
+    let indices = sample_indices(&mut rng, lde_size, 2);
+    let mut initial_evals = evals_at(&evals, &indices);
+    let mut wrong_eval: EF = rng.sample(StandardUniform);
+    while wrong_eval == initial_evals[0] {
+        wrong_eval = rng.sample(StandardUniform);
+    }
+    initial_evals[0] = wrong_eval; // Wrong!
+
     let mut prover_channel = prover_channel();
     let fri_polys = FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut prover_channel);
-
-    let index: usize = rng.random_range(0..lde_size);
-    let wrong_eval: EF = rng.sample(StandardUniform); // Wrong!
-    fri_polys.prove_queries(&params, &[index], &mut prover_channel);
+    fri_polys.prove_queries(&params, &indices, &mut prover_channel);
 
     let transcript = prover_channel.into_data();
 
@@ -121,8 +126,8 @@ fn test_fri_verify_wrong_eval() {
     let result = fri_oracle.test_low_degree(
         &lmcs,
         &params,
-        &[index],
-        &[wrong_eval], // Should fail
+        &indices,
+        &initial_evals, // Should fail (one eval is wrong)
         &mut verifier_channel,
     );
 
@@ -161,8 +166,8 @@ fn test_fri_verify_wrong_beta() {
     let lde_size = 1 << log_lde_size;
 
     // Prover 1: generate FRI transcript (grinds per-round internally)
-    let index: usize = rng.random_range(0..lde_size);
-    let initial_eval = evals1[index];
+    let indices = sample_indices(&mut rng, lde_size, 2);
+    let initial_evals = evals_at(&evals1, &indices);
 
     let mut prover1_channel = prover_channel();
     let fri_polys1 = FriPolys::<F, EF, _>::new(&params, &lmcs, evals1, &mut prover1_channel);
@@ -171,7 +176,7 @@ fn test_fri_verify_wrong_beta() {
     let mut prover2_channel = prover_channel();
     let _ = FriPolys::<F, EF, _>::new(&params, &lmcs, evals2, &mut prover2_channel);
 
-    fri_polys1.prove_queries(&params, &[index], &mut prover1_channel);
+    fri_polys1.prove_queries(&params, &indices, &mut prover1_channel);
 
     let transcript = prover1_channel.into_data();
     let other_commitment = prover2_channel
@@ -193,8 +198,8 @@ fn test_fri_verify_wrong_beta() {
     let result = wrong_oracle.test_low_degree(
         &lmcs,
         &params,
-        &[index],
-        &[initial_eval],
+        &indices,
+        &initial_evals,
         &mut verifier_channel,
     );
 

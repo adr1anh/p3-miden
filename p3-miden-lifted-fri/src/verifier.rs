@@ -20,7 +20,10 @@ use crate::fri::verifier::FriOracle;
 /// Verify polynomial evaluation claims against commitments using a verifier channel.
 ///
 /// # Preconditions
-/// - `eval_points` must be outside the evaluation domain `gK` (caller must ensure this).
+/// - `eval_points` must lie outside both the subgroup `H` (size `2^log_max_height`) and
+///   the evaluation coset `gK` used by the PCS. If a point lies in either set,
+///   denominators `(z_j - X)` in the DEEP quotient become zero for some domain element,
+///   making the quotient undefined.
 /// - All commitments are expected to be lifted to the same max height `2^log_max_height`.
 ///
 /// Commitment widths are expected to be aligned to the LMCS alignment.

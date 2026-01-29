@@ -104,8 +104,10 @@ pub struct PointQuotients<F: TwoAdicField, EF: ExtensionField<F>, const N: usize
 impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, EF, N> {
     /// Create precomputation for N evaluation points via batched inversion.
     ///
-    /// Preconditions: all evaluation points must be outside the domain `coset_points`
-    /// (i.e., `z_j != x_i` for all i, j), otherwise division by zero occurs.
+    /// Preconditions: all evaluation points must be outside both the subgroup `H`
+    /// (size `coset_points.len()`) and the evaluation coset `gK` represented by
+    /// `coset_points` (i.e., `z_j != x_i` for all i, j). Otherwise division by zero
+    /// occurs in the barycentric weights and DEEP quotient.
     pub fn new(points: FieldArray<EF, N>, coset_points: &[F]) -> Self {
         let n_points = coset_points.len();
 

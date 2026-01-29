@@ -45,10 +45,7 @@ pub use verifier::DeepError;
 /// Column alignment is handled at the LMCS layer and by padding evaluations.
 #[derive(Clone, Copy, Debug)]
 pub struct DeepParams {
-    /// Number of bits for proof-of-work grinding before DEEP challenge sampling.
-    ///
-    /// Set to 0 to disable grinding. Higher values increase prover work but improve
-    /// soundness by preventing grinding attacks on DEEP challenges (α, β).
+    /// Proof-of-work grinding bits before DEEP challenge sampling.
     pub proof_of_work_bits: usize,
 }
 

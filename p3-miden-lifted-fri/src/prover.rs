@@ -19,7 +19,10 @@ use crate::utils::bit_reversed_coset_points;
 /// Open committed matrices at N evaluation points, writing to a prover channel.
 ///
 /// # Preconditions
-/// - `eval_points` must be outside the evaluation domain `gK` (caller must ensure this).
+/// - `eval_points` must lie outside both the subgroup `H` (size `2^log_max_height`) and
+///   the evaluation coset `gK` used by the PCS. If a point lies in either set,
+///   denominators `(z_j - X)` in the DEEP quotient become zero for some domain element,
+///   making the quotient undefined.
 /// - All trace trees must be built at the same max height `2^log_max_height`.
 ///   Multiple max heights are not supported yet and will panic.
 ///
