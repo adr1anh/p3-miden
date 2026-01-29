@@ -2,7 +2,6 @@
 
 use alloc::vec::Vec;
 use core::cell::RefCell;
-use core::marker::PhantomData;
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -78,12 +77,7 @@ impl<PF, PD, H, C, R, const WIDTH: usize, const DIGEST: usize, const SALT: usize
     pub fn new(sponge: H, compress: C, rng: R) -> Self {
         const { assert!(SALT > 0) }
         Self {
-            inner: LmcsConfig {
-                sponge,
-                compress,
-                alignment: 1,
-                _phantom: PhantomData,
-            },
+            inner: LmcsConfig::new(sponge, compress),
             rng: RefCell::new(rng),
         }
     }
@@ -101,12 +95,7 @@ impl<PF, PD, H, C, R, const WIDTH: usize, const DIGEST: usize, const SALT: usize
     {
         const { assert!(SALT > 0) }
         Self {
-            inner: LmcsConfig {
-                sponge,
-                compress,
-                alignment: <H as Alignable<PF::Value, PD::Value>>::ALIGNMENT,
-                _phantom: PhantomData,
-            },
+            inner: LmcsConfig::new_aligned(sponge, compress),
             rng: RefCell::new(rng),
         }
     }
@@ -143,12 +132,12 @@ where
             &self.inner.compress,
             leaves,
             Some(salt),
-            self.inner.alignment,
+            self.inner.alignment(),
         )
     }
 
     fn alignment(&self) -> usize {
-        self.inner.alignment
+        self.inner.alignment()
     }
 
     fn open_batch<Ch>(

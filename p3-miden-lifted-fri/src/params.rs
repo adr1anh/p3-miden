@@ -9,20 +9,15 @@ use crate::fri::FriParams;
 /// reducing the number of function arguments and ensuring consistent configuration.
 #[derive(Clone, Copy, Debug)]
 pub struct PcsParams {
-    /// DEEP quotient parameters (grinding).
+    /// DEEP quotient parameters.
     pub deep: DeepParams,
 
-    /// FRI protocol parameters (blowup, folding, final degree, grinding).
+    /// FRI protocol parameters.
     pub fri: FriParams,
 
-    /// Number of query repetitions for soundness amplification.
-    ///
-    /// Each query provides ~`log_blowup` bits of security.
+    /// Number of query repetitions.
     pub num_queries: usize,
 
-    /// Number of bits for proof-of-work grinding before query sampling.
-    ///
-    /// Set to 0 to disable grinding. Higher values increase prover work but improve
-    /// soundness by preventing grinding attacks on query indices.
+    /// Proof-of-work grinding bits for query sampling.
     pub query_proof_of_work_bits: usize,
 }

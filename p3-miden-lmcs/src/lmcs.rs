@@ -53,12 +53,12 @@ pub struct LmcsConfig<
     /// 2-to-1 compression function for building internal tree nodes.
     pub compress: C,
     /// Column alignment used for transcript openings.
-    pub alignment: usize,
+    alignment: usize,
     pub(crate) _phantom: PhantomData<(PF, PD)>,
 }
 
-impl<PF, PD, H, C, const WIDTH: usize, const DIGEST: usize>
-    LmcsConfig<PF, PD, H, C, WIDTH, DIGEST, 0>
+impl<PF, PD, H, C, const WIDTH: usize, const DIGEST: usize, const SALT_ELEMS: usize>
+    LmcsConfig<PF, PD, H, C, WIDTH, DIGEST, SALT_ELEMS>
 {
     /// Create a new LMCS configuration with alignment 1.
     #[inline]

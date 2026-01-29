@@ -78,18 +78,24 @@ fn test_pcs_open_verify_roundtrip() {
     let rng = &mut SmallRng::seed_from_u64(42);
     let lmcs = test_lmcs();
 
+    let log_blowup = 2;
+    let log_final_degree = 2;
+    let log_poly_degree = 6; // polynomial degree = 64
+
+    let fri = FriParams {
+        log_blowup,
+        fold: FriFold::ARITY_2,
+        log_final_degree,
+        proof_of_work_bits: 1, // Low for fast tests (per-round)
+    };
+    let deep = DeepParams {
+        proof_of_work_bits: 1, // Low for fast tests
+    };
     let params = PcsParams {
-        fri: FriParams {
-            log_blowup: 2,
-            fold: FriFold::ARITY_2,
-            log_final_degree: 2,
-            proof_of_work_bits: 1, // Low for fast tests (per-round)
-        },
-        deep: DeepParams {
-            proof_of_work_bits: 1, // Low for fast tests
-        },
+        deep,
+        fri,
         num_queries: 5,
-        query_proof_of_work_bits: 1, // Low for fast tests
+        query_proof_of_work_bits: 1,
     };
 
     // Create a matrix of LDE evaluations.
@@ -98,15 +104,8 @@ fn test_pcs_open_verify_roundtrip() {
     //
     // The DEEP quotient Q(X) computed from these polynomials will have degree
     // at most 2^log_poly_degree - 1, satisfying FRI's low-degree requirement.
-    let log_poly_degree = 6; // polynomial degree = 64
     let num_columns = 3;
-    let matrix = random_lde_matrix(
-        rng,
-        log_poly_degree,
-        params.fri.log_blowup,
-        num_columns,
-        F::GENERATOR,
-    );
+    let matrix = random_lde_matrix(rng, log_poly_degree, log_blowup, num_columns, F::GENERATOR);
     let matrices: Vec<RowMajorMatrix<F>> = vec![matrix];
 
     // Commit matrices via LMCS
@@ -130,6 +129,7 @@ fn test_pcs_open_verify_roundtrip() {
     open_with_channel::<F, EF, _, _, _, 2>(
         &params,
         &lmcs,
+        log_max_height,
         eval_points,
         trace_trees,
         &mut prover_channel,

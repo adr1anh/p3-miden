@@ -56,9 +56,9 @@ fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
     let transcript = prover_channel.into_data();
 
     // Verifier: replay challenger to get oracle with betas
-    let mut verifier_channel = verifier_channel(&transcript);
+    let mut channel = verifier_channel(&transcript);
     let log_domain_size = log2_strict_usize(lde_size);
-    let fri_oracle = FriOracle::new(&params, log_domain_size, &mut verifier_channel)
+    let fri_oracle = FriOracle::new(&params, log_domain_size, &mut channel)
         .expect("FRI oracle construction should succeed");
 
     // Test all queries at once
@@ -68,7 +68,7 @@ fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
             &params,
             &query_indices,
             &initial_evals,
-            &mut verifier_channel,
+            &mut channel,
         )
         .expect("low-degree test should pass");
 }
@@ -104,12 +104,17 @@ fn test_fri_verify_wrong_eval() {
     let log_lde_size = log_poly_degree + log_blowup;
     let lde_size = 1 << log_lde_size;
 
+    let indices = sample_indices(&mut rng, lde_size, 2);
+    let mut initial_evals = evals_at(&evals, &indices);
+    let mut wrong_eval: EF = rng.sample(StandardUniform);
+    while wrong_eval == initial_evals[0] {
+        wrong_eval = rng.sample(StandardUniform);
+    }
+    initial_evals[0] = wrong_eval; // Wrong!
+
     let mut prover_channel = prover_channel();
     let fri_polys = FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut prover_channel);
-
-    let index: usize = rng.random_range(0..lde_size);
-    let wrong_eval: EF = rng.sample(StandardUniform); // Wrong!
-    fri_polys.prove_queries(&params, &[index], &mut prover_channel);
+    fri_polys.prove_queries(&params, &indices, &mut prover_channel);
 
     let transcript = prover_channel.into_data();
 
@@ -121,8 +126,8 @@ fn test_fri_verify_wrong_eval() {
     let result = fri_oracle.test_low_degree(
         &lmcs,
         &params,
-        &[index],
-        &[wrong_eval], // Should fail
+        &indices,
+        &initial_evals, // Should fail (one eval is wrong)
         &mut verifier_channel,
     );
 
@@ -161,8 +166,8 @@ fn test_fri_verify_wrong_beta() {
     let lde_size = 1 << log_lde_size;
 
     // Prover 1: generate FRI transcript (grinds per-round internally)
-    let index: usize = rng.random_range(0..lde_size);
-    let initial_eval = evals1[index];
+    let indices = sample_indices(&mut rng, lde_size, 2);
+    let initial_evals = evals_at(&evals1, &indices);
 
     let mut prover1_channel = prover_channel();
     let fri_polys1 = FriPolys::<F, EF, _>::new(&params, &lmcs, evals1, &mut prover1_channel);
@@ -171,7 +176,7 @@ fn test_fri_verify_wrong_beta() {
     let mut prover2_channel = prover_channel();
     let _ = FriPolys::<F, EF, _>::new(&params, &lmcs, evals2, &mut prover2_channel);
 
-    fri_polys1.prove_queries(&params, &[index], &mut prover1_channel);
+    fri_polys1.prove_queries(&params, &indices, &mut prover1_channel);
 
     let transcript = prover1_channel.into_data();
     let other_commitment = prover2_channel
@@ -193,8 +198,8 @@ fn test_fri_verify_wrong_beta() {
     let result = wrong_oracle.test_low_degree(
         &lmcs,
         &params,
-        &[index],
-        &[initial_eval],
+        &indices,
+        &initial_evals,
         &mut verifier_channel,
     );
 
@@ -207,6 +212,106 @@ fn test_fri_verify_wrong_beta() {
         "expected EvaluationMismatch or FinalPolyMismatch error, got {:?}",
         result
     );
+}
+
+/// Zero-round FRI: when the evaluation domain is at or below the final polynomial degree.
+#[test]
+fn test_fri_zero_rounds_final_poly_only() {
+    let mut rng = SmallRng::seed_from_u64(123);
+    let lmcs = test_lmcs();
+
+    let log_poly_degree = 4;
+    let log_blowup = 0;
+    let log_final_degree = log_poly_degree; // final degree >= domain size => zero rounds
+
+    let params = FriParams {
+        log_blowup,
+        fold: FriFold::ARITY_2,
+        log_final_degree,
+        proof_of_work_bits: 0,
+    };
+
+    let evals = random_lde_matrix(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
+    let lde_size = evals.len();
+
+    let indices = sample_indices(&mut rng, lde_size, 2);
+    let initial_evals = evals_at(&evals, &indices);
+
+    let mut prover_channel = prover_channel();
+    let fri_polys = FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut prover_channel);
+    fri_polys.prove_queries(&params, &indices, &mut prover_channel);
+    let transcript = prover_channel.into_data();
+
+    let mut channel = verifier_channel(&transcript);
+    let log_domain_size = log2_strict_usize(lde_size);
+    let fri_transcript: FriTranscript<F, EF, _> =
+        FriTranscript::from_verifier_channel(&params, log_domain_size, &mut channel)
+            .expect("transcript parsing should succeed");
+
+    assert!(
+        fri_transcript.rounds.is_empty(),
+        "expected zero folding rounds"
+    );
+    assert_eq!(
+        fri_transcript.final_poly.len(),
+        lde_size,
+        "final polynomial should match domain size"
+    );
+
+    let mut verifier_channel = verifier_channel(&transcript);
+    let fri_oracle = FriOracle::new(&params, log_domain_size, &mut verifier_channel)
+        .expect("oracle construction should succeed");
+    fri_oracle
+        .test_low_degree(
+            &lmcs,
+            &params,
+            &indices,
+            &initial_evals,
+            &mut verifier_channel,
+        )
+        .expect("zero-round FRI should verify");
+}
+
+/// FRI with no blowup but with folding rounds.
+#[test]
+fn test_fri_blowup_zero_with_rounds() {
+    let mut rng = SmallRng::seed_from_u64(321);
+    let lmcs = test_lmcs();
+
+    let log_poly_degree = 8;
+    let log_blowup = 0;
+    let log_final_degree = 3;
+
+    let params = FriParams {
+        log_blowup,
+        fold: FriFold::ARITY_2,
+        log_final_degree,
+        proof_of_work_bits: 0,
+    };
+
+    let evals = random_lde_matrix(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
+    let lde_size = evals.len();
+    let indices = sample_indices(&mut rng, lde_size, 2);
+    let initial_evals = evals_at(&evals, &indices);
+
+    let mut prover_channel = prover_channel();
+    let fri_polys = FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut prover_channel);
+    fri_polys.prove_queries(&params, &indices, &mut prover_channel);
+    let transcript = prover_channel.into_data();
+
+    let mut verifier_channel = verifier_channel(&transcript);
+    let log_domain_size = log2_strict_usize(lde_size);
+    let fri_oracle = FriOracle::new(&params, log_domain_size, &mut verifier_channel)
+        .expect("oracle construction should succeed");
+    fri_oracle
+        .test_low_degree(
+            &lmcs,
+            &params,
+            &indices,
+            &initial_evals,
+            &mut verifier_channel,
+        )
+        .expect("FRI with blowup=0 should verify");
 }
 
 /// Test that the final polynomial is correctly computed by evaluating it

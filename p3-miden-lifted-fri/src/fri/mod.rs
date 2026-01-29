@@ -2,6 +2,12 @@
 //!
 //! Fast Reed-Solomon Interactive Oracle Proof for low-degree testing.
 //! Proves that a committed polynomial has degree below a target bound.
+//!
+//! ## Domain Convention
+//!
+//! This FRI implementation treats inputs as evaluations over the unshifted two-adic subgroup.
+//! If the PCS evaluates over a coset `gK`, the shift is absorbed into the polynomial:
+//! `Q'(X) = Q(g·X)`. The low-degree test is run on `Q'` using subgroup points.
 
 mod fold;
 mod proof;
@@ -34,10 +40,7 @@ pub struct FriParams {
     /// Final polynomial is sent in clear (coefficients, not evaluations).
     pub log_final_degree: usize,
 
-    /// Number of bits for proof-of-work grinding before each beta challenge.
-    ///
-    /// Set to 0 to disable grinding. Applied per folding round, so total grinding
-    /// work scales with `num_rounds * 2^proof_of_work_bits`.
+    /// Grinding bits per folding round.
     pub proof_of_work_bits: usize,
 }
 

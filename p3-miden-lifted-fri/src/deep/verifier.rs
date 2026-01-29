@@ -35,7 +35,7 @@ pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
     commitments: Vec<(L::Commitment, Vec<usize>)>,
 
     /// Log2 of the universal domain height (tree has 2^log_max_height leaves).
-    /// May be larger than any actual trace height (for domain alignment).
+    /// Verifier expects all commitments to be lifted to this same max height.
     log_max_height: usize,
 
     /// Reduced openings: pairs of `(zⱼ, f_reduced(zⱼ))` from the prover's claims.
@@ -53,6 +53,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
     /// Construct by reading evaluations, checking PoW, and sampling challenges.
     ///
     /// Commitment widths must already include any alignment padding.
+    /// All commitments are expected to be lifted to the same `log_max_height`.
     pub fn new<Ch>(
         params: &DeepParams,
         eval_points: &[EF],
