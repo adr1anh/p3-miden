@@ -16,21 +16,26 @@
 
 extern crate alloc;
 
+use alloc::vec;
 use alloc::vec::Vec;
+use core::marker::PhantomData;
 
-use p3_challenger::{CanObserve, CanSample, CanSampleBits};
-use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, TwoAdicField};
+use p3_challenger::{CanObserve, CanSample, CanSampleBits, GrindingChallenger};
+use p3_dft::TwoAdicSubgroupDft;
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64, TwoAdicField};
+use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_air::MidenAir;
-use p3_miden_lifted_fri::verifier::verify_with_channel;
+use p3_miden_lifted_fri::verifier::verify_with_channel as verify_pcs_with_channel;
 use p3_miden_lifted_fri::{PcsError, PcsTranscript};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptData, VerifierChannel, VerifierTranscript};
 use p3_util::log2_strict_usize;
 
 use p3_miden_lifted_stark::{
-    ConstraintFolder, LayoutSnapshot, LiftedStarkConfig, ParamsSnapshot, Proof, eval_periodic_values,
-    read_periodic_tables, row_pair_matrix, sample_ext, sample_ood_zeta, selectors_at,
+    ConstraintFolder, LayoutSnapshot, LiftedStarkConfig, ParamsSnapshot, Proof, align_width,
+    eval_periodic_values, read_periodic_tables, row_pair_matrix, sample_ext, sample_ood_zeta,
+    selectors_at,
 };
 
 // -----------------------------------------------------------------------------
@@ -45,12 +50,16 @@ pub enum VerifierError {
     ConstraintMismatch,
     TranscriptNotConsumed,
     ParamsMismatch,
+    PublicValuesMismatch,
 }
 
 /// Replayable transcript view for debugging or audit tooling.
 pub struct StarkTranscript<EF, L>
 where
     L: Lmcs,
+    L::F: Field,
+    L::Commitment: Copy,
+    EF: ExtensionField<L::F>,
 {
     pub params: ParamsSnapshot,
     pub layout: LayoutSnapshot,
@@ -73,7 +82,8 @@ pub struct Commitments<C> {
 impl<EF, L> StarkTranscript<EF, L>
 where
     L: Lmcs,
-    L::F: TwoAdicField,
+    L::F: PrimeField64 + TwoAdicField,
+    L::Commitment: Copy,
     EF: ExtensionField<L::F>,
 {
     /// Parse a full transcript by replaying a verifier channel.
@@ -90,7 +100,11 @@ where
         let main = *channel.receive_commitment()?;
         let aux = *channel.receive_commitment()?;
         let quotient = *channel.receive_commitment()?;
-        let commitments = Commitments { main, aux, quotient };
+        let commitments = Commitments {
+            main,
+            aux,
+            quotient,
+        };
 
         let mut randomness = Vec::with_capacity(layout.num_airs);
         for &num_r in &layout.num_randomness {
@@ -107,7 +121,8 @@ where
         }
 
         let beta: EF = sample_ext::<L::F, EF, _>(channel);
-        let zeta: EF = sample_ood_zeta::<L::F, EF, _>(channel, layout.log_max_degree);
+        let zeta: EF =
+            sample_ood_zeta::<L::F, EF, _>(channel, layout.log_max_degree, layout.log_max_height);
         let h_max = L::F::two_adic_generator(layout.log_max_degree);
         let zeta_next = zeta * EF::from(h_max);
 
@@ -145,12 +160,12 @@ where
 // Verifier entrypoint
 // -----------------------------------------------------------------------------
 //
-// Intern guide (repeat from notes for quick context):
+// Intern guide (repeat from notes.md for quick context):
 // - The verifier must replay the transcript in the exact order written by the
 //   prover. Any order changes require synchronized updates.
 // - Commitments are observed in this order: main, aux, quotient.
 // - Randomness and alphas are sampled per AIR (AIR order), then beta, then zeta.
-// - zeta_next is derived from zeta * h_max (do NOT sample a second point).
+// - Zeta is rejection-sampled outside H and gK (loop ~1x); zeta_next is derived from zeta * h_max.
 // - PCS openings return groups:
 //   - groups[0]: main trace openings in permutation order
 //   - groups[1]: aux trace openings in permutation order
@@ -158,41 +173,71 @@ where
 // - Each group matrix has row 0 = eval at zeta^r, row 1 = eval at zeta_next^r.
 // - Folded constraints are recomputed at zeta^r and compared to quotient(zeta).
 
-pub fn verify<F, EF, A, L, Dft, Ch>(
-    config: &LiftedStarkConfig<F, L, Dft, Ch>,
+pub fn verify_with_channel<F, EF, A, L, Dft, Ch>(
+    config: &LiftedStarkConfig<F, L, Dft>,
     airs: &[A],
-    proof: &Proof<F, L::Commitment>,
     public_values: &[Vec<F>],
+    channel: &mut Ch,
 ) -> Result<(), VerifierError>
 where
-    F: TwoAdicField + PrimeCharacteristicRing,
+    F: TwoAdicField + PrimeCharacteristicRing + PrimeField64,
     EF: ExtensionField<F>,
     A: MidenAir<F, EF>,
     L: Lmcs<F = F>,
-    Ch: Clone + CanObserve<F> + CanObserve<L::Commitment> + CanSample<F> + CanSampleBits<usize>,
+    L::Commitment: Copy,
+    Dft: TwoAdicSubgroupDft<F>,
+    Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
     assert_eq!(airs.len(), public_values.len());
-
-    let mut channel = VerifierTranscript::from_data(config.challenger.clone(), &proof.transcript);
+    for (air, values) in airs.iter().zip(public_values) {
+        if values.len() != air.num_public_values() {
+            return Err(VerifierError::PublicValuesMismatch);
+        }
+    }
 
     // === Public parameters ===
-    let params_snapshot =
-        ParamsSnapshot::read_from_channel::<F, _>(&mut channel).ok_or(VerifierError::InvalidTranscript)?;
+    let params_snapshot = ParamsSnapshot::read_from_channel::<F, _>(channel)
+        .ok_or(VerifierError::InvalidTranscript)?;
     if !params_snapshot.matches_config(config) {
         return Err(VerifierError::ParamsMismatch);
     }
 
     // === Instance layout ===
-    let layout =
-        LayoutSnapshot::read_from_channel::<F, _>(&mut channel).ok_or(VerifierError::InvalidTranscript)?;
+    let layout = LayoutSnapshot::read_from_channel::<F, _>(channel)
+        .ok_or(VerifierError::InvalidTranscript)?;
     if layout.num_airs != airs.len() {
         return Err(VerifierError::InvalidTranscript);
+    }
+    let expected_log_max_height = layout.log_max_degree + params_snapshot.log_blowup;
+    if layout.log_max_height != expected_log_max_height {
+        return Err(VerifierError::InvalidTranscript);
+    }
+    let max_log_degree = layout.log_degrees.iter().copied().max().unwrap_or(0);
+    if max_log_degree != layout.log_max_degree {
+        return Err(VerifierError::InvalidTranscript);
+    }
+    let expected_quotient_width = align_width(EF::DIMENSION, params_snapshot.alignment);
+    if layout.quotient_widths.first() != Some(&expected_quotient_width) {
+        return Err(VerifierError::InvalidTranscript);
+    }
+    for (pos, &idx) in layout.permutation.iter().enumerate() {
+        let expected_trace_width = align_width(airs[idx].width(), params_snapshot.alignment);
+        if layout.trace_widths.get(pos) != Some(&expected_trace_width) {
+            return Err(VerifierError::InvalidTranscript);
+        }
+        let expected_aux_width = align_width(
+            airs[idx].aux_width() * EF::DIMENSION,
+            params_snapshot.alignment,
+        );
+        if layout.aux_widths.get(pos) != Some(&expected_aux_width) {
+            return Err(VerifierError::InvalidTranscript);
+        }
     }
 
     // === Periodic tables (per air, unpermuted order) ===
     // Periodic tables are in AIR order and must match the AIR's column counts.
-    let periodic_tables =
-        read_periodic_tables::<F, _>(&mut channel, layout.num_airs).ok_or(VerifierError::InvalidTranscript)?;
+    let periodic_tables = read_periodic_tables::<F, _>(channel, layout.num_airs)
+        .ok_or(VerifierError::InvalidTranscript)?;
     for (idx, air) in airs.iter().enumerate() {
         if periodic_tables[idx].len() != air.periodic_table().len() {
             return Err(VerifierError::InvalidTranscript);
@@ -220,24 +265,25 @@ where
             return Err(VerifierError::InvalidTranscript);
         }
         let randomness: Vec<EF> = (0..num_r)
-            .map(|_| sample_ext::<F, EF, _>(&mut channel))
+            .map(|_| sample_ext::<F, EF, _>(channel))
             .collect();
         randomness_per_air.push(randomness);
     }
 
     let mut alphas = Vec::with_capacity(layout.num_airs);
     for _ in 0..layout.num_airs {
-        alphas.push(sample_ext::<F, EF, _>(&mut channel));
+        alphas.push(sample_ext::<F, EF, _>(channel));
     }
 
     // Beta is used for the Horner combine across AIRs (permutation order).
-    let beta: EF = sample_ext::<F, EF, _>(&mut channel);
+    let beta: EF = sample_ext::<F, EF, _>(channel);
 
     // === Zeta (OOD) ===
-    // Rejection-sample zeta so it is not in the size-N subgroup (avoid divide-by-zero).
+    // Rejection-sample zeta so it is not in H or gK (avoid divide-by-zero).
     // The loop is expected to run once with overwhelming probability.
     // Only sample zeta; derive zeta_next as zeta * h_max to stay on the max subgroup.
-    let zeta: EF = sample_ood_zeta::<F, EF, _>(&mut channel, layout.log_max_degree);
+    let zeta: EF =
+        sample_ood_zeta::<F, EF, _>(channel, layout.log_max_degree, layout.log_max_height);
     let h_max = F::two_adic_generator(layout.log_max_degree);
     let zeta_next = zeta * EF::from(h_max);
 
@@ -248,13 +294,13 @@ where
         (quotient_commit, layout.quotient_widths.clone()),
     ];
 
-    let evals = verify_with_channel::<F, EF, L, _, 2>(
+    let evals = verify_pcs_with_channel::<F, EF, L, _, 2>(
         &config.params,
         &config.lmcs,
         &commitments,
         layout.log_max_height,
         [zeta, zeta_next],
-        &mut channel,
+        channel,
     )
     .map_err(VerifierError::Pcs)?;
 
@@ -302,7 +348,7 @@ where
         // trace_next values correspond to evaluation at zeta_next^r via lifting
 
         let periodic_values = eval_periodic_values::<F, EF>(&periodic_tables[idx], n, zeta_r)
-            .map_err(|_| VerifierError::InvalidTranscript)?;
+            .ok_or(VerifierError::InvalidTranscript)?;
         let public_values_ef: Vec<EF> = public_values[idx].iter().copied().map(EF::from).collect();
 
         let selectors = selectors_at::<F, EF>(zeta_r, n);
@@ -321,6 +367,7 @@ where
             is_transition: selectors.is_transition,
             alpha,
             accumulator: EF::ZERO,
+            _phantom: PhantomData,
         };
 
         airs[idx].eval(&mut folder);
@@ -343,12 +390,39 @@ where
     Ok(())
 }
 
+pub fn verify<F, EF, A, L, Dft, Ch>(
+    config: &LiftedStarkConfig<F, L, Dft>,
+    airs: &[A],
+    proof: &Proof<F, L::Commitment>,
+    public_values: &[Vec<F>],
+    challenger: Ch,
+) -> Result<(), VerifierError>
+where
+    F: TwoAdicField + PrimeCharacteristicRing + PrimeField64,
+    EF: ExtensionField<F>,
+    A: MidenAir<F, EF>,
+    L: Lmcs<F = F>,
+    L::Commitment: Copy,
+    Dft: TwoAdicSubgroupDft<F>,
+    Ch: GrindingChallenger<Witness = F>
+        + CanObserve<F>
+        + CanObserve<L::Commitment>
+        + CanSample<F>
+        + CanSampleBits<usize>,
+{
+    let mut channel = VerifierTranscript::from_data(challenger, &proof.transcript);
+    verify_with_channel::<F, EF, A, L, Dft, _>(config, airs, public_values, &mut channel)
+}
+
 // -----------------------------------------------------------------------------
 // Verifier helpers
 // -----------------------------------------------------------------------------
 
-fn trim_row<EF: Field>(row: &[EF], width: usize) -> Vec<EF> {
-    row.iter().copied().take(width).collect()
+fn trim_row<EF: Field, I>(row: I, width: usize) -> Vec<EF>
+where
+    I: IntoIterator<Item = EF>,
+{
+    row.into_iter().take(width).collect()
 }
 
 fn row_to_ext_from_base_evals<F, EF>(row: &[EF]) -> Result<Vec<EF>, VerifierError>
@@ -357,7 +431,7 @@ where
     EF: ExtensionField<F>,
 {
     let dim = EF::DIMENSION;
-    if row.len() % dim != 0 {
+    if !row.len().is_multiple_of(dim) {
         return Err(VerifierError::InvalidAuxShape);
     }
 

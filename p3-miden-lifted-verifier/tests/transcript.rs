@@ -1,15 +1,17 @@
 use core::marker::PhantomData;
 
 use p3_dft::Radix2DitParallel;
+use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
+use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_air::{MidenAir, MidenAirBuilder};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
+use p3_miden_lifted_fri::PcsParams;
 use p3_miden_lifted_fri::deep::DeepParams;
 use p3_miden_lifted_fri::fri::{FriFold, FriParams};
-use p3_miden_lifted_fri::PcsParams;
 use p3_miden_lifted_prover::prove;
-use p3_miden_lifted_verifier::{verify, LiftedStarkConfig, Proof, VerifierError};
-use p3_miden_lmcs::LmcsConfig;
+use p3_miden_lifted_verifier::{LiftedStarkConfig, Proof, VerifierError, verify};
+use p3_miden_lmcs::{Lmcs, LmcsConfig};
 use p3_miden_transcript::TranscriptData;
 
 #[derive(Clone, Copy, Debug)]
@@ -30,14 +32,17 @@ impl MidenAir<bb::F, bb::EF> for TinyAir {
         _challenges: &[bb::EF],
     ) -> Option<RowMajorMatrix<bb::F>> {
         let height = main.height();
-        let width = bb::EF::DIMENSION;
-        Some(RowMajorMatrix::new(vec![bb::F::ZERO; height * width], width))
+        let width = <bb::EF as BasedVectorSpace<bb::F>>::DIMENSION;
+        Some(RowMajorMatrix::new(
+            vec![bb::F::ZERO; height * width],
+            width,
+        ))
     }
 
     fn eval<AB: MidenAirBuilder<F = bb::F>>(&self, _builder: &mut AB) {}
 }
 
-fn test_config() -> LiftedStarkConfig<bb::F, TestLmcs, TestDft, bb::Challenger> {
+fn test_config() -> LiftedStarkConfig<bb::F, TestLmcs, TestDft> {
     let params = PcsParams {
         fri: FriParams {
             log_blowup: 1,
@@ -62,7 +67,6 @@ fn test_config() -> LiftedStarkConfig<bb::F, TestLmcs, TestDft, bb::Challenger> 
         lmcs,
         dft,
         alignment,
-        challenger: bb::test_challenger(),
         _phantom: PhantomData,
     }
 }
@@ -79,10 +83,23 @@ fn malformed_transcript_is_rejected() {
     let traces = vec![trace];
     let public_values = vec![vec![]];
 
-    let proof = prove::<bb::F, bb::EF, _, _, _, _>(&config, &[air], &traces, &public_values);
+    let proof = prove::<bb::F, bb::EF, _, _, _, _>(
+        &config,
+        &[air],
+        &traces,
+        &public_values,
+        bb::test_challenger(),
+    );
 
     assert!(
-        verify::<bb::F, bb::EF, _, _, _, _>(&config, &[air], &proof, &public_values).is_ok(),
+        verify::<bb::F, bb::EF, _, _, _, _>(
+            &config,
+            &[air],
+            &proof,
+            &public_values,
+            bb::test_challenger(),
+        )
+        .is_ok(),
         "baseline proof should verify"
     );
 
@@ -92,7 +109,13 @@ fn malformed_transcript_is_rejected() {
         transcript: TranscriptData::new(fields, commitments),
     };
 
-    let err = verify::<bb::F, bb::EF, _, _, _, _>(&config, &[air], &bad_proof, &public_values)
-        .expect_err("extra transcript data should fail verification");
+    let err = verify::<bb::F, bb::EF, _, _, _, _>(
+        &config,
+        &[air],
+        &bad_proof,
+        &public_values,
+        bb::test_challenger(),
+    )
+    .expect_err("extra transcript data should fail verification");
     assert!(matches!(err, VerifierError::TranscriptNotConsumed));
 }

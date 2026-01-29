@@ -3,6 +3,8 @@
 //! This is intentionally minimal: no preprocessed trace, and aux is always
 //! treated as a permutation trace in EF form.
 
+use core::marker::PhantomData;
+
 use p3_field::{ExtensionField, Field};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_air::MidenAirBuilder;
@@ -24,6 +26,7 @@ where
     pub is_transition: EF,
     pub alpha: EF,
     pub accumulator: EF,
+    pub _phantom: PhantomData<F>,
 }
 
 impl<'a, F, EF> MidenAirBuilder for ConstraintFolder<'a, F, EF>

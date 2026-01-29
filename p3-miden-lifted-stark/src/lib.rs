@@ -4,9 +4,9 @@
 //! column utilities, and constraint folder machinery used by the lifted STARK
 //! prover and verifier crates.
 //!
-//! See `notes` (module doc comments) and `notes.md` for exploration notes and
-//! outstanding design questions.
+//! See `notes.md` for exploration notes and outstanding design questions.
 
+#![doc = include_str!("../notes.md")]
 #![no_std]
 #![allow(dead_code, unused_imports)]
 
@@ -15,7 +15,6 @@ extern crate alloc;
 mod config;
 mod folder;
 mod layout;
-mod notes;
 mod periodic;
 mod proof;
 mod selectors;

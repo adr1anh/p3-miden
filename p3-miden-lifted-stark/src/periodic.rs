@@ -16,6 +16,7 @@ use alloc::vec::Vec;
 
 use p3_dft::TwoAdicSubgroupDft;
 use p3_field::{ExtensionField, PrimeCharacteristicRing, TwoAdicField};
+use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_strict_usize;
 
@@ -59,7 +60,13 @@ where
 
             let mut values = Vec::with_capacity(lde.height());
             for row in 0..lde.height() {
-                values.push(EF::from(lde.row(row).expect("row in range")[0]));
+                let first = lde
+                    .row(row)
+                    .expect("row in range")
+                    .into_iter()
+                    .next()
+                    .expect("column has one value");
+                values.push(EF::from(first));
             }
             per_columns.push(values);
         }
@@ -74,7 +81,7 @@ pub fn eval_periodic_values<F, EF>(
     tables: &[Vec<F>],
     trace_len: usize,
     zeta_r: EF,
-) -> Result<Vec<EF>, ()>
+) -> Option<Vec<EF>>
 where
     F: TwoAdicField + PrimeCharacteristicRing,
     EF: ExtensionField<F>,
@@ -82,8 +89,8 @@ where
     let mut out = Vec::with_capacity(tables.len());
     for column in tables {
         let p = column.len();
-        if p == 0 || trace_len % p != 0 || !p.is_power_of_two() {
-            return Err(());
+        if p == 0 || !trace_len.is_multiple_of(p) || !p.is_power_of_two() {
+            return None;
         }
         if p == 1 {
             out.push(EF::from(column[0]));
@@ -94,7 +101,7 @@ where
         let y = zeta_r.exp_u64((trace_len / p) as u64);
         out.push(lagrange_eval_two_adic::<F, EF>(column, y));
     }
-    Ok(out)
+    Some(out)
 }
 
 pub fn lagrange_eval_two_adic<F, EF>(values: &[F], x: EF) -> EF
@@ -111,25 +118,25 @@ where
     }
 
     let log_p = log2_strict_usize(p);
-    let gen = F::two_adic_generator(log_p);
+    let generator = F::two_adic_generator(log_p);
 
     let mut roots = Vec::with_capacity(p);
     let mut cur = F::ONE;
     for _ in 0..p {
         roots.push(EF::from(cur));
-        cur *= gen;
+        cur *= generator;
     }
 
     let mut result = EF::ZERO;
-    for i in 0..p {
-        let xi = roots[i];
+    for (i, xi) in roots.iter().enumerate() {
+        let xi = *xi;
         let mut num = EF::ONE;
         let mut denom = EF::ONE;
-        for j in 0..p {
+        for (j, xj) in roots.iter().enumerate() {
             if i == j {
                 continue;
             }
-            let xj = roots[j];
+            let xj = *xj;
             num *= x - xj;
             denom *= xi - xj;
         }

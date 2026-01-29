@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use p3_challenger::CanSample;
 use p3_dft::TwoAdicSubgroupDft;
-use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, TwoAdicField};
+use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -19,23 +19,40 @@ where
     EF::from_basis_coefficients_fn(|_| channel.sample())
 }
 
-/// Sample an out-of-domain (OOD) evaluation point outside the size-`2^log_max_degree` subgroup.
+/// Sample an out-of-domain (OOD) evaluation point outside H and gK.
 ///
-/// We reject zeta values where `zeta^N == 1` to avoid dividing by zero when
-/// inverting the vanishing polynomial `X^N - 1`. The rejection probability is
-/// `1 / N`, so this loop is expected to run once with overwhelming probability.
-pub fn sample_ood_zeta<F, EF, Ch>(channel: &mut Ch, log_max_degree: usize) -> EF
+/// We reject:
+/// - `zeta^N == 1` (zeta ∈ H), to avoid dividing by zero when inverting `X^N - 1`.
+/// - `zeta ∈ gK`, the max LDE coset, to avoid division by zero in DEEP quotients.
+///
+/// The rejection probability is ~`1 / N + 1 / (N * blowup)`, so this loop is
+/// expected to run once with overwhelming probability.
+pub fn sample_ood_zeta<F, EF, Ch>(
+    channel: &mut Ch,
+    log_max_degree: usize,
+    log_max_height: usize,
+) -> EF
 where
     F: Field,
     EF: ExtensionField<F>,
     Ch: CanSample<F>,
 {
     let n_max = 1usize << log_max_degree;
+    let lde_size = 1usize << log_max_height;
+    let shift_inv = F::GENERATOR.inverse();
+    let shift_inv_ef = EF::from(shift_inv);
     loop {
         let zeta: EF = sample_ext::<F, EF, _>(channel);
-        if zeta.exp_u64(n_max as u64) != EF::ONE {
-            return zeta;
+        if zeta.exp_u64(n_max as u64) == EF::ONE {
+            continue;
         }
+
+        let zeta_over_shift = zeta * shift_inv_ef;
+        if zeta_over_shift.exp_u64(lde_size as u64) == EF::ONE {
+            continue;
+        }
+
+        return zeta;
     }
 }
 
@@ -80,7 +97,7 @@ pub fn pad_matrix<F: Field>(matrix: &RowMajorMatrix<F>, alignment: usize) -> Row
     let mut values = Vec::with_capacity(height * padded_width);
     for r in 0..height {
         let row = matrix.row(r).expect("row in range");
-        values.extend_from_slice(row);
+        values.extend(row);
         values.resize(values.len() + (padded_width - width), F::ZERO);
     }
 
@@ -107,7 +124,7 @@ pub fn upsample_bitrev<EF: Copy>(values: &[EF], r: usize) -> Vec<EF> {
 
 pub fn vanishing_inv_bitrev<F, EF>(log_n: usize, log_lde: usize) -> Vec<EF>
 where
-    F: TwoAdicField + PrimeCharacteristicRing,
+    F: TwoAdicField,
     EF: ExtensionField<F>,
 {
     let size = 1usize << log_lde;
@@ -122,7 +139,7 @@ where
         x *= generator;
     }
 
-    reverse_slice_index_bits(&mut invs, log_lde);
+    reverse_slice_index_bits(&mut invs);
     invs
 }
 
@@ -153,6 +170,9 @@ pub fn row_pair_matrix<EF: Field>(row0: &[EF], row1: &[EF]) -> RowMajorMatrix<EF
     RowMajorMatrix::new(combined, row0.len())
 }
 
-pub fn reverse_slice_index_bits_in_place<T>(values: &mut [T], log_n: usize) {
-    reverse_slice_index_bits(values, log_n);
+pub fn reverse_slice_index_bits_in_place<T>(values: &mut [T])
+where
+    T: Copy + Send + Sync,
+{
+    reverse_slice_index_bits(values);
 }

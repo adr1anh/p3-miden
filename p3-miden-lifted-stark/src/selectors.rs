@@ -2,7 +2,6 @@
 
 use p3_field::{ExtensionField, PrimeCharacteristicRing, TwoAdicField};
 use p3_util::log2_strict_usize;
-
 #[derive(Clone, Debug)]
 pub struct Selectors<EF> {
     pub is_first_row: EF,

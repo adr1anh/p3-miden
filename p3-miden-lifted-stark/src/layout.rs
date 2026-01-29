@@ -3,9 +3,11 @@
 //! The layout is serialized into the transcript to make verification replayable.
 //! See the note on `LayoutSnapshot` for long-term cleanup of redundant fields.
 
+use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_field::{ExtensionField, PrimeCharacteristicRing, TwoAdicField};
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64};
+use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_air::MidenAir;
 use p3_miden_transcript::{ProverChannel, VerifierChannel};
@@ -48,7 +50,7 @@ impl TraceLayout {
         log_blowup: usize,
     ) -> Self
     where
-        F: TwoAdicField,
+        F: Field + PrimeCharacteristicRing,
         EF: ExtensionField<F>,
         A: MidenAir<F, EF>,
     {
@@ -57,8 +59,12 @@ impl TraceLayout {
         let mut heights = Vec::with_capacity(num_airs);
         let mut num_randomness = Vec::with_capacity(num_airs);
 
-        for (air, trace) in airs.iter().zip(traces) {
+        for (idx, (air, trace)) in airs.iter().zip(traces).enumerate() {
             let n = trace.height();
+            assert!(
+                n.is_power_of_two(),
+                "trace heights must be powers of two (air index {idx})"
+            );
             let log_n = log2_strict_usize(n);
             log_degrees.push(log_n);
             heights.push(n);
@@ -142,25 +148,26 @@ pub struct LayoutSnapshot {
 }
 
 impl LayoutSnapshot {
-    pub fn write_to_channel<F, Ch>(&self, channel: &mut Ch)
+    pub fn write_to_channel<F, Ch>(&self, channel: &mut Ch) -> Option<()>
     where
-        F: PrimeCharacteristicRing,
+        F: PrimeField64,
         Ch: ProverChannel<F = F>,
     {
-        write_usize::<F, _>(channel, self.num_airs);
-        write_usize_list::<F, _>(channel, &self.log_degrees);
-        write_usize_list::<F, _>(channel, &self.permutation);
-        write_usize::<F, _>(channel, self.log_max_degree);
-        write_usize::<F, _>(channel, self.log_max_height);
-        write_usize_list::<F, _>(channel, &self.num_randomness);
-        write_usize_list::<F, _>(channel, &self.trace_widths);
-        write_usize_list::<F, _>(channel, &self.aux_widths);
-        write_usize_list::<F, _>(channel, &self.quotient_widths);
+        write_usize::<F, _>(channel, self.num_airs)?;
+        write_usize_list::<F, _>(channel, &self.log_degrees)?;
+        write_usize_list::<F, _>(channel, &self.permutation)?;
+        write_usize::<F, _>(channel, self.log_max_degree)?;
+        write_usize::<F, _>(channel, self.log_max_height)?;
+        write_usize_list::<F, _>(channel, &self.num_randomness)?;
+        write_usize_list::<F, _>(channel, &self.trace_widths)?;
+        write_usize_list::<F, _>(channel, &self.aux_widths)?;
+        write_usize_list::<F, _>(channel, &self.quotient_widths)?;
+        Some(())
     }
 
     pub fn read_from_channel<F, Ch>(channel: &mut Ch) -> Option<Self>
     where
-        F: PrimeCharacteristicRing,
+        F: PrimeField64,
         Ch: VerifierChannel<F = F>,
     {
         let num_airs = read_usize::<F, _>(channel)?;

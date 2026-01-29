@@ -5,7 +5,8 @@ use alloc::vec::Vec;
 use p3_challenger::{
     CanObserve, CanSample, CanSampleBits, CanSampleUniformBits, GrindingChallenger,
 };
-use p3_field::{BasedVectorSpace, Field};
+use p3_field::integers::QuotientMap;
+use p3_field::{BasedVectorSpace, Field, PrimeField64};
 
 use crate::TranscriptData;
 
@@ -73,6 +74,15 @@ pub trait ProverChannel {
 
     fn send_commitment(&mut self, value: Self::Commitment) {
         self.send_commitment_slice(core::slice::from_ref(&value));
+    }
+
+    fn send_u64(&mut self, value: u64) -> Option<()>
+    where
+        Self::F: PrimeField64,
+    {
+        let field = <Self::F as QuotientMap<u64>>::from_canonical_checked(value)?;
+        self.send_field_element(field);
+        Some(())
     }
 
     fn hint_field_slice(&mut self, values: &[Self::F]);

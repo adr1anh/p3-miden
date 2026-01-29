@@ -25,9 +25,10 @@
 //   shift_r = g^r, domain size = n*b, generator = two_adic_generator(log(n*b)).
 //
 // Selectors are computed over the nested domain (gK)^r, with the usual formulas.
-// For OOD checks, evaluate at zeta^r (periodicity over H^r). We only sample zeta;
-// zeta_next is derived as zeta * h_max where h_max = generator(H), and for a
-// size-N/r trace the "next" point is (zeta_next)^r.
+// For OOD checks, evaluate at zeta^r (periodicity over H^r). We rejection-sample
+// zeta until zeta^N != 1 and zeta ∉ gK (avoid dividing by zero); this loop should
+// run once with overwhelming probability. zeta_next is derived as zeta * h_max where
+// h_max = generator(H), and for a size-N/r trace the "next" point is (zeta_next)^r.
 //
 // Quotient combination (lifting):
 // - For each AIR, compute folded constraints C_i(x) on (gK)^r (numerator only).
@@ -39,16 +40,19 @@
 
 extern crate alloc;
 
+use alloc::vec;
 use alloc::vec::Vec;
+use core::marker::PhantomData;
 
-use p3_challenger::{CanObserve, CanSample, CanSampleBits};
+use p3_challenger::{CanObserve, CanSample, CanSampleBits, GrindingChallenger};
 use p3_dft::TwoAdicSubgroupDft;
-use p3_field::{ExtensionField, PrimeCharacteristicRing, TwoAdicField};
+use p3_field::{ExtensionField, PrimeCharacteristicRing, PrimeField64, TwoAdicField};
+use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_air::MidenAir;
 use p3_miden_lifted_fri::prover::open_with_channel;
-use p3_miden_lmcs::Lmcs;
-use p3_miden_transcript::ProverTranscript;
+use p3_miden_lmcs::{Lmcs, LmcsTree};
+use p3_miden_transcript::{ProverChannel, ProverTranscript};
 use p3_util::log2_strict_usize;
 
 use p3_miden_lifted_stark::{
@@ -62,12 +66,12 @@ use p3_miden_lifted_stark::{
 // Prover entrypoint
 // -----------------------------------------------------------------------------
 //
-// Intern guide (repeat from notes for quick context):
+// Intern guide (repeat from notes.md for quick context):
 // - The transcript is the protocol; verifier replays it byte-for-byte.
 //   If you change ordering, you MUST change verifier parsing in lockstep.
 // - All main/aux LDEs are committed on nested cosets (gK)^r, in bit-reversed
 //   row order. The PCS expects that ordering when opening.
-// - Zeta is sampled once; zeta_next is derived as zeta * h_max.
+// - Zeta is rejection-sampled outside H and gK (loop ~1x); zeta_next is derived as zeta * h_max.
 // - Quotient combination is "lifted": compute per-AIR numerators on (gK)^r,
 //   bit-reverse, upsample into gK, Horner-combine with beta, then divide once
 //   by X^N - 1 on the max domain.
@@ -75,51 +79,64 @@ use p3_miden_lifted_stark::{
 // - Periodic columns are written to the transcript and are used during
 //   constraint evaluation (both prover and verifier).
 
-pub fn prove<F, EF, A, L, Dft, Ch>(
-    config: &LiftedStarkConfig<F, L, Dft, Ch>,
+pub fn prove_with_channel<F, EF, A, L, Dft, Ch>(
+    config: &LiftedStarkConfig<F, L, Dft>,
     airs: &[A],
     traces: &[RowMajorMatrix<F>],
     public_values: &[Vec<F>],
-) -> Proof<F, L::Commitment>
+    channel: &mut Ch,
+) -> Option<()>
 where
-    F: TwoAdicField + PrimeCharacteristicRing,
+    F: TwoAdicField + PrimeField64,
     EF: ExtensionField<F>,
     A: MidenAir<F, EF>,
     L: Lmcs<F = F>,
+    L::Commitment: Copy,
     Dft: TwoAdicSubgroupDft<F>,
-    Ch: Clone + CanObserve<F> + CanObserve<L::Commitment> + CanSample<F> + CanSampleBits<usize>,
+    Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
     assert_eq!(airs.len(), traces.len());
     assert_eq!(airs.len(), public_values.len());
+    for (idx, (air, values)) in airs.iter().zip(public_values).enumerate() {
+        assert_eq!(
+            traces[idx].width(),
+            air.width(),
+            "trace width mismatch for air index {idx}"
+        );
+        assert_eq!(
+            values.len(),
+            air.num_public_values(),
+            "public values length mismatch for air index {idx}"
+        );
+    }
 
     // Build layout once. This decides:
     // - per-AIR log_degrees
     // - permutation order (sorted by trace height, stable)
     // - max degree/height + per-AIR ratios r = N / n
     // - aligned widths for transcript hints
-    let layout = TraceLayout::new::<F, EF, A>(
-        airs,
-        traces,
-        config.alignment,
-        config.params.fri.log_blowup,
-    );
+    let layout =
+        TraceLayout::new::<F, EF, A>(airs, traces, config.alignment, config.params.fri.log_blowup);
 
     // Transcript-backed challenger for the entire protocol.
-    let mut channel = ProverTranscript::new(config.challenger.clone());
-
     // === Public parameters ===
     let params_snapshot = ParamsSnapshot::from_config(config);
-    params_snapshot.write_to_channel::<F, _>(&mut channel);
+    params_snapshot
+        .write_to_channel::<F, _>(channel)
+        .expect("parameter values fit in u32");
 
     // === Instance layout ===
     let layout_snapshot = layout.snapshot();
-    layout_snapshot.write_to_channel::<F, _>(&mut channel);
+    layout_snapshot
+        .write_to_channel::<F, _>(channel)
+        .expect("layout values fit in u32");
 
     // === Periodic tables (per air, unpermuted order) ===
     // IMPORTANT: periodic tables are written in AIR order (not permutation order).
     // Verifier validates lengths against AIR definitions in the same order.
     let periodic_tables: Vec<Vec<Vec<F>>> = airs.iter().map(|air| air.periodic_table()).collect();
-    write_periodic_tables::<F, _>(&mut channel, &periodic_tables);
+    write_periodic_tables::<F, _>(channel, &periodic_tables)
+        .expect("periodic table sizes fit in u32");
 
     // === Commit main traces (LDE on (gK)^r, bit-reversed) ===
     // We commit in permutation order so verifier can match openings to AIRs.
@@ -146,9 +163,9 @@ where
     // Sample per-AIR randomness in AIR order (not permutation order).
     // This matches how MidenAir exposes num_randomness and build_aux_trace.
     let mut randomness_per_air: Vec<Vec<EF>> = Vec::with_capacity(layout.num_airs);
-    for (air, &num_r) in airs.iter().zip(&layout.num_randomness) {
+    for (_air, &num_r) in airs.iter().zip(&layout.num_randomness) {
         let randomness: Vec<EF> = (0..num_r)
-            .map(|_| sample_ext::<F, EF, _>(&mut channel))
+            .map(|_| sample_ext::<F, EF, _>(channel))
             .collect();
         randomness_per_air.push(randomness);
     }
@@ -181,12 +198,12 @@ where
     // Sampled after aux commitment so the fold is bound to aux trace contents.
     let mut alphas = Vec::with_capacity(layout.num_airs);
     for _ in 0..layout.num_airs {
-        alphas.push(sample_ext::<F, EF, _>(&mut channel));
+        alphas.push(sample_ext::<F, EF, _>(channel));
     }
 
     // === Combine AIRs with beta ===
     // Beta drives the Horner combine across AIRs (in permutation order).
-    let beta: EF = sample_ext::<F, EF, _>(&mut channel);
+    let beta: EF = sample_ext::<F, EF, _>(channel);
 
     // === Constraint numerators per air (natural order), then bit-reverse + lift ===
     // We compute numerators in natural row order on (gK)^r, then convert to
@@ -242,19 +259,15 @@ where
         );
 
         // Convert to bit-reversed order for lifting/upsampling.
-        let log_lde = log2_strict_usize(numerators.len());
-        p3_miden_lifted_stark::reverse_slice_index_bits_in_place(&mut numerators, log_lde);
+        p3_miden_lifted_stark::reverse_slice_index_bits_in_place(&mut numerators);
 
         // Lift to max domain by repeating each value r times.
         let lifted = upsample_bitrev(&numerators, r);
 
         // Combine across AIRs (Horner in permutation order)
-        combined
-            .iter_mut()
-            .zip(lifted)
-            .for_each(|(acc, val)| {
-                *acc = *acc * beta + val;
-            });
+        combined.iter_mut().zip(lifted).for_each(|(acc, val)| {
+            *acc = *acc * beta + val;
+        });
     }
 
     // === Divide once by X^N - 1 on max domain (bit-reversed order) ===
@@ -273,11 +286,12 @@ where
     channel.send_commitment(quotient_tree.root());
 
     // === Zeta (OOD evaluation point) ===
-    // Rejection-sample until zeta is not in the size-N subgroup (avoids divide-by-zero).
+    // Rejection-sample until zeta is not in H or gK (avoids divide-by-zero).
     // The loop is expected to run once with overwhelming probability.
     // Only zeta is sampled; zeta_next is derived as zeta * h_max.
     // This keeps the two points on the max subgroup, and smaller traces use zeta^r.
-    let zeta: EF = sample_ood_zeta::<F, EF, _>(&mut channel, layout.log_max_degree);
+    let zeta: EF =
+        sample_ood_zeta::<F, EF, _>(channel, layout.log_max_degree, layout.log_max_height);
     let h_max = F::two_adic_generator(layout.log_max_degree);
     let zeta_next = zeta * EF::from(h_max);
 
@@ -289,9 +303,35 @@ where
         &config.lmcs,
         [zeta, zeta_next],
         &[&main_tree, &aux_tree, &quotient_tree],
-        &mut channel,
+        channel,
     );
 
+    Some(())
+}
+
+pub fn prove<F, EF, A, L, Dft, Ch>(
+    config: &LiftedStarkConfig<F, L, Dft>,
+    airs: &[A],
+    traces: &[RowMajorMatrix<F>],
+    public_values: &[Vec<F>],
+    challenger: Ch,
+) -> Proof<F, L::Commitment>
+where
+    F: TwoAdicField + PrimeField64,
+    EF: ExtensionField<F>,
+    A: MidenAir<F, EF>,
+    L: Lmcs<F = F>,
+    L::Commitment: Copy,
+    Dft: TwoAdicSubgroupDft<F>,
+    Ch: GrindingChallenger<Witness = F>
+        + CanObserve<F>
+        + CanObserve<L::Commitment>
+        + CanSample<F>
+        + CanSampleBits<usize>,
+{
+    let mut channel = ProverTranscript::new(challenger);
+    prove_with_channel::<F, EF, A, L, Dft, _>(config, airs, traces, public_values, &mut channel)
+        .expect("proof parameters must fit in u32");
     Proof {
         transcript: channel.into_data(),
     }
@@ -302,6 +342,7 @@ where
 // -----------------------------------------------------------------------------
 
 // Compute folded constraints (numerators only) on the LDE domain (gK)^r.
+#[allow(clippy::too_many_arguments)]
 fn compute_constraint_numerators<F, EF, A>(
     air: &A,
     trace_lde: &RowMajorMatrix<F>,
@@ -336,11 +377,15 @@ where
         let next_i = (i + next_step) % quotient_size;
 
         // LDE rows are in base field; convert to EF vectors for the folder.
-        let main_local = row_as_ext::<F, EF>(trace_lde.row(i).unwrap());
-        let main_next = row_as_ext::<F, EF>(trace_lde.row(next_i).unwrap());
+        let main_local_row: Vec<F> = trace_lde.row(i).unwrap().into_iter().collect();
+        let main_next_row: Vec<F> = trace_lde.row(next_i).unwrap().into_iter().collect();
+        let main_local = row_as_ext::<F, EF>(&main_local_row);
+        let main_next = row_as_ext::<F, EF>(&main_next_row);
 
-        let aux_local = row_to_ext::<F, EF>(aux_lde.row(i).unwrap());
-        let aux_next = row_to_ext::<F, EF>(aux_lde.row(next_i).unwrap());
+        let aux_local_row: Vec<F> = aux_lde.row(i).unwrap().into_iter().collect();
+        let aux_next_row: Vec<F> = aux_lde.row(next_i).unwrap().into_iter().collect();
+        let aux_local = row_to_ext::<F, EF>(&aux_local_row);
+        let aux_next = row_to_ext::<F, EF>(&aux_next_row);
 
         let selectors = selectors_at::<F, EF>(EF::from(x), trace_degree);
 
@@ -370,6 +415,7 @@ where
             is_transition: selectors.is_transition,
             alpha,
             accumulator: EF::ZERO,
+            _phantom: PhantomData,
         };
 
         air.eval(&mut folder);

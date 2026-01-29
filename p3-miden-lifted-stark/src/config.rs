@@ -8,23 +8,21 @@
 
 use core::marker::PhantomData;
 
-use p3_dft::TwoAdicSubgroupDft;
-use p3_field::PrimeCharacteristicRing;
+use p3_field::PrimeField64;
+use p3_miden_lifted_fri::PcsParams;
 use p3_miden_lifted_fri::deep::DeepParams;
 use p3_miden_lifted_fri::fri::{FriFold, FriParams};
-use p3_miden_lifted_fri::PcsParams;
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{ProverChannel, VerifierChannel};
 
 use crate::transcript::{read_usize, write_usize};
 
 #[derive(Clone)]
-pub struct LiftedStarkConfig<F, L, Dft, Ch> {
+pub struct LiftedStarkConfig<F, L, Dft> {
     pub params: PcsParams,
     pub lmcs: L,
     pub dft: Dft,
     pub alignment: usize,
-    pub challenger: Ch,
     pub _phantom: PhantomData<F>,
 }
 
@@ -44,11 +42,7 @@ pub struct ParamsSnapshot {
 }
 
 impl ParamsSnapshot {
-    pub fn from_config<F, L, Dft, Ch>(config: &LiftedStarkConfig<F, L, Dft, Ch>) -> Self
-    where
-        L: Lmcs,
-        Dft: TwoAdicSubgroupDft<L::F>,
-    {
+    pub fn from_config<F, L, Dft>(config: &LiftedStarkConfig<F, L, Dft>) -> Self {
         // Note: alignment is currently duplicated here and in Lmcs::alignment().
         // This is deliberate for now; once we trust LMCS alignment everywhere,
         // we can drop this field from the transcript.
@@ -64,24 +58,25 @@ impl ParamsSnapshot {
         }
     }
 
-    pub fn write_to_channel<F, Ch>(&self, channel: &mut Ch)
+    pub fn write_to_channel<F, Ch>(&self, channel: &mut Ch) -> Option<()>
     where
-        F: PrimeCharacteristicRing,
+        F: PrimeField64,
         Ch: ProverChannel<F = F>,
     {
-        write_usize::<F, _>(channel, self.log_blowup);
-        write_usize::<F, _>(channel, self.fold_log_arity);
-        write_usize::<F, _>(channel, self.log_final_degree);
-        write_usize::<F, _>(channel, self.fri_pow_bits);
-        write_usize::<F, _>(channel, self.deep_pow_bits);
-        write_usize::<F, _>(channel, self.num_queries);
-        write_usize::<F, _>(channel, self.query_pow_bits);
-        write_usize::<F, _>(channel, self.alignment);
+        write_usize::<F, _>(channel, self.log_blowup)?;
+        write_usize::<F, _>(channel, self.fold_log_arity)?;
+        write_usize::<F, _>(channel, self.log_final_degree)?;
+        write_usize::<F, _>(channel, self.fri_pow_bits)?;
+        write_usize::<F, _>(channel, self.deep_pow_bits)?;
+        write_usize::<F, _>(channel, self.num_queries)?;
+        write_usize::<F, _>(channel, self.query_pow_bits)?;
+        write_usize::<F, _>(channel, self.alignment)?;
+        Some(())
     }
 
     pub fn read_from_channel<F, Ch>(channel: &mut Ch) -> Option<Self>
     where
-        F: PrimeCharacteristicRing,
+        F: PrimeField64,
         Ch: VerifierChannel<F = F>,
     {
         Some(Self {
@@ -96,11 +91,7 @@ impl ParamsSnapshot {
         })
     }
 
-    pub fn matches_config<F, L, Dft, Ch>(&self, config: &LiftedStarkConfig<F, L, Dft, Ch>) -> bool
-    where
-        L: Lmcs,
-        Dft: TwoAdicSubgroupDft<L::F>,
-    {
+    pub fn matches_config<F, L, Dft>(&self, config: &LiftedStarkConfig<F, L, Dft>) -> bool {
         self.log_blowup == config.params.fri.log_blowup
             && self.fold_log_arity == config.params.fri.fold.log_arity()
             && self.log_final_degree == config.params.fri.log_final_degree

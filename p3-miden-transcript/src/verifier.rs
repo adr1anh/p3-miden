@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use p3_challenger::{
     CanObserve, CanSample, CanSampleBits, CanSampleUniformBits, GrindingChallenger,
 };
-use p3_field::{BasedVectorSpace, Field};
+use p3_field::{BasedVectorSpace, Field, PrimeField64};
 
 use crate::TranscriptData;
 
@@ -73,6 +73,13 @@ pub trait VerifierChannel {
     fn receive_commitment(&mut self) -> Option<&Self::Commitment> {
         self.receive_commitment_slice(1)
             .and_then(|values| values.first())
+    }
+
+    fn receive_u64(&mut self) -> Option<u64>
+    where
+        Self::F: PrimeField64,
+    {
+        self.receive_field().map(|value| value.as_canonical_u64())
     }
 
     fn receive_hint_field_slice(&mut self, count: usize) -> Option<&[Self::F]>;

@@ -17,61 +17,69 @@
 //! 5) Randomness per AIR (AIR order): num_randomness[i] extension elements.
 //! 6) Alphas per AIR (AIR order): one extension element each.
 //! 7) Beta (extension element): Horner combine across AIRs in permutation order.
-//! 8) Zeta (extension element): OOD point; rejection-sample until `zeta^N != 1`.
-//!    The first valid zeta is used (loop expected to run once with overwhelming
-//!    probability), and zeta_next is derived as zeta * h_max.
+//! 8) Zeta (extension element): OOD point; rejection-sample until `zeta^N != 1`
+//!    and zeta is not in the max LDE coset gK. The first valid zeta is used
+//!    (loop expected to run once with overwhelming probability), and zeta_next
+//!    is derived as zeta * h_max.
 //! 9) PCS transcript (lifted FRI: DEEP + FRI + query hints).
 //!
 //! If this order changes, update prover + verifier in lockstep.
 
 use alloc::vec::Vec;
 
-use p3_field::PrimeCharacteristicRing;
+use p3_field::PrimeField64;
 use p3_miden_transcript::{ProverChannel, VerifierChannel};
 
-pub fn write_usize<F, Ch>(channel: &mut Ch, value: usize)
+pub fn write_usize<F, Ch>(channel: &mut Ch, value: usize) -> Option<()>
 where
-    F: PrimeCharacteristicRing,
+    F: PrimeField64,
     Ch: ProverChannel<F = F>,
 {
-    channel.send_field_element(F::from_usize(value));
+    let value = u32::try_from(value).ok()?;
+    channel.send_u64(u64::from(value))
 }
 
-pub fn write_usize_list<F, Ch>(channel: &mut Ch, values: &[usize])
+pub fn write_usize_list<F, Ch>(channel: &mut Ch, values: &[usize]) -> Option<()>
 where
-    F: PrimeCharacteristicRing,
+    F: PrimeField64,
     Ch: ProverChannel<F = F>,
 {
     for &v in values {
-        write_usize::<F, _>(channel, v);
+        write_usize::<F, _>(channel, v)?;
     }
+    Some(())
 }
 
-pub fn write_periodic_tables<F, Ch>(channel: &mut Ch, tables: &[Vec<Vec<F>>])
+pub fn write_periodic_tables<F, Ch>(channel: &mut Ch, tables: &[Vec<Vec<F>>]) -> Option<()>
 where
-    F: PrimeCharacteristicRing,
+    F: PrimeField64,
     Ch: ProverChannel<F = F>,
 {
     for air_table in tables {
-        write_usize::<F, _>(channel, air_table.len());
+        write_usize::<F, _>(channel, air_table.len())?;
         for column in air_table {
-            write_usize::<F, _>(channel, column.len());
+            write_usize::<F, _>(channel, column.len())?;
             channel.send_field_slice(column);
         }
     }
+    Some(())
 }
 
 pub fn read_usize<F, Ch>(channel: &mut Ch) -> Option<usize>
 where
-    F: PrimeCharacteristicRing,
+    F: PrimeField64,
     Ch: VerifierChannel<F = F>,
 {
-    channel.receive_field().map(|v| field_to_usize(*v))
+    let value = channel.receive_u64()?;
+    if value > u64::from(u32::MAX) {
+        return None;
+    }
+    Some(value as usize)
 }
 
 pub fn read_usize_list<F, Ch>(channel: &mut Ch, count: usize) -> Option<Vec<usize>>
 where
-    F: PrimeCharacteristicRing,
+    F: PrimeField64,
     Ch: VerifierChannel<F = F>,
 {
     let mut out = Vec::with_capacity(count);
@@ -83,7 +91,7 @@ where
 
 pub fn read_periodic_tables<F, Ch>(channel: &mut Ch, num_airs: usize) -> Option<Vec<Vec<Vec<F>>>>
 where
-    F: PrimeCharacteristicRing,
+    F: PrimeField64,
     Ch: VerifierChannel<F = F>,
 {
     let mut tables = Vec::with_capacity(num_airs);
@@ -103,6 +111,6 @@ where
     Some(tables)
 }
 
-pub fn field_to_usize<F: PrimeCharacteristicRing>(value: F) -> usize {
+pub fn field_to_usize<F: PrimeField64>(value: F) -> usize {
     value.as_canonical_u64() as usize
 }
