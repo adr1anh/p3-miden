@@ -17,6 +17,13 @@
 //!   FRI via `prover::open_with_channel` and `verifier::verify_with_channel`, plus `PcsParams`.
 //!
 //! For the Lifted Matrix Commitment Scheme (LMCS), see the [`p3_miden_lmcs`] crate.
+//!
+//! ## Alignment Padding
+//!
+//! Alignment padding is a transcript formatting convention. For trace commitments, the
+//! padded columns are treated as extra polynomials and are checked for low degree by the PCS;
+//! they need not be zero unless the caller enforces that. (FRI openings still ignore the
+//! padded tail because FRI expects a fixed single-column width.)
 
 #![no_std]
 

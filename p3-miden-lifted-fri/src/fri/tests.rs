@@ -63,14 +63,9 @@ fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
 
     // Test all queries at once
     fri_oracle
-        .test_low_degree(
-            &lmcs,
-            &params,
-            &query_indices,
-            &initial_evals,
-            &mut channel,
-        )
+        .test_low_degree(&lmcs, &params, &query_indices, &initial_evals, &mut channel)
         .expect("low-degree test should pass");
+    assert!(channel.is_empty(), "transcript should be fully consumed");
 }
 
 #[test]
@@ -195,13 +190,8 @@ fn test_fri_verify_wrong_beta() {
     let wrong_oracle = FriOracle::new(&params, log_domain_size, &mut v_channel)
         .expect("oracle construction should succeed");
 
-    let result = wrong_oracle.test_low_degree(
-        &lmcs,
-        &params,
-        &indices,
-        &initial_evals,
-        &mut v_channel,
-    );
+    let result =
+        wrong_oracle.test_low_degree(&lmcs, &params, &indices, &initial_evals, &mut v_channel);
 
     // Should fail because wrong betas produce wrong folding results
     assert!(
@@ -262,14 +252,9 @@ fn test_fri_zero_rounds_final_poly_only() {
     let fri_oracle = FriOracle::new(&params, log_domain_size, &mut v_channel)
         .expect("oracle construction should succeed");
     fri_oracle
-        .test_low_degree(
-            &lmcs,
-            &params,
-            &indices,
-            &initial_evals,
-            &mut v_channel,
-        )
+        .test_low_degree(&lmcs, &params, &indices, &initial_evals, &mut v_channel)
         .expect("zero-round FRI should verify");
+    assert!(v_channel.is_empty(), "transcript should be fully consumed");
 }
 
 /// FRI with no blowup but with folding rounds.
@@ -304,14 +289,9 @@ fn test_fri_blowup_zero_with_rounds() {
     let fri_oracle = FriOracle::new(&params, log_domain_size, &mut v_channel)
         .expect("oracle construction should succeed");
     fri_oracle
-        .test_low_degree(
-            &lmcs,
-            &params,
-            &indices,
-            &initial_evals,
-            &mut v_channel,
-        )
+        .test_low_degree(&lmcs, &params, &indices, &initial_evals, &mut v_channel)
         .expect("FRI with blowup=0 should verify");
+    assert!(v_channel.is_empty(), "transcript should be fully consumed");
 }
 
 /// Test that the final polynomial is correctly computed by evaluating it
