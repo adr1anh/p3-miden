@@ -128,9 +128,14 @@ where
         let h_max = L::F::two_adic_generator(layout.log_max_degree);
         let zeta_next = zeta * EF::from(h_max);
 
+        let (trace_widths, aux_widths): (Vec<usize>, Vec<usize>) = layout
+            .air_widths
+            .iter()
+            .map(|widths| (widths.trace, widths.aux))
+            .unzip();
         let commitments_vec = vec![
-            (commitments.main, layout.trace_widths.clone()),
-            (commitments.aux, layout.aux_widths.clone()),
+            (commitments.main, trace_widths),
+            (commitments.aux, aux_widths),
             (commitments.quotient, layout.quotient_widths.clone()),
         ];
 
@@ -224,14 +229,14 @@ where
     }
     for (pos, &idx) in layout.permutation.iter().enumerate() {
         let expected_trace_width = align_width(airs[idx].width(), params_snapshot.alignment);
-        if layout.trace_widths.get(pos) != Some(&expected_trace_width) {
+        if layout.air_widths.get(pos).map(|w| w.trace) != Some(expected_trace_width) {
             return Err(VerifierError::InvalidTranscript);
         }
         let expected_aux_width = align_width(
             airs[idx].aux_width() * EF::DIMENSION,
             params_snapshot.alignment,
         );
-        if layout.aux_widths.get(pos) != Some(&expected_aux_width) {
+        if layout.air_widths.get(pos).map(|w| w.aux) != Some(expected_aux_width) {
             return Err(VerifierError::InvalidTranscript);
         }
     }
@@ -290,9 +295,14 @@ where
     let zeta_next = zeta * EF::from(h_max);
 
     // === PCS verification (DEEP + FRI) ===
+    let (trace_widths, aux_widths): (Vec<usize>, Vec<usize>) = layout
+        .air_widths
+        .iter()
+        .map(|widths| (widths.trace, widths.aux))
+        .unzip();
     let commitments = vec![
-        (main_commit, layout.trace_widths.clone()),
-        (aux_commit, layout.aux_widths.clone()),
+        (main_commit, trace_widths),
+        (aux_commit, aux_widths),
         (quotient_commit, layout.quotient_widths.clone()),
     ];
 

@@ -61,7 +61,7 @@ use p3_miden_lifted_stark::{
     ConstraintFolder, LayoutSnapshot, LiftedStarkConfig, ParamsSnapshot, Proof, TraceLayout,
     build_periodic_ldes, lde_matrix, pad_matrix, row_as_ext, row_pair_matrix, row_to_ext,
     sample_ext, sample_ood_zeta, selectors_at, shift_for_ratio, upsample_bitrev,
-    vanishing_inv_bitrev, write_periodic_tables, write_usize, write_usize_list,
+    vanishing_inv_bitrev, write_periodic_tables,
 };
 
 // -----------------------------------------------------------------------------
@@ -125,20 +125,20 @@ where
     let params_snapshot = ParamsSnapshot::from_config(config);
     params_snapshot
         .write_to_channel::<F, _>(channel)
-        .expect("parameter values fit in u32");
+        .expect("parameter values fit in transcript field elements");
 
     // === Instance layout ===
     let layout_snapshot = layout.snapshot();
     layout_snapshot
         .write_to_channel::<F, _>(channel)
-        .expect("layout values fit in u32");
+        .expect("layout values fit in transcript field elements");
 
     // === Periodic tables (per air, unpermuted order) ===
     // IMPORTANT: periodic tables are written in AIR order (not permutation order).
     // Verifier validates lengths against AIR definitions in the same order.
     let periodic_tables: Vec<Vec<Vec<F>>> = airs.iter().map(|air| air.periodic_table()).collect();
     write_periodic_tables::<F, _>(channel, &periodic_tables)
-        .expect("periodic table sizes fit in u32");
+        .expect("periodic table sizes fit in transcript field elements");
 
     // === Commit main traces (LDE on (gK)^r, bit-reversed) ===
     // We commit in permutation order so verifier can match openings to AIRs.
@@ -172,13 +172,10 @@ where
         randomness_per_air.push(randomness);
     }
 
-    let mut aux_ldes = Vec::with_capacity(layout.num_airs);
-    for &idx in &layout.permutation {
-        let air = &airs[idx];
+    let mut aux_traces = Vec::with_capacity(layout.num_airs);
+    for (idx, air) in airs.iter().enumerate() {
         let trace = &traces[idx];
         let randomness = &randomness_per_air[idx];
-        let r = layout.ratios[idx];
-        let shift = shift_for_ratio::<F>(r);
         let aux_trace = air
             .build_aux_trace(trace, randomness)
             .expect("aux trace required in this prototype");
@@ -193,9 +190,17 @@ where
             expected_aux_width,
             "aux trace width mismatch for air index {idx}"
         );
+        aux_traces.push(aux_trace);
+    }
+
+    let mut aux_ldes = Vec::with_capacity(layout.num_airs);
+    for &idx in &layout.permutation {
+        let aux_trace = &aux_traces[idx];
+        let r = layout.ratios[idx];
+        let shift = shift_for_ratio::<F>(r);
         let lde = lde_matrix(
             &config.dft,
-            &aux_trace,
+            aux_trace,
             config.params.fri.log_blowup,
             shift,
             true,
@@ -237,6 +242,7 @@ where
         let trace = &traces[idx];
         let randomness = &randomness_per_air[idx];
         let alpha = alphas[idx];
+        let aux_trace = &aux_traces[idx];
 
         let r = layout.ratios[idx];
         let shift = shift_for_ratio::<F>(r);
@@ -248,23 +254,9 @@ where
             shift,
             false,
         );
-        let aux_trace = air
-            .build_aux_trace(trace, randomness)
-            .expect("aux trace required in this prototype");
-        let expected_aux_width = air.aux_width() * EF::DIMENSION;
-        assert_eq!(
-            aux_trace.height(),
-            trace.height(),
-            "aux trace height mismatch for air index {idx}"
-        );
-        assert_eq!(
-            aux_trace.width(),
-            expected_aux_width,
-            "aux trace width mismatch for air index {idx}"
-        );
         let aux_lde_nat = lde_matrix(
             &config.dft,
-            &aux_trace,
+            aux_trace,
             config.params.fri.log_blowup,
             shift,
             false,
@@ -359,7 +351,7 @@ where
 {
     let mut channel = ProverTranscript::new(challenger);
     prove_with_channel::<F, EF, A, L, Dft, _>(config, airs, traces, public_values, &mut channel)
-        .expect("proof parameters must fit in u32");
+        .expect("proof parameters must fit in transcript field elements");
     Proof {
         transcript: channel.into_data(),
     }

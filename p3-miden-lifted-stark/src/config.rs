@@ -15,8 +15,6 @@ use p3_miden_lifted_fri::fri::{FriFold, FriParams};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{ProverChannel, VerifierChannel};
 
-use crate::transcript::{read_usize, write_usize};
-
 #[derive(Clone)]
 pub struct LiftedStarkConfig<F, L, Dft> {
     pub params: PcsParams,
@@ -63,14 +61,19 @@ impl ParamsSnapshot {
         F: PrimeField64,
         Ch: ProverChannel<F = F>,
     {
-        write_usize::<F, _>(channel, self.log_blowup)?;
-        write_usize::<F, _>(channel, self.fold_log_arity)?;
-        write_usize::<F, _>(channel, self.log_final_degree)?;
-        write_usize::<F, _>(channel, self.fri_pow_bits)?;
-        write_usize::<F, _>(channel, self.deep_pow_bits)?;
-        write_usize::<F, _>(channel, self.num_queries)?;
-        write_usize::<F, _>(channel, self.query_pow_bits)?;
-        write_usize::<F, _>(channel, self.alignment)?;
+        let mut send_len = |value: usize| {
+            let value = u64::try_from(value).ok()?;
+            channel.send_u64(value)
+        };
+
+        send_len(self.log_blowup)?;
+        send_len(self.fold_log_arity)?;
+        send_len(self.log_final_degree)?;
+        send_len(self.fri_pow_bits)?;
+        send_len(self.deep_pow_bits)?;
+        send_len(self.num_queries)?;
+        send_len(self.query_pow_bits)?;
+        send_len(self.alignment)?;
         Some(())
     }
 
@@ -79,15 +82,20 @@ impl ParamsSnapshot {
         F: PrimeField64,
         Ch: VerifierChannel<F = F>,
     {
+        let mut read_len = || {
+            let value = channel.receive_u64()?;
+            usize::try_from(value).ok()
+        };
+
         Some(Self {
-            log_blowup: read_usize::<F, _>(channel)?,
-            fold_log_arity: read_usize::<F, _>(channel)?,
-            log_final_degree: read_usize::<F, _>(channel)?,
-            fri_pow_bits: read_usize::<F, _>(channel)?,
-            deep_pow_bits: read_usize::<F, _>(channel)?,
-            num_queries: read_usize::<F, _>(channel)?,
-            query_pow_bits: read_usize::<F, _>(channel)?,
-            alignment: read_usize::<F, _>(channel)?,
+            log_blowup: read_len()?,
+            fold_log_arity: read_len()?,
+            log_final_degree: read_len()?,
+            fri_pow_bits: read_len()?,
+            deep_pow_bits: read_len()?,
+            num_queries: read_len()?,
+            query_pow_bits: read_len()?,
+            alignment: read_len()?,
         })
     }
 

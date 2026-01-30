@@ -9,7 +9,7 @@
 //!    - log_degrees[air], permutation[air]
 //!    - log_max_degree, log_max_height
 //!    - num_randomness[air]
-//!    - trace_widths[air], aux_widths[air]
+//!    - air_widths[air] (trace, aux in permutation order)
 //!    - quotient_widths[0]
 //! 3) Periodic tables (AIR order, not permutation order):
 //!    - per AIR: num_cols, then per column: len, then len field elements.
@@ -30,63 +30,21 @@ use alloc::vec::Vec;
 use p3_field::PrimeField64;
 use p3_miden_transcript::{ProverChannel, VerifierChannel};
 
-pub fn write_usize<F, Ch>(channel: &mut Ch, value: usize) -> Option<()>
-where
-    F: PrimeField64,
-    Ch: ProverChannel<F = F>,
-{
-    let value = u32::try_from(value).ok()?;
-    channel.send_u64(u64::from(value))
-}
-
-pub fn write_usize_list<F, Ch>(channel: &mut Ch, values: &[usize]) -> Option<()>
-where
-    F: PrimeField64,
-    Ch: ProverChannel<F = F>,
-{
-    for &v in values {
-        write_usize::<F, _>(channel, v)?;
-    }
-    Some(())
-}
-
 pub fn write_periodic_tables<F, Ch>(channel: &mut Ch, tables: &[Vec<Vec<F>>]) -> Option<()>
 where
     F: PrimeField64,
     Ch: ProverChannel<F = F>,
 {
     for air_table in tables {
-        write_usize::<F, _>(channel, air_table.len())?;
+        let num_cols = u64::try_from(air_table.len()).ok()?;
+        channel.send_u64(num_cols)?;
         for column in air_table {
-            write_usize::<F, _>(channel, column.len())?;
+            let len = u64::try_from(column.len()).ok()?;
+            channel.send_u64(len)?;
             channel.send_field_slice(column);
         }
     }
     Some(())
-}
-
-pub fn read_usize<F, Ch>(channel: &mut Ch) -> Option<usize>
-where
-    F: PrimeField64,
-    Ch: VerifierChannel<F = F>,
-{
-    let value = channel.receive_u64()?;
-    if value > u64::from(u32::MAX) {
-        return None;
-    }
-    Some(value as usize)
-}
-
-pub fn read_usize_list<F, Ch>(channel: &mut Ch, count: usize) -> Option<Vec<usize>>
-where
-    F: PrimeField64,
-    Ch: VerifierChannel<F = F>,
-{
-    let mut out = Vec::with_capacity(count);
-    for _ in 0..count {
-        out.push(read_usize::<F, _>(channel)?);
-    }
-    Some(out)
 }
 
 pub fn read_periodic_tables<F, Ch>(channel: &mut Ch, num_airs: usize) -> Option<Vec<Vec<Vec<F>>>>
@@ -96,10 +54,10 @@ where
 {
     let mut tables = Vec::with_capacity(num_airs);
     for _ in 0..num_airs {
-        let num_cols = read_usize::<F, _>(channel)?;
+        let num_cols = usize::try_from(channel.receive_u64()?).ok()?;
         let mut cols = Vec::with_capacity(num_cols);
         for _ in 0..num_cols {
-            let len = read_usize::<F, _>(channel)?;
+            let len = usize::try_from(channel.receive_u64()?).ok()?;
             let mut col = Vec::with_capacity(len);
             for _ in 0..len {
                 col.push(*channel.receive_field()?);

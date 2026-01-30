@@ -13,7 +13,6 @@ use p3_miden_air::MidenAir;
 use p3_miden_transcript::{ProverChannel, VerifierChannel};
 use p3_util::log2_strict_usize;
 
-use crate::transcript::{read_usize, read_usize_list, write_usize, write_usize_list};
 use crate::utils::align_width;
 
 /// Prover-side layout (contains derived data like ratios).
@@ -24,8 +23,9 @@ use crate::utils::align_width;
 ///   when reconstructing constraint checks.
 /// - `ratios[i] = N / n_i` where N is the max trace height and n_i is this AIR's
 ///   trace height. These ratios determine nested coset domains (gK)^r.
-/// - `trace_widths` / `aux_widths` are padded to `alignment` for LMCS hints.
-///   When checking constraints, we trim back to the AIR's real widths.
+/// - `air_widths` stores paired trace/aux widths in permutation order, padded
+///   to `alignment` for LMCS hints. When checking constraints, we trim back
+///   to the AIR's real widths.
 /// - `quotient_widths` is currently a single aligned width for the combined
 ///   quotient (EF flattened to base field).
 #[derive(Clone, Debug)]
@@ -37,9 +37,14 @@ pub struct TraceLayout {
     pub log_max_height: usize,
     pub ratios: Vec<usize>,
     pub num_randomness: Vec<usize>,
-    pub trace_widths: Vec<usize>,
-    pub aux_widths: Vec<usize>,
+    pub air_widths: Vec<AirWidths>,
     pub quotient_widths: Vec<usize>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AirWidths {
+    pub trace: usize,
+    pub aux: usize,
 }
 
 impl TraceLayout {
@@ -83,12 +88,12 @@ impl TraceLayout {
             ratios.push(1usize << log_r);
         }
 
-        let mut trace_widths = Vec::with_capacity(num_airs);
-        let mut aux_widths = Vec::with_capacity(num_airs);
+        let mut air_widths = Vec::with_capacity(num_airs);
         for &idx in &permutation {
             let air = &airs[idx];
-            trace_widths.push(align_width(air.width(), alignment));
-            aux_widths.push(align_width(air.aux_width() * EF::DIMENSION, alignment));
+            let trace = align_width(air.width(), alignment);
+            let aux = align_width(air.aux_width() * EF::DIMENSION, alignment);
+            air_widths.push(AirWidths { trace, aux });
         }
 
         // Single combined quotient for now.
@@ -102,8 +107,7 @@ impl TraceLayout {
             log_max_height,
             ratios,
             num_randomness,
-            trace_widths,
-            aux_widths,
+            air_widths,
             quotient_widths,
         }
     }
@@ -116,8 +120,7 @@ impl TraceLayout {
             log_max_degree: self.log_max_degree,
             log_max_height: self.log_max_height,
             num_randomness: self.num_randomness.clone(),
-            trace_widths: self.trace_widths.clone(),
-            aux_widths: self.aux_widths.clone(),
+            air_widths: self.air_widths.clone(),
             quotient_widths: self.quotient_widths.clone(),
         }
     }
@@ -142,8 +145,7 @@ pub struct LayoutSnapshot {
     pub log_max_degree: usize,
     pub log_max_height: usize,
     pub num_randomness: Vec<usize>,
-    pub trace_widths: Vec<usize>,
-    pub aux_widths: Vec<usize>,
+    pub air_widths: Vec<AirWidths>,
     pub quotient_widths: Vec<usize>,
 }
 
@@ -153,15 +155,14 @@ impl LayoutSnapshot {
         F: PrimeField64,
         Ch: ProverChannel<F = F>,
     {
-        write_usize::<F, _>(channel, self.num_airs)?;
-        write_usize_list::<F, _>(channel, &self.log_degrees)?;
-        write_usize_list::<F, _>(channel, &self.permutation)?;
-        write_usize::<F, _>(channel, self.log_max_degree)?;
-        write_usize::<F, _>(channel, self.log_max_height)?;
-        write_usize_list::<F, _>(channel, &self.num_randomness)?;
-        write_usize_list::<F, _>(channel, &self.trace_widths)?;
-        write_usize_list::<F, _>(channel, &self.aux_widths)?;
-        write_usize_list::<F, _>(channel, &self.quotient_widths)?;
+        send_usize::<F, _>(channel, self.num_airs)?;
+        send_usize_list::<F, _>(channel, &self.log_degrees)?;
+        send_usize_list::<F, _>(channel, &self.permutation)?;
+        send_usize::<F, _>(channel, self.log_max_degree)?;
+        send_usize::<F, _>(channel, self.log_max_height)?;
+        send_usize_list::<F, _>(channel, &self.num_randomness)?;
+        send_air_widths::<F, _>(channel, &self.air_widths)?;
+        send_usize_list::<F, _>(channel, &self.quotient_widths)?;
         Some(())
     }
 
@@ -176,8 +177,7 @@ impl LayoutSnapshot {
         let log_max_degree = read_usize::<F, _>(channel)?;
         let log_max_height = read_usize::<F, _>(channel)?;
         let num_randomness = read_usize_list::<F, _>(channel, num_airs)?;
-        let trace_widths = read_usize_list::<F, _>(channel, num_airs)?;
-        let aux_widths = read_usize_list::<F, _>(channel, num_airs)?;
+        let air_widths = read_air_widths::<F, _>(channel, num_airs)?;
         let quotient_widths = read_usize_list::<F, _>(channel, 1)?;
 
         Some(Self {
@@ -187,9 +187,75 @@ impl LayoutSnapshot {
             log_max_degree,
             log_max_height,
             num_randomness,
-            trace_widths,
-            aux_widths,
+            air_widths,
             quotient_widths,
         })
     }
+}
+
+fn send_usize<F, Ch>(channel: &mut Ch, value: usize) -> Option<()>
+where
+    F: PrimeField64,
+    Ch: ProverChannel<F = F>,
+{
+    let value = u64::try_from(value).ok()?;
+    channel.send_u64(value)
+}
+
+fn send_usize_list<F, Ch>(channel: &mut Ch, values: &[usize]) -> Option<()>
+where
+    F: PrimeField64,
+    Ch: ProverChannel<F = F>,
+{
+    for &value in values {
+        send_usize::<F, _>(channel, value)?;
+    }
+    Some(())
+}
+
+fn read_usize<F, Ch>(channel: &mut Ch) -> Option<usize>
+where
+    F: PrimeField64,
+    Ch: VerifierChannel<F = F>,
+{
+    let value = channel.receive_u64()?;
+    usize::try_from(value).ok()
+}
+
+fn read_usize_list<F, Ch>(channel: &mut Ch, count: usize) -> Option<Vec<usize>>
+where
+    F: PrimeField64,
+    Ch: VerifierChannel<F = F>,
+{
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        out.push(read_usize::<F, _>(channel)?);
+    }
+    Some(out)
+}
+
+fn send_air_widths<F, Ch>(channel: &mut Ch, widths: &[AirWidths]) -> Option<()>
+where
+    F: PrimeField64,
+    Ch: ProverChannel<F = F>,
+{
+    for width in widths {
+        send_usize::<F, _>(channel, width.trace)?;
+        send_usize::<F, _>(channel, width.aux)?;
+    }
+    Some(())
+}
+
+fn read_air_widths<F, Ch>(channel: &mut Ch, count: usize) -> Option<Vec<AirWidths>>
+where
+    F: PrimeField64,
+    Ch: VerifierChannel<F = F>,
+{
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let trace = read_usize::<F, _>(channel)?;
+        let aux = read_usize::<F, _>(channel)?;
+        out.push(AirWidths { trace, aux });
+    }
+    Some(out)
 }
