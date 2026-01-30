@@ -12,7 +12,11 @@ use p3_field::{
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 use p3_miden_lmcs::utils::aligned_widths;
+use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_miden_transcript::ProverChannel;
+use p3_util::log2_strict_usize;
+
+use crate::utils::bit_reversed_coset_points;
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
@@ -24,42 +28,89 @@ pub struct DeepPoly<EF> {
 }
 
 impl<EF> DeepPoly<EF> {
-    /// Construct `Q(X)` from committed matrices and batched evaluations at N opening points.
+    /// Construct `Q(X)` by evaluating trace trees at the opening points.
     ///
-    /// # Arguments
-    /// - `batched_evals`: Indexed as `batched_evals[group_idx][matrix_idx]` with `FieldArray<N>` per column.
-    /// - `quotient`: Precomputed `1/(zⱼ - xᵢ)` for all opening points zⱼ and domain points xᵢ.
-    /// - `alignment`: Column alignment for padding zero columns.
-    pub fn new<F, M, const N: usize, Ch>(
+    /// This computes the LDE coset points from the trace tree height, evaluates the committed
+    /// matrices at `eval_points`, and then calls [`Self::from_evals`]. The returned `DeepPoly`
+    /// owns only the DEEP quotient evaluations; if you need aligned evaluation matrices for
+    /// testing, call `from_evals` directly.
+    pub fn from_trees<L, M, const N: usize, Ch>(
         params: &DeepParams,
-        matrices_groups: &[Vec<&M>],
-        batched_evals: BatchedEvals<EF, N>,
-        quotient: &PointQuotients<F, EF, N>,
-        alignment: usize,
+        trace_trees: &[&L::Tree<M>],
+        eval_points: [EF; N],
+        log_blowup: usize,
         channel: &mut Ch,
     ) -> Self
     where
-        F: TwoAdicField,
-        EF: ExtensionField<F>,
-        M: Matrix<F>,
-        Ch: ProverChannel<F = F> + CanSample<F>,
+        L: Lmcs,
+        L::F: TwoAdicField,
+        EF: ExtensionField<L::F>,
+        M: Matrix<L::F>,
+        Ch: ProverChannel<F = L::F, Commitment = L::Commitment> + CanSample<L::F>,
     {
-        // Validate: one eval group per matrix group
-        let batched_groups = batched_evals.groups();
-        assert_eq!(
-            batched_groups.len(),
-            matrices_groups.len(),
-            "batched_evals should have one group per matrix group"
+        let lde_height = trace_trees
+            .first()
+            .expect("at least one trace tree required")
+            .height();
+        assert!(
+            trace_trees.iter().all(|tree| tree.height() == lde_height),
+            "mixed trace tree heights are not supported"
         );
 
-        // Validate: each group's matrix count matches
-        for (evals_group, matrices) in zip(batched_groups, matrices_groups) {
-            assert_eq!(
-                evals_group.num_matrices(),
-                matrices.len(),
-                "batched_evals matrix count must match matrices count"
-            );
-        }
+        let log_lde_height = log2_strict_usize(lde_height);
+        let coset_points = bit_reversed_coset_points::<L::F>(log_lde_height);
+
+        let matrices_groups: Vec<Vec<&M>> = trace_trees
+            .iter()
+            .map(|tree| tree.leaves().iter().collect())
+            .collect();
+
+        let quotient = PointQuotients::new(FieldArray::from(eval_points), &coset_points);
+        let batched_evals = quotient.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
+
+        let (deep_poly, _evals) =
+            Self::from_evals::<L, M, N, Ch>(params, trace_trees, batched_evals, &quotient, channel);
+        deep_poly
+    }
+
+    /// Construct `Q(X)` from committed matrices and batched evaluations at N opening points.
+    ///
+    /// # Arguments
+    /// - `trace_trees`: Trace trees used to derive alignment and matrix groups. All trees must
+    ///   share the same alignment; mixed alignments are not supported.
+    /// - `batched_evals`: Indexed as `batched_evals[group_idx][matrix_idx]` with `FieldArray<N>`
+    ///   per column. Widths are expected to match the unpadded matrices; this method pads columns
+    ///   to the trace alignment before serializing into the transcript.
+    /// - `quotient`: Precomputed `1/(zⱼ - xᵢ)` for all opening points zⱼ and domain points xᵢ.
+    ///
+    /// Returns the constructed `DeepPoly` and the aligned `batched_evals` (useful for tests).
+    pub(crate) fn from_evals<L, M, const N: usize, Ch>(
+        params: &DeepParams,
+        trace_trees: &[&L::Tree<M>],
+        batched_evals: BatchedEvals<EF, N>,
+        quotient: &PointQuotients<L::F, EF, N>,
+        channel: &mut Ch,
+    ) -> (Self, BatchedEvals<EF, N>)
+    where
+        L: Lmcs,
+        L::F: TwoAdicField,
+        EF: ExtensionField<L::F>,
+        M: Matrix<L::F>,
+        Ch: ProverChannel<F = L::F, Commitment = L::Commitment> + CanSample<L::F>,
+    {
+        let alignment = trace_trees
+            .first()
+            .expect("at least one tree must be provided")
+            .alignment();
+        assert!(
+            trace_trees.iter().all(|tree| tree.alignment() == alignment),
+            "mixed trace tree alignments are not supported"
+        );
+
+        let matrices_groups: Vec<Vec<&M>> = trace_trees
+            .iter()
+            .map(|tree| tree.leaves().iter().collect())
+            .collect();
 
         let batched_evals = batched_evals.aligned(alignment);
 
@@ -77,7 +128,7 @@ impl<EF> DeepPoly<EF> {
         // Structure: batched_evals.groups()[group_idx][matrix_idx][col_idx] is FieldArray<EF, N>
         let f_reduced_at_points: FieldArray<EF, N> = batched_evals.reduce(challenge_columns);
 
-        let w = F::Packing::WIDTH;
+        let w = <L::F as Field>::Packing::WIDTH;
         let point_quotient = &quotient.point_quotient;
         let n = point_quotient.len();
 
@@ -90,18 +141,22 @@ impl<EF> DeepPoly<EF> {
         // Align each matrix width so padding is explicit in the transcript.
         let aligned_widths = aligned_widths(widths.iter().copied(), alignment);
 
-        let coeffs_columns: Vec<Vec<EF>> =
-            derive_coeffs_from_challenge(&aligned_widths, challenge_columns);
-
-        // Negate coefficients so inner loop computes f_reduced(z) - f_reduced(X) via addition
-        let neg_column_coeffs: Vec<Vec<EF>> = coeffs_columns
+        // Derive reversed column coefficients for Horner, shifted by -1 so we accumulate
+        // -f_reduced(X) directly (avoids a separate negation pass).
+        let total_width: usize = aligned_widths.iter().sum();
+        let mut neg_powers_iter = challenge_columns
+            .shifted_powers(EF::NEG_ONE)
+            .collect_n(total_width)
+            .into_iter()
+            .rev();
+        let neg_column_coeffs: Vec<Vec<EF>> = aligned_widths
             .iter()
-            .map(|c| c.iter().copied().map(EF::neg).collect())
+            .map(|&width| neg_powers_iter.by_ref().take(width).collect())
             .collect();
 
         // Compute -f_reduced(X) = -Σᵢ αⁱ · fᵢ(X) over the LDE domain.
         let mut neg_column_coeffs_iter = neg_column_coeffs.iter();
-        let neg_f_reduced = zip(matrices_groups, &group_sizes)
+        let neg_f_reduced = zip(matrices_groups.iter(), &group_sizes)
             .map(|(matrices_group, &size)| {
                 let group_coeffs: Vec<&Vec<EF>> =
                     neg_column_coeffs_iter.by_ref().take(size).collect();
@@ -119,13 +174,7 @@ impl<EF> DeepPoly<EF> {
             .unwrap_or_else(|| EF::zero_vec(n));
 
         // Pre-compute βʲ for all N points
-        let point_coeffs: [EF; N] = core::array::from_fn(|j| {
-            if j == 0 {
-                EF::ONE
-            } else {
-                challenge_points.exp_u64(j as u64)
-            }
-        });
+        let point_coeffs: [EF; N] = core::array::from_fn(|j| challenge_points.exp_u64(j as u64));
 
         // Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) · 1/(zⱼ - X)
         let mut deep_evals = EF::zero_vec(n);
@@ -176,7 +225,7 @@ impl<EF> DeepPoly<EF> {
                 });
         }
 
-        Self { deep_evals }
+        (Self { deep_evals }, batched_evals)
     }
 }
 
@@ -250,40 +299,20 @@ fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>, C: AsRef<[
     acc
 }
 
-/// Derive coefficients `[αⁿ⁻¹, ..., α, 1]` (reversed) for batching.
-///
-/// Reversed order enables Horner evaluation: the verifier processes values
-/// left-to-right computing `α·acc + val`, which produces `Σ αⁿ⁻¹⁻ⁱ·vᵢ`.
-///
-/// Widths are assumed to be aligned already (padded with trailing zero columns
-/// when needed). When the dot product only uses the prefix up to each matrix's
-/// actual width, the result matches explicit zero padding.
-fn derive_coeffs_from_challenge<EF: Field>(widths: &[usize], challenge: EF) -> Vec<Vec<EF>> {
-    let total: usize = widths.iter().sum();
-    let all_powers: Vec<EF> = challenge.powers().collect_n(total);
-    let rev_powers_iter = &mut all_powers.into_iter().rev();
-
-    widths
-        .iter()
-        .map(|&width| rev_powers_iter.take(width).collect())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    use super::derive_coeffs_from_challenge;
     use crate::utils::horner;
     use p3_field::{PrimeCharacteristicRing, dot_product};
     use p3_miden_lmcs::utils::{aligned_widths, pad_rows_to_alignment};
 
     use crate::tests::{EF, F};
 
-    /// `reduce_with_powers` (Horner) must match explicit `derive_coeffs` + dot product.
+    /// `reduce_with_powers` (Horner) must match explicit negative coeffs + dot product.
     #[test]
-    fn reduce_evals_matches_reduce_with_powers() {
+    fn neg_coeffs_match_neg_horner() {
         let c: EF = EF::from_u64(2);
         let alignment = 3;
         let widths = [2usize, 3];
@@ -294,29 +323,45 @@ mod tests {
         ];
         let padded_rows = pad_rows_to_alignment(rows.clone(), alignment);
 
-        let coeffs = derive_coeffs_from_challenge(&aligned_widths, c);
+        let mut neg_powers_iter = c
+            .shifted_powers(EF::NEG_ONE)
+            .collect_n(aligned_widths.iter().sum())
+            .into_iter()
+            .rev();
+        let neg_coeffs: Vec<Vec<EF>> = aligned_widths
+            .iter()
+            .map(|&width| neg_powers_iter.by_ref().take(width).collect())
+            .collect();
 
         // Explicit coefficient sum: Σᵢ coeffs[i] · rows[i]
         let explicit: EF = dot_product(
-            coeffs.iter().flatten().copied(),
+            neg_coeffs.iter().flatten().copied(),
             padded_rows.iter().flatten().copied(),
         );
 
         // Horner using reduce_with_powers (same as used in verifier)
         let horner: EF = horner(c, padded_rows.iter().flatten().copied());
 
-        assert_eq!(explicit, horner);
+        assert_eq!(explicit, EF::NEG_ONE * horner);
     }
 
-    /// Padding: coeffs match Horner for various width/alignment combos.
+    /// Padding: negative coeffs match -Horner for various width/alignment combos.
     #[test]
-    fn derive_coeffs_alignment() {
+    fn neg_coeffs_alignment() {
         let c: EF = EF::from_u64(7);
         let alignment = 4;
         let widths = [3usize, 5, 2];
         let aligned_widths = aligned_widths(widths, alignment);
 
-        let coeffs = derive_coeffs_from_challenge(&aligned_widths, c);
+        let mut neg_powers_iter = c
+            .shifted_powers(EF::NEG_ONE)
+            .collect_n(aligned_widths.iter().sum())
+            .into_iter()
+            .rev();
+        let coeffs: Vec<Vec<EF>> = aligned_widths
+            .iter()
+            .map(|&width| neg_powers_iter.by_ref().take(width).collect())
+            .collect();
 
         // Verify lengths match aligned widths
         assert_eq!(coeffs[0].len(), aligned_widths[0]);
@@ -343,6 +388,6 @@ mod tests {
         );
         let horner: EF = horner(c, padded_rows.iter().flatten().copied());
 
-        assert_eq!(explicit, horner);
+        assert_eq!(explicit, EF::NEG_ONE * horner);
     }
 }

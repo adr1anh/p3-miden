@@ -90,8 +90,8 @@ macro_rules! bench_scenario {
             let dft = Dft::default();
             let shift = F::GENERATOR;
 
-            for &log_max_height in LOG_HEIGHTS {
-                let max_lde_size = 1usize << log_max_height;
+            for &log_lde_height in LOG_HEIGHTS {
+                let max_lde_size = 1usize << log_lde_height;
                 let group_name = format!(
                     "PCS_Open/{}/{}/{}/{}",
                     max_lde_size,
@@ -103,7 +103,7 @@ macro_rules! bench_scenario {
 
                 // Generate test matrices
                 let matrix_groups: Vec<Vec<RowMajorMatrix<F>>> =
-                    generate_matrices_from_specs(RELATIVE_SPECS, log_max_height);
+                    generate_matrices_from_specs(RELATIVE_SPECS, log_lde_height);
                 group.throughput(Throughput::Elements(total_elements(&matrix_groups)));
 
                 // =============================================================
@@ -198,9 +198,9 @@ macro_rules! bench_scenario {
                     all_lde_matrices.sort_by_key(|m| m.height());
 
                     // Build a single LMCS tree with all matrices
-                    let tree = lmcs.build_tree(all_lde_matrices);
+                    let tree = lmcs.build_aligned_tree(all_lde_matrices);
                     let commitment = tree.root();
-                    let log_max_height = log2_strict_usize(tree.height());
+                    let log_lde_height = log2_strict_usize(tree.height());
 
                     let base_challenger = S::challenger();
 
@@ -235,7 +235,7 @@ macro_rules! bench_scenario {
                                 lifted_prover::open_with_channel::<F, EF, _, _, _, 2>(
                                     &params,
                                     &lmcs,
-                                    log_max_height,
+                                    log_lde_height,
                                     [z1, z2],
                                     trace_trees,
                                     &mut channel,

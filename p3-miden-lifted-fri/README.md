@@ -21,7 +21,7 @@ Q(X) = sum_i sum_j alpha^i * beta^j * (f_i(X) - f_i(z_j)) / (X - z_j)
 
 so Q is low-degree iff all claims are consistent. Evaluations are stored in
 bit-reversed order. Lifting treats shorter matrices as evaluations of
-f_i(X^r) on the max domain (r = max_height / height_i). FRI then repeatedly
+f_i(X^r) on the LDE domain (r = lde_height / height_i). FRI then repeatedly
 folds evaluations by the chosen arity to test low degree.
 
 ## Entry Points
@@ -45,7 +45,15 @@ folds evaluations by the chosen arity to test low degree.
 
 - Evaluation rows are in bit-reversed order.
 - Domain sizes and folding factors come from `PcsParams`.
+- The PCS APIs use `log_lde_height` to denote the LDE evaluation domain height (the
+  height of committed LDE matrices). When a trace degree is known, the typical mapping is:
+  `log_lde_height = log_trace_height + log_blowup` (plus any caller-chosen extension).
 - Lifting semantics follow `p3-miden-lmcs`.
+- Alignment padding is a transcript-formatting convenience for trace commitments built with
+  `build_aligned_tree` (alignment is recorded on the tree). FRI round commitments are unaligned. Padding keeps verifier parsing
+  uniform because the underlying sponge pads with zeros after absorbing a list of elements.
+  The padded columns are treated as additional polynomials and are checked for low degree by
+  the PCS, but they are not forced to be zero unless the caller/AIR enforces that.
 - Transcript ordering (observe → grind → sample) is security-critical; see
   `SECURITY.md`.
 

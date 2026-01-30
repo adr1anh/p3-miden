@@ -100,13 +100,6 @@ where
         let periodic_tables = read_periodic_tables::<L::F, _>(channel, layout.num_airs)?;
 
         let main = *channel.receive_commitment()?;
-        let aux = *channel.receive_commitment()?;
-        let quotient = *channel.receive_commitment()?;
-        let commitments = Commitments {
-            main,
-            aux,
-            quotient,
-        };
 
         let mut randomness = Vec::with_capacity(layout.num_airs);
         for &num_r in &layout.num_randomness {
@@ -117,16 +110,26 @@ where
             randomness.push(rs);
         }
 
+        let aux = *channel.receive_commitment()?;
+
         let mut alphas = Vec::with_capacity(layout.num_airs);
         for _ in 0..layout.num_airs {
             alphas.push(sample_ext::<L::F, EF, _>(channel));
         }
 
         let beta: EF = sample_ext::<L::F, EF, _>(channel);
+        let quotient = *channel.receive_commitment()?;
+
         let zeta: EF =
             sample_ood_zeta::<L::F, EF, _>(channel, layout.log_max_degree, layout.log_max_height);
         let h_max = L::F::two_adic_generator(layout.log_max_degree);
         let zeta_next = zeta * EF::from(h_max);
+
+        let commitments = Commitments {
+            main,
+            aux,
+            quotient,
+        };
 
         let (trace_widths, aux_widths): (Vec<usize>, Vec<usize>) = layout
             .air_widths
@@ -170,8 +173,9 @@ where
 // Intern guide (repeat from notes.md for quick context):
 // - The verifier must replay the transcript in the exact order written by the
 //   prover. Any order changes require synchronized updates.
-// - Commitments are observed in this order: main, aux, quotient.
-// - Randomness and alphas are sampled per AIR (AIR order), then beta, then zeta.
+// - Commitments are observed in this order: main, aux, quotient, interleaved with sampling.
+// - Randomness is sampled per AIR (AIR order) after main commitment.
+// - Alphas are sampled after aux commitment, then beta, then quotient commitment, then zeta.
 // - Zeta is rejection-sampled outside H and gK (loop ~1x); zeta_next is derived from zeta * h_max.
 // - PCS openings return groups:
 //   - groups[0]: main trace openings in permutation order
@@ -251,21 +255,15 @@ where
         }
     }
 
-    // === Read commitments ===
-    // Commitments are read in the same order they were observed by the prover.
+    // === Read commitments + sample randomness ===
+    // Commitment order must mirror the prover: main, (sample randomness), aux,
+    // (sample alphas, beta), quotient.
     let main_commit = *channel
         .receive_commitment()
         .ok_or(VerifierError::InvalidTranscript)?;
-    let aux_commit = *channel
-        .receive_commitment()
-        .ok_or(VerifierError::InvalidTranscript)?;
-    let quotient_commit = *channel
-        .receive_commitment()
-        .ok_or(VerifierError::InvalidTranscript)?;
 
-    // === Randomness + alpha per air ===
+    // === Randomness per air ===
     // Randomness is sampled per AIR (AIR order), and must match air.num_randomness().
-    // Alpha is sampled after aux commitment to bind folding to aux trace contents.
     let mut randomness_per_air: Vec<Vec<EF>> = Vec::with_capacity(layout.num_airs);
     for (air, &num_r) in airs.iter().zip(&layout.num_randomness) {
         if air.num_randomness() != num_r {
@@ -277,6 +275,12 @@ where
         randomness_per_air.push(randomness);
     }
 
+    let aux_commit = *channel
+        .receive_commitment()
+        .ok_or(VerifierError::InvalidTranscript)?;
+
+    // === Alpha per air ===
+    // Alpha is sampled after aux commitment to bind folding to aux trace contents.
     let mut alphas = Vec::with_capacity(layout.num_airs);
     for _ in 0..layout.num_airs {
         alphas.push(sample_ext::<F, EF, _>(channel));
@@ -284,6 +288,10 @@ where
 
     // Beta is used for the Horner combine across AIRs (permutation order).
     let beta: EF = sample_ext::<F, EF, _>(channel);
+
+    let quotient_commit = *channel
+        .receive_commitment()
+        .ok_or(VerifierError::InvalidTranscript)?;
 
     // === Zeta (OOD) ===
     // Rejection-sample zeta so it is not in H or gK (avoid divide-by-zero).

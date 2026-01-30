@@ -1,20 +1,26 @@
 //! Arity-8 FRI folding using inverse FFT.
 //!
 //! Given evaluations of a polynomial `f` on a coset `s·⟨ω⟩` where `ω` is a primitive
-//! 8th root of unity, we recover `f(β)` for an arbitrary challenge point `β`.
+//! 8th root of unity, we recover the folded value `g(s⁸)` for a challenge `β`
+//! (and when `deg f < 8`, this equals `f(β)`).
 //!
 //! ## Algorithm
 //!
 //! 1. **Inverse FFT**: Recover coefficients of `f(sX)` from evaluations on `⟨ω⟩`.
-//! 2. **Evaluate**: Compute `f(sX)` at `X = β/s`, yielding `f(β)`.
+//! 2. **Evaluate**: Compute `f(sX)` at `X = β/s`, yielding the folded value `g(s⁸)`.
 //!
 //! The inverse FFT uses a 3-stage Cooley-Tukey DIT butterfly structure.
+//!
+//! We decompose `f` by residue class modulo 8:
+//! `f(X) = Σⱼ X^j · fⱼ(X⁸)` for j ∈ {0..7}.
+//! The folded polynomial is `g(X) = Σⱼ β^j · fⱼ(X)`.
 
 use core::array;
 
 use p3_field::{Algebra, TwoAdicField};
 
-/// Evaluate `f(β)` from evaluations on a coset.
+/// Evaluate the folded value `g(s⁸)` from evaluations on a coset
+/// (equals `f(β)` when `deg f < 8`).
 ///
 /// ## Inputs
 ///
@@ -34,7 +40,7 @@ where
     // Recover coefficients [c₀, ..., c₇] of 8·f(sX) via inverse FFT.
     let coeffs = ifft8::<F, PF, PEF>(evals);
 
-    // f(β) = f(s · β/s) = (1/8) · Σᵢ cᵢ · xⁱ  where x = β/s.
+    // Folded value g(s⁸) = (1/8) · Σᵢ cᵢ · xⁱ  where x = β/s.
     let x = beta * s_inv;
 
     // Compute powers of x efficiently

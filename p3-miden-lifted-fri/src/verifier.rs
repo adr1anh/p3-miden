@@ -20,20 +20,27 @@ use crate::fri::verifier::FriOracle;
 /// Verify polynomial evaluation claims against commitments using a verifier channel.
 ///
 /// # Preconditions
-/// - `eval_points` must lie outside both the subgroup `H` (size `2^log_max_height`) and
-///   the evaluation coset `gK` used by the PCS. If a point lies in either set,
+/// - `eval_points` must lie outside both the trace-domain subgroup `H` and the
+///   LDE evaluation coset `gK` used by the PCS. If a point lies in either set,
 ///   denominators `(z_j - X)` in the DEEP quotient become zero for some domain element,
 ///   making the quotient undefined.
-/// - All commitments are expected to be lifted to the same max height `2^log_max_height`.
+/// - All commitments are expected to be lifted to the same LDE height `2^log_lde_height`.
 ///
-/// Commitment widths are expected to be aligned to the LMCS alignment.
+/// `log_lde_height` is the log₂ of the LDE evaluation domain height (i.e. the height of
+/// the committed LDE matrices). When a trace degree is known, it is typically
+/// `log_trace_height + params.fri.log_blowup` (plus any extension used by the caller).
+/// In that common case, the trace subgroup `H` has size `2^(log_lde_height - params.fri.log_blowup)`,
+/// while the LDE coset `gK` has size `2^log_lde_height`.
+///
+/// Trace commitment widths are expected to include any alignment padding
+/// (i.e., trees built with `build_aligned_tree`).
 ///
 /// Returns `Ok(evals)` where each group/matrix is a row-major matrix with one row per point.
 pub fn verify_with_channel<F, EF, L, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
     commitments: &[(L::Commitment, Vec<usize>)],
-    log_max_height: usize,
+    log_lde_height: usize,
     eval_points: [EF; N],
     channel: &mut Ch,
 ) -> Result<DeepEvals<EF>, PcsError>
@@ -55,14 +62,14 @@ where
         &params.deep,
         &eval_points,
         commitments.to_vec(),
-        log_max_height,
+        log_lde_height,
         channel,
     )?;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Create FRI oracle (observes commitments + final poly, checks per-round PoW)
     // ─────────────────────────────────────────────────────────────────────────
-    let fri_oracle = FriOracle::new(&params.fri, log_max_height, channel)?;
+    let fri_oracle = FriOracle::new(&params.fri, log_lde_height, channel)?;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Check query PoW witness and sample query indices
@@ -72,7 +79,7 @@ where
     }
 
     let query_indices: Vec<usize> = (0..params.num_queries)
-        .map(|_| channel.sample_bits(log_max_height))
+        .map(|_| channel.sample_bits(log_lde_height))
         .collect();
 
     // ─────────────────────────────────────────────────────────────────────────

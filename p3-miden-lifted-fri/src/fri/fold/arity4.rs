@@ -1,7 +1,8 @@
 //! Arity-4 FRI folding using inverse FFT.
 //!
 //! Given evaluations of a polynomial `f` on a coset `s·⟨ω⟩` where `ω = i` is a primitive
-//! 4th root of unity, we recover `f(β)` for an arbitrary challenge point `β`.
+//! 4th root of unity, we recover the folded value `g(s⁴)` for a challenge `β`
+//! (and when `deg f < 4`, this equals `f(β)`).
 //!
 //! ## Setup
 //!
@@ -13,16 +14,21 @@
 //!
 //! We store these in **bit-reversed order**: `[y₀, y₂, y₁, y₃]`.
 //!
+//! We decompose `f` by residue class modulo 4:
+//! `f(X) = Σⱼ X^j · fⱼ(X⁴)` for j ∈ {0,1,2,3}.
+//! The folded polynomial is `g(X) = Σⱼ β^j · fⱼ(X)`.
+//!
 //! ## Algorithm
 //!
 //! 1. **Inverse FFT**: Recover coefficients of `f(sX)` from evaluations on `⟨ω⟩`.
-//! 2. **Evaluate**: Compute `f(sX)` at `X = β/s`, yielding `f(β)`.
+//! 2. **Evaluate**: Compute `f(sX)` at `X = β/s`, yielding the folded value `g(s⁴)`.
 
 use core::array;
 
 use p3_field::{Algebra, TwoAdicField};
 
-/// Evaluate `f(β)` from evaluations on a coset.
+/// Evaluate the folded value `g(s⁴)` from evaluations on a coset
+/// (equals `f(β)` when `deg f < 4`).
 ///
 /// ## Inputs
 ///
@@ -34,8 +40,8 @@ use p3_field::{Algebra, TwoAdicField};
 /// ## FRI Context
 ///
 /// In arity-4 FRI, the polynomial `f` is evaluated on cosets of the form `s·⟨ω⟩`.
-/// The verifier needs to check that `f(β)` equals the claimed folded value.
-/// This function recovers `f(β)` from the four coset evaluations via interpolation.
+/// The verifier needs to check that the folded value `g(s⁴)` matches the prover's claim.
+/// This function recovers `g(s⁴)` from the four coset evaluations via interpolation.
 #[inline(always)]
 pub fn fold_evals<F, PF, PEF>(evals: &[PEF], s_inv: PF, beta: PEF) -> PEF
 where
@@ -48,7 +54,7 @@ where
     // Recover coefficients [c₀, c₁, c₂, c₃] of 4·f(sX) via inverse FFT.
     let [c0, c1, c2, c3] = ifft4::<F, PF, PEF>(evals);
 
-    // f(β) = f(s · β/s) = (1/4) · (c₀ + c₁·x + c₂·x² + c₃·x³)  where x = β/s.
+    // Folded value g(s⁴) = (1/4) · (c₀ + c₁·x + c₂·x² + c₃·x³)  where x = β/s.
     let x = beta * s_inv;
     let terms = [
         c0,              // c₀

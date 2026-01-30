@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::PackedValue;
 use p3_matrix::{Dimensions, Matrix};
-use p3_miden_stateful_hasher::StatefulHasher;
+use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 use rand::Rng;
 use rand::distr::{Distribution, StandardUniform};
@@ -34,6 +34,7 @@ where
     StandardUniform: Distribution<PF::Value>,
     H: StatefulHasher<PF, [PD; DIGEST_ELEMS], State = [PD; WIDTH]>
         + StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>
+        + Alignable<PF::Value, PD::Value>
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>
         + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
@@ -43,8 +44,8 @@ where
 {
     type ProverData<M> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST_ELEMS, SALT_ELEMS>;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST_ELEMS>;
-    /// Proof includes salt and siblings: `([F; SALT_ELEMS], Vec<[D; DIGEST_ELEMS]>)`
-    type Proof = ([PF::Value; SALT_ELEMS], Vec<[PD::Value; DIGEST_ELEMS]>);
+    /// Proof includes salt and siblings: `([F; SALT_ELEMS], Vec<Self::Commitment>)`
+    type Proof = ([PF::Value; SALT_ELEMS], Vec<Self::Commitment>);
     type Error = LmcsError;
 
     fn commit<M: Matrix<PF::Value>>(
@@ -76,7 +77,7 @@ where
 
     fn verify_batch(
         &self,
-        commit: &Self::Commitment,
+        commitment: &Self::Commitment,
         dimensions: &[Dimensions],
         index: usize,
         batch_opening: BatchOpeningRef<'_, PF::Value, Self>,
@@ -86,6 +87,6 @@ where
             opening_proof: batch_opening.opening_proof,
         };
         self.inner
-            .verify_batch(commit, dimensions, index, batch_opening)
+            .verify_batch(commitment, dimensions, index, batch_opening)
     }
 }

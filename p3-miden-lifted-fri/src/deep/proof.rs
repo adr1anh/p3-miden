@@ -29,7 +29,7 @@ where
 {
     /// Parse DEEP transcript data from a verifier channel.
     ///
-    /// Commitment widths must already include any alignment padding.
+    /// Commitment widths must match the committed rows (including any alignment padding).
     pub fn from_verifier_channel<Ch>(
         params: &DeepParams,
         commitments: &[(<Ch as VerifierChannel>::Commitment, Vec<usize>)],

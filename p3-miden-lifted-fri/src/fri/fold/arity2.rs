@@ -26,14 +26,14 @@
 //!
 //! ## FRI Folding
 //!
-//! Given a challenge `β`, FRI computes:
+//! Given a challenge `β`, FRI defines the folded polynomial:
 //!
 //! ```text
-//! f(β) = fₑ(β²) + β · fₒ(β²)
+//! g(X) = fₑ(X) + β · fₒ(X)
 //! ```
 //!
-//! Since we only have evaluations on the coset `{s, −s}`, we interpolate using the identity
-//! above, noting that `fₑ` and `fₒ` are constant on this coset (they depend only on `s²`).
+//! For a coset `{s, −s}`, we compute the folded value `g(s²)` by interpolating
+//! `fₑ(s²)` and `fₒ(s²)` from the two evaluations (and when `deg f < 2`, `g(s²)=f(β)`).
 
 use p3_field::{Algebra, TwoAdicField};
 
@@ -54,7 +54,7 @@ use p3_field::{Algebra, TwoAdicField};
 ///
 /// 1. Compute `fₑ(s²) = (f(s) + f(−s)) / 2`
 /// 2. Compute `fₒ(s²) = (f(s) − f(−s)) / (2s)`
-/// 3. Return `f(β) = fₑ(s²) + β · fₒ(s²)` (valid since `β² = s²` in the folded domain)
+/// 3. Return `g(s²) = fₑ(s²) + β · fₒ(s²)` (equals `f(β)` when `deg f < 2`)
 #[inline(always)]
 pub fn fold_evals<F, PF, PEF>(evals: &[PEF], s_inv: PF, beta: PEF) -> PEF
 where

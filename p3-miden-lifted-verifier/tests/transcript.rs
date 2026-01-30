@@ -11,7 +11,7 @@ use p3_miden_lifted_fri::deep::DeepParams;
 use p3_miden_lifted_fri::fri::{FriFold, FriParams};
 use p3_miden_lifted_prover::prove;
 use p3_miden_lifted_verifier::{LiftedStarkConfig, Proof, VerifierError, verify};
-use p3_miden_lmcs::{Lmcs, LmcsConfig};
+use p3_miden_lmcs::LmcsConfig;
 use p3_miden_transcript::TranscriptData;
 
 #[derive(Clone, Copy, Debug)]
@@ -58,8 +58,8 @@ fn test_config() -> LiftedStarkConfig<bb::F, TestLmcs, TestDft> {
     };
 
     let (_, sponge, compress) = bb::test_components();
-    let lmcs: TestLmcs = LmcsConfig::new_aligned(sponge, compress);
-    let alignment = lmcs.alignment();
+    let lmcs: TestLmcs = LmcsConfig::new(sponge, compress);
+    let alignment = bb::RATE;
     let dft = TestDft::default();
 
     LiftedStarkConfig {
@@ -91,17 +91,14 @@ fn malformed_transcript_is_rejected() {
         bb::test_challenger(),
     );
 
-    assert!(
-        verify::<bb::F, bb::EF, _, _, _, _>(
-            &config,
-            &[air],
-            &proof,
-            &public_values,
-            bb::test_challenger(),
-        )
-        .is_ok(),
-        "baseline proof should verify"
+    let baseline = verify::<bb::F, bb::EF, _, _, _, _>(
+        &config,
+        &[air],
+        &proof,
+        &public_values,
+        bb::test_challenger(),
     );
+    assert!(baseline.is_ok(), "baseline proof should verify: {baseline:?}");
 
     let (mut fields, commitments) = proof.transcript.clone().into_parts();
     fields.push(bb::F::ONE);

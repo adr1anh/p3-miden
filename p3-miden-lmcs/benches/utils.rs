@@ -72,7 +72,7 @@ impl LmcsScenario for BabyBearPoseidon2 {
 
     fn lmcs() -> Self::Lmcs {
         let (_, sponge, compress) = bb::test_components();
-        LmcsConfig::new_aligned(sponge, compress)
+        LmcsConfig::new(sponge, compress)
     }
 }
 
@@ -81,7 +81,7 @@ impl LmcsScenario for GoldilocksPoseidon2 {
 
     fn lmcs() -> Self::Lmcs {
         let (_, sponge, compress) = gl::test_components();
-        LmcsConfig::new_aligned(sponge, compress)
+        LmcsConfig::new(sponge, compress)
     }
 }
 
@@ -99,7 +99,7 @@ impl LmcsScenario for BabyBearKeccak {
     fn lmcs() -> Self::Lmcs {
         let inner = bb_keccak::KeccakMmcsSponge::new(KeccakF {});
         let compress = bb_keccak::KeccakCompress::new(inner);
-        LmcsConfig::new_aligned(keccak_sponge(), compress)
+        LmcsConfig::new(keccak_sponge(), compress)
     }
 }
 
@@ -109,6 +109,6 @@ impl LmcsScenario for GoldilocksKeccak {
     fn lmcs() -> Self::Lmcs {
         let inner = gl_keccak::KeccakMmcsSponge::new(KeccakF {});
         let compress = gl_keccak::KeccakCompress::new(inner);
-        LmcsConfig::new_aligned(keccak_sponge(), compress)
+        LmcsConfig::new(keccak_sponge(), compress)
     }
 }

@@ -10,7 +10,7 @@ use p3_miden_lifted_fri::PcsParams;
 use p3_miden_lifted_fri::deep::DeepParams;
 use p3_miden_lifted_fri::fri::{FriFold, FriParams};
 use p3_miden_lifted_prover::{LiftedStarkConfig, prove};
-use p3_miden_lmcs::{Lmcs, LmcsConfig};
+use p3_miden_lmcs::LmcsConfig;
 
 #[derive(Clone, Copy, Debug)]
 struct BadAuxWidthAir;
@@ -59,8 +59,8 @@ fn test_config() -> LiftedStarkConfig<bb::F, TestLmcs, TestDft> {
     };
 
     let (_, sponge, compress) = bb::test_components();
-    let lmcs: TestLmcs = LmcsConfig::new_aligned(sponge, compress);
-    let alignment = lmcs.alignment();
+    let lmcs: TestLmcs = LmcsConfig::new(sponge, compress);
+    let alignment = bb::RATE;
     let dft = TestDft::default();
 
     LiftedStarkConfig {

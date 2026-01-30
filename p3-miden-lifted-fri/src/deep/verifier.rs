@@ -31,12 +31,13 @@ use thiserror::Error;
 pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
     /// Trace commitments with their widths (one per trace tree).
     ///
-    /// Widths are expected to be aligned to the LMCS alignment.
+    /// Widths must match the committed rows (including any alignment padding if
+    /// `build_aligned_tree` was used).
     commitments: Vec<(L::Commitment, Vec<usize>)>,
 
-    /// Log2 of the universal domain height (tree has 2^log_max_height leaves).
-    /// Verifier expects all commitments to be lifted to this same max height.
-    log_max_height: usize,
+    /// Log2 of the LDE domain height (tree has 2^log_lde_height leaves).
+    /// Verifier expects all commitments to be lifted to this same LDE height.
+    log_lde_height: usize,
 
     /// Reduced openings: pairs of `(zⱼ, f_reduced(zⱼ))` from the prover's claims.
     reduced_openings: Vec<(EF, EF)>,
@@ -52,13 +53,17 @@ pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
 impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L> {
     /// Construct by reading evaluations, checking PoW, and sampling challenges.
     ///
-    /// Commitment widths must already include any alignment padding.
-    /// All commitments are expected to be lifted to the same `log_max_height`.
+    /// Commitment widths must match the committed rows (including any alignment padding).
+    /// All commitments are expected to be lifted to the same `log_lde_height`.
+    ///
+    /// `log_lde_height` is the log₂ of the LDE evaluation domain height (i.e. the height of
+    /// the committed LDE matrices). When a trace degree is known, it is typically
+    /// `log_trace_height + params.fri.log_blowup` (plus any extension used by the caller).
     pub fn new<Ch>(
         params: &DeepParams,
         eval_points: &[EF],
         commitments: Vec<(L::Commitment, Vec<usize>)>,
-        log_max_height: usize,
+        log_lde_height: usize,
         channel: &mut Ch,
     ) -> Result<(Self, DeepEvals<EF>), DeepError>
     where
@@ -89,7 +94,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
 
         let oracle = Self {
             commitments,
-            log_max_height,
+            log_lde_height,
             reduced_openings,
             challenge_columns,
             challenge_points,
@@ -112,7 +117,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
         let mut reduced_rows = vec![EF::ZERO; indices.len()];
         for (commit, widths) in &self.commitments {
             let opened_rows = lmcs
-                .open_batch(commit, widths, self.log_max_height, indices, channel)
+                .open_batch(commit, widths, self.log_lde_height, indices, channel)
                 .map_err(DeepError::LmcsError)?;
             for (acc, rows_for_query) in reduced_rows.iter_mut().zip(opened_rows) {
                 *acc = horner_acc(
@@ -123,7 +128,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
             }
         }
 
-        let generator = F::two_adic_generator(self.log_max_height);
+        let generator = F::two_adic_generator(self.log_lde_height);
         let shift = F::GENERATOR;
 
         // Compute DEEP evaluation for each query
@@ -134,7 +139,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
                 //   g = F::GENERATOR (coset shift, avoids subgroup)
                 //   K = <ω> with ω = primitive 2^log_n root of unity
                 // In bit-reversed order: X = g · ω^{bit_rev(index)}
-                let index_bit_rev = reverse_bits_len(index, self.log_max_height);
+                let index_bit_rev = reverse_bits_len(index, self.log_lde_height);
                 let row_point = shift * generator.exp_u64(index_bit_rev as u64);
 
                 zip(&self.reduced_openings, self.challenge_points.powers())

@@ -88,6 +88,9 @@ pub(crate) trait MatrixExt<T: Send + Sync + Clone>: Matrix<T> {
     /// Compute Mᵀ · [v₀, v₁, ..., vₙ₋₁] for N weight vectors simultaneously.
     ///
     /// Computes `result[col][j] = Σᵣ M[r, col] · vⱼ[r]` for all columns and all j ∈ [0, N).
+    ///
+    /// If the number of weight vectors differs from the matrix height, the computation
+    /// only uses the first `min(height, vs.len())` rows/weights; extras are ignored.
     fn columnwise_dot_product_batched<EF, const N: usize>(
         &self,
         vs: &[FieldArray<EF, N>],
@@ -157,6 +160,10 @@ impl<T: Send + Sync + Clone, M: Matrix<T>> MatrixExt<T> for M {
 /// - **Prefix nesting**: `gK[0..n/r]` equals the r-th power coset `(gK)ʳ`
 ///
 /// Together these enable iterative weight folding in barycentric evaluation.
+///
+/// # Panics
+/// Panics if the two-adic coset construction fails (e.g., `log_n` exceeds the field's
+/// two-adicity), since this unwraps `TwoAdicMultiplicativeCoset::new`.
 pub fn bit_reversed_coset_points<F: TwoAdicField>(log_n: usize) -> Vec<F> {
     let coset = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
     let mut pts: Vec<F> = coset.iter().collect();

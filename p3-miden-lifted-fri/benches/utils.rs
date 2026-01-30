@@ -40,7 +40,7 @@ impl LmcsScenario for BabyBearPoseidon2 {
 
     fn lmcs() -> Self::Lmcs {
         let (_, sponge, compress) = bb::test_components();
-        LmcsConfig::new_aligned(sponge, compress)
+        LmcsConfig::new(sponge, compress)
     }
 }
 
@@ -49,6 +49,6 @@ impl LmcsScenario for GoldilocksPoseidon2 {
 
     fn lmcs() -> Self::Lmcs {
         let (_, sponge, compress) = gl::test_components();
-        LmcsConfig::new_aligned(sponge, compress)
+        LmcsConfig::new(sponge, compress)
     }
 }

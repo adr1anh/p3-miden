@@ -126,6 +126,7 @@ where
             // FlatMatrixView presents EF matrix as F matrix without copying.
             let matrix = RowMajorMatrix::new(folded_evals, arity);
             let flat_view = FlatMatrixView::new(matrix);
+            // FRI round commitments are unaligned (no transcript padding).
             let tree = lmcs.build_tree(alloc::vec![flat_view]);
             let commitment = tree.root();
             channel.send_commitment(commitment.clone());

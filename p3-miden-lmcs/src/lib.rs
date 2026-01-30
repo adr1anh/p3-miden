@@ -23,11 +23,11 @@
 //!
 //! // Config captures PF, PD (packed types), H, C, WIDTH, DIGEST
 //! // F = PF::Value and D = PD::Value are derived
-//! let config = LmcsConfig::<PF, PD, _, _, WIDTH, DIGEST>::new_aligned(sponge, compress);
+//! let config = LmcsConfig::<PF, PD, _, _, WIDTH, DIGEST>::new(sponge, compress);
 //! let challenger = /* ... */;
 //!
 //! // Build tree - no turbofish needed, packed types are known from config
-//! let tree = config.build_tree(matrices);
+//! let tree = config.build_aligned_tree(matrices);
 //! let root = tree.root();
 //! let mut prover_channel = ProverTranscript::new(challenger);
 //! tree.prove_batch(&indices, &mut prover_channel);
@@ -38,8 +38,8 @@
 //!
 //! // For hiding commitment with salt, use HidingLmcsConfig with RNG
 //! let hiding_config =
-//!     HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new_aligned(sponge, compress, rng);
-//! let tree = hiding_config.build_tree(matrices);
+//!     HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new(sponge, compress, rng);
+//! let tree = hiding_config.build_aligned_tree(matrices);
 //! ```
 //!
 //! ## Trait-Based Usage (for generic code like FRI)
@@ -49,7 +49,7 @@
 //! use p3_miden_transcript::ProverTranscript;
 //!
 //! fn commit_and_open<L: Lmcs>(lmcs: &L, matrices: Vec<impl Matrix<L::F>>) {
-//!     let tree = lmcs.build_tree(matrices);
+//!     let tree = lmcs.build_aligned_tree(matrices);
 //!     let commitment = tree.root();
 //!     let challenger = /* ... */;
 //!     let mut channel = ProverTranscript::new(challenger);
@@ -71,8 +71,8 @@
 //! committed tree and treats empty `indices` as invalid. Use
 //! [`BatchProof::read_from_channel`](crate::BatchProof::read_from_channel) if you need to
 //! parse hints without hashing; then call [`BatchProof::single_proofs`](crate::BatchProof::single_proofs)
-//! with a sponge/compress pair to reconstruct per-index proofs (keyed by index) without verifying against
-//! a commitment.
+//! with an LMCS config to reconstruct per-index proofs (keyed by index) without verifying against a
+//! commitment.
 //!
 //! # Mathematical Foundation
 //!
@@ -178,23 +178,35 @@ pub trait Lmcs: Clone {
     /// Tree type (prover data), parameterized by matrix type.
     type Tree<M: Matrix<Self::F>>: LmcsTree<Self::F, Self::Commitment, M>;
 
-    /// Build a tree from matrices.
+    /// Build a tree from matrices with no transcript padding (alignment = 1).
+    ///
+    /// This affects only transcript hint formatting; the commitment root is unchanged.
     fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M>;
 
-    /// Column alignment used when streaming openings into transcripts.
+    /// Build a tree from matrices using the hasher alignment for transcript padding.
     ///
-    /// This is a hint-format convenience: choosing the sponge rate allows verifiers to
-    /// absorb rows in fixed-size chunks without special-casing the final partial chunk.
-    /// Callers should align widths to this value before opening; LMCS does not enforce
-    /// that padding is zero.
-    fn alignment(&self) -> usize;
+    /// Rows are padded to the hasher's alignment when streaming hints.
+    /// When the alignment is 1, this is identical to [`Self::build_tree`].
+    fn build_aligned_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M>;
+
+    /// Hash a sequence of field slices into a leaf hash.
+    ///
+    /// Inputs are absorbed in order. For salted leaves, append the salt slice to the
+    /// iterator (or call this with a chained iterator).
+    fn hash<'a, I>(&self, rows: I) -> Self::Commitment
+    where
+        I: IntoIterator<Item = &'a [Self::F]>,
+        Self::F: 'a;
+
+    /// Compress two hashes into their parent (2-to-1 compression).
+    fn compress(&self, left: Self::Commitment, right: Self::Commitment) -> Self::Commitment;
 
     /// Open a batch proof by reading hint data from a transcript channel.
     ///
     /// The hint format is implementation-defined; callers must use the matching
     /// `LmcsTree::prove_batch` implementation to produce compatible hints.
-    /// `widths` and `log_max_height` must match the committed tree and already
-    /// include any alignment padding.
+    /// `widths` and `log_max_height` must match the committed tree (including any
+    /// alignment padding if `build_aligned_tree` was used).
     fn open_batch<Ch>(
         &self,
         commitment: &Self::Commitment,
@@ -237,7 +249,7 @@ pub trait LmcsTree<F, Commitment, M> {
 
     /// Get the opened rows for a given leaf index.
     ///
-    /// Rows are padded to the LMCS alignment used for transcript hints.
+    /// Rows are padded to the tree's alignment (1 for unaligned trees).
     fn rows(&self, index: usize) -> Vec<Vec<F>>;
 
     /// Column alignment used when streaming openings.
@@ -250,7 +262,7 @@ pub trait LmcsTree<F, Commitment, M> {
     ///
     /// The hint format is implementation-defined and must be consumed by the
     /// corresponding `Lmcs::open_batch` implementation. Rows are padded to the
-    /// LMCS alignment before being written to the channel.
+    /// tree's alignment before being written to the channel.
     fn prove_batch<Ch>(&self, indices: &[usize], channel: &mut Ch)
     where
         Ch: ProverChannel<F = F, Commitment = Commitment>;

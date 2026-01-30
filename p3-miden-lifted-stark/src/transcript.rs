@@ -13,15 +13,17 @@
 //!    - quotient_widths[0]
 //! 3) Periodic tables (AIR order, not permutation order):
 //!    - per AIR: num_cols, then per column: len, then len field elements.
-//! 4) Commitments (LMCS roots): main, aux, quotient.
+//! 4) Main commitment (LMCS root).
 //! 5) Randomness per AIR (AIR order): num_randomness[i] extension elements.
-//! 6) Alphas per AIR (AIR order): one extension element each.
-//! 7) Beta (extension element): Horner combine across AIRs in permutation order.
-//! 8) Zeta (extension element): OOD point; rejection-sample until `zeta^N != 1`
+//! 6) Aux commitment (LMCS root).
+//! 7) Alphas per AIR (AIR order): one extension element each.
+//! 8) Beta (extension element): Horner combine across AIRs in permutation order.
+//! 9) Quotient commitment (LMCS root).
+//! 10) Zeta (extension element): OOD point; rejection-sample until `zeta^N != 1`
 //!    and zeta is not in the max LDE coset gK. The first valid zeta is used
 //!    (loop expected to run once with overwhelming probability), and zeta_next
 //!    is derived as zeta * h_max.
-//! 9) PCS transcript (lifted FRI: DEEP + FRI + query hints).
+//! 11) PCS transcript (lifted FRI: DEEP + FRI + query hints).
 //!
 //! If this order changes, update prover + verifier in lockstep.
 

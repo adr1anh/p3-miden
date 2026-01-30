@@ -10,6 +10,7 @@ use p3_miden_dev_utils::configs::baby_bear_poseidon2::{
     Compress, DIGEST, F, P, Sponge, WIDTH, test_challenger, test_components,
 };
 use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
+use p3_symmetric::Hash;
 use p3_util::log2_strict_usize;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -27,17 +28,12 @@ const BASE_SHAPES: &[(usize, usize)] = &[(4, 5), (8, 3)];
 
 fn mmcs() -> BaseMmcs {
     let (_, sponge, compress) = test_components();
-    LmcsConfig::new_aligned(sponge, compress)
+    LmcsConfig::new(sponge, compress)
 }
 
 fn hiding_mmcs(rng: SmallRng) -> HidingMmcs {
     let (_, sponge, compress) = test_components();
-    HidingLmcsConfig::new_aligned(sponge, compress, rng)
-}
-
-fn components() -> (Sponge, Compress) {
-    let (_, sponge, compress) = test_components();
-    (sponge, compress)
+    HidingLmcsConfig::new(sponge, compress, rng)
 }
 
 fn random_matrices(rng: &mut SmallRng, shapes: &[(usize, usize)]) -> Vec<RowMatrix> {
@@ -89,7 +85,6 @@ fn hiding_tree(seed: u64, shapes: &[(usize, usize)], salt_seed: u64) -> (HidingM
 
 #[test]
 fn extract_proofs_roundtrip() {
-    let (sponge, compress) = components();
     let mmcs = mmcs();
 
     let test = |seed: u64, matrices: &[(usize, usize)], indices: &[usize]| {
@@ -106,7 +101,7 @@ fn extract_proofs_roundtrip() {
         let transcript = prover_channel.into_data();
 
         let mut verifier_channel = VerifierTranscript::from_data(test_challenger(), &transcript);
-        let batch = BatchProof::<F, F, DIGEST>::read_from_channel(
+        let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
             &widths,
             log_max_height,
             indices,
@@ -114,7 +109,7 @@ fn extract_proofs_roundtrip() {
         )
         .expect("batch proof should parse from transcript");
         let proofs = batch
-            .single_proofs::<Sponge, Compress, WIDTH>(&sponge, &compress, &widths, log_max_height)
+            .single_proofs(&mmcs, &widths, log_max_height)
             .expect("batch proof should reconstruct proofs");
         assert_eq!(proofs.len(), indices.len());
 

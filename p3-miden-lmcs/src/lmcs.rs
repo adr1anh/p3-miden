@@ -1,6 +1,7 @@
 //! LMCS configuration types.
 
 use alloc::collections::BTreeMap;
+use alloc::collections::btree_map::Entry;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
@@ -10,23 +11,25 @@ use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_miden_transcript::VerifierChannel;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 
-use crate::utils::digest_rows_and_salt;
 use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsError};
+
+type Opening<F, C> = (Vec<Vec<F>>, C);
 
 /// LMCS configuration holding cryptographic primitives (sponge + compression).
 ///
 /// This implementation defines the transcript hint layout used by
 /// [`LiftedMerkleTree::prove_batch`](crate::LiftedMerkleTree::prove_batch) and consumed by
 /// `open_batch` and [`BatchProof::read_from_channel`](crate::BatchProof::read_from_channel):
-/// - For each query index (in caller order): one row per matrix (in leaf order), then
-///   `SALT_ELEMS` field elements of salt.
+/// - For each *distinct* query index (in caller order, skipping duplicates): one row per
+///   matrix (in leaf order), then `SALT_ELEMS` field elements of salt.
 /// - After all indices: missing sibling hashes, level-by-level, left-to-right, bottom-to-top.
 ///
 /// Hints are not observed into the Fiat-Shamir challenger.
 ///
 /// `open_batch` expects `widths` and `log_max_height` to match the committed tree,
-/// rejects empty `indices`, and ignores extra hint data. Widths must already include
-/// alignment padding. Duplicate indices must yield identical rows/salt or `InvalidProof`
+/// rejects empty `indices`, and ignores extra hint data. Widths must match the
+/// committed row lengths (including any alignment padding if `build_aligned_tree`
+/// was used). Duplicate indices are coalesced and expanded in the returned openings.
 /// is returned. [`BatchProof::read_from_channel`](crate::BatchProof::read_from_channel) parses
 /// the same hint stream without hashing, and [`BatchProof::single_proofs`](crate::BatchProof::single_proofs)
 /// can reconstruct per-index proofs (keyed by index) without verifying against a commitment. Empty indices
@@ -48,41 +51,22 @@ pub struct LmcsConfig<
     const DIGEST: usize,
     const SALT_ELEMS: usize = 0,
 > {
-    /// Stateful sponge for hashing matrix rows into leaf digests.
+    /// Stateful sponge for hashing matrix rows into leaf hashes.
     pub sponge: H,
     /// 2-to-1 compression function for building internal tree nodes.
     pub compress: C,
-    /// Column alignment used for transcript openings.
-    alignment: usize,
     pub(crate) _phantom: PhantomData<(PF, PD)>,
 }
 
 impl<PF, PD, H, C, const WIDTH: usize, const DIGEST: usize, const SALT_ELEMS: usize>
     LmcsConfig<PF, PD, H, C, WIDTH, DIGEST, SALT_ELEMS>
 {
-    /// Create a new LMCS configuration with alignment 1.
+    /// Create a new LMCS configuration.
     #[inline]
     pub const fn new(sponge: H, compress: C) -> Self {
         Self {
             sponge,
             compress,
-            alignment: 1,
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Create a new LMCS configuration using the hasher's alignment.
-    #[inline]
-    pub fn new_aligned(sponge: H, compress: C) -> Self
-    where
-        PF: PackedValue,
-        PD: PackedValue,
-        H: Alignable<PF::Value, PD::Value>,
-    {
-        Self {
-            sponge,
-            compress,
-            alignment: <H as Alignable<PF::Value, PD::Value>>::ALIGNMENT,
             _phantom: PhantomData,
         }
     }
@@ -95,6 +79,7 @@ where
     PD: PackedValue + Default,
     H: StatefulHasher<PF::Value, [PD::Value; DIGEST], State = [PD::Value; WIDTH]>
         + StatefulHasher<PF, [PD; DIGEST], State = [PD; WIDTH]>
+        + Alignable<PF::Value, PD::Value>
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST], 2>
         + PseudoCompressionFunction<[PD; DIGEST], 2>
@@ -102,10 +87,10 @@ where
 {
     type F = PF::Value;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST>;
-    type BatchProof = BatchProof<PF::Value, PD::Value, DIGEST, SALT_ELEMS>;
+    type BatchProof = BatchProof<PF::Value, Self::Commitment, SALT_ELEMS>;
     type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, SALT_ELEMS>;
 
-    /// Build a tree from matrices.
+    /// Build a tree from matrices with no transcript padding (alignment = 1).
     ///
     /// Preconditions:
     /// - `leaves` is non-empty.
@@ -115,28 +100,64 @@ where
     /// lifted matrix than intended.
     fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
         const { assert!(SALT_ELEMS == 0) }
-        LiftedMerkleTree::build::<PF, PD, H, C, WIDTH>(
+        LiftedMerkleTree::build_with_alignment::<PF, PD, H, C, WIDTH>(
             &self.sponge,
             &self.compress,
             leaves,
             None,
-            self.alignment,
+            1,
         )
     }
 
-    fn alignment(&self) -> usize {
-        self.alignment
+    /// Build a tree from matrices using the hasher alignment for transcript padding.
+    ///
+    /// Preconditions:
+    /// - `leaves` is non-empty.
+    /// - Matrix heights are powers of two and sorted by height (shortest to tallest).
+    ///
+    /// Panics if `leaves` is empty. Incorrect height order commits to a different
+    /// lifted matrix than intended.
+    fn build_aligned_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
+        const { assert!(SALT_ELEMS == 0) }
+        LiftedMerkleTree::build_with_alignment::<PF, PD, H, C, WIDTH>(
+            &self.sponge,
+            &self.compress,
+            leaves,
+            None,
+            <H as Alignable<PF::Value, PD::Value>>::ALIGNMENT,
+        )
+    }
+
+    fn hash<'a, I>(&self, rows: I) -> Self::Commitment
+    where
+        I: IntoIterator<Item = &'a [Self::F]>,
+        Self::F: 'a,
+    {
+        let mut state = [PD::Value::default(); WIDTH];
+        for row in rows {
+            self.sponge.absorb_into(&mut state, row.iter().cloned());
+        }
+        let digest: [PD::Value; DIGEST] = self.sponge.squeeze(&state);
+        Hash::<PF::Value, PD::Value, DIGEST>::from(digest)
+    }
+
+    fn compress(&self, left: Self::Commitment, right: Self::Commitment) -> Self::Commitment {
+        let left_digest: [PD::Value; DIGEST] = left.into();
+        let right_digest: [PD::Value; DIGEST] = right.into();
+        Hash::from(self.compress.compress([left_digest, right_digest]))
     }
 
     /// Verify a batch opening from transcript hints.
     ///
     /// Security notes:
     /// - `widths` and `log_max_height` must describe the committed tree; they are not checked.
-    /// - `widths` must already include alignment padding; LMCS does not enforce that padded
-    ///   values are zero. Verifiers cannot distinguish zero padding from arbitrary values
-    ///   unless they check the opened rows or constrain them elsewhere.
+    /// - `widths` must match the committed row lengths (including any alignment padding
+    ///   if `build_aligned_tree` was used); LMCS does not enforce that padded values are
+    ///   zero. Verifiers cannot distinguish zero padding from arbitrary values unless
+    ///   they check the opened rows or constrain them elsewhere.
     /// - Empty `indices` returns `InvalidProof`.
-    /// - Duplicate indices must yield identical rows/salt or `InvalidProof`.
+    /// - Duplicate indices are coalesced in the transcript (first-occurrence order);
+    ///   openings are returned for each occurrence.
     /// - Out-of-range indices (>= 2^log_max_height) return `InvalidProof`.
     /// - Missing siblings or malformed hints return `InvalidProof`.
     /// - Extra hints are ignored and left unread.
@@ -152,36 +173,43 @@ where
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>,
     {
-        let mut openings = Vec::with_capacity(indices.len());
-        let mut leaf_nodes: BTreeMap<usize, [PD::Value; DIGEST]> = BTreeMap::new();
+        if indices.is_empty() {
+            return Err(LmcsError::InvalidProof);
+        }
 
+        let max_height = 1usize << log_max_height;
+        // Map index -> (rows, leaf_hash), filled in first-occurrence order.
+        let mut openings_by_index: BTreeMap<usize, Opening<Self::F, Self::Commitment>> =
+            BTreeMap::new();
+
+        // Read openings in first-occurrence order, skipping duplicates.
         for &index in indices {
+            if index >= max_height {
+                return Err(LmcsError::InvalidProof);
+            }
+            let entry = match openings_by_index.entry(index) {
+                Entry::Occupied(_) => continue,
+                Entry::Vacant(entry) => entry,
+            };
+
             let rows = widths
                 .iter()
                 .map(|&width| channel.receive_hint_field_slice(width).map(Vec::from))
                 .collect::<Option<Vec<_>>>()
                 .ok_or(LmcsError::InvalidProof)?;
 
-            let salt: [PF::Value; SALT_ELEMS] = channel
+            let salt_slice = channel
                 .receive_hint_field_slice(SALT_ELEMS)
-                .ok_or(LmcsError::InvalidProof)?
-                .try_into()
-                .unwrap();
+                .ok_or(LmcsError::InvalidProof)?;
+            let salt: [PF::Value; SALT_ELEMS] = salt_slice.try_into().unwrap();
 
-            let digest = digest_rows_and_salt(
-                &self.sponge,
-                rows.iter().map(|row| row.as_slice()),
-                salt.as_slice(),
+            let leaf_hash = self.hash(
+                rows.iter()
+                    .map(|row| row.as_slice())
+                    .chain(core::iter::once(salt.as_slice())),
             );
 
-            openings.push(rows);
-
-            if leaf_nodes
-                .insert(index, digest)
-                .is_some_and(|existing| existing != digest)
-            {
-                return Err(LmcsError::InvalidProof);
-            }
+            entry.insert((rows, leaf_hash));
         }
 
         // Recompute root from known leaves and streamed siblings.
@@ -198,14 +226,18 @@ where
         // - Completeness: missing siblings return InvalidProof.
         // - Canonical order: siblings are consumed left-to-right, bottom-to-top.
         // - Extra siblings are ignored and remain unread.
-        let computed_root = {
+        let computed_commitment = {
             // We alternate between two vectors: one holds the current level's nodes (children),
             // the other accumulates the next level's nodes (parents). After each level, we swap them.
-            let mut children: Vec<(usize, [PD::Value; DIGEST])> = leaf_nodes.into_iter().collect();
+            let mut children: Vec<(usize, Self::Commitment)> = openings_by_index
+                .iter()
+                .map(|(&index, (_, hash))| (index, *hash))
+                .collect();
             let mut parents = Vec::new();
 
             // Process each level from leaves (level 0) up to root (level tree_depth).
             for _level in 0..log_max_height {
+                parents.reserve(children.len());
                 let mut children_iter = children.iter().peekable();
 
                 while let Some((child_position, child_hash)) = children_iter.next() {
@@ -218,7 +250,6 @@ where
                             None => channel
                                 .receive_hint_commitment()
                                 .copied()
-                                .map(Into::into)
                                 .ok_or(LmcsError::InvalidProof)?,
                         };
 
@@ -230,7 +261,7 @@ where
                         (sibling_hash, *child_hash)
                     };
 
-                    let parent_hash = self.compress.compress([left_hash, right_hash]);
+                    let parent_hash = self.compress(left_hash, right_hash);
                     let parent_position = child_position >> 1;
                     parents.push((parent_position, parent_hash));
                 }
@@ -249,21 +280,25 @@ where
         };
 
         // Compare against commitment.
-        if Hash::from(computed_root) != *commitment {
+        if computed_commitment != *commitment {
             return Err(LmcsError::RootMismatch);
         }
 
-        // Return opened rows in query order.
-        Ok(openings)
+        // Expand openings back to the caller's index order (including duplicates).
+        Ok(indices
+            .iter()
+            .map(|idx| openings_by_index[idx].0.clone())
+            .collect())
     }
 
     /// Parse batch hints without hashing.
     ///
     /// Security notes:
     /// - `widths` and `log_max_height` are trusted parameters.
-    /// - `widths` must already include alignment padding; LMCS does not enforce that padded
-    ///   values are zero. Verifiers cannot distinguish zero padding from arbitrary values
-    ///   unless they check the opened rows or constrain them elsewhere.
+    /// - `widths` must match the committed row lengths (including any alignment padding
+    ///   if `build_aligned_tree` was used); LMCS does not enforce that padded values are
+    ///   zero. Verifiers cannot distinguish zero padding from arbitrary values unless
+    ///   they check the opened rows or constrain them elsewhere.
     /// - Empty `indices` returns `Ok(BatchProof { openings: BTreeMap::new(), siblings: BTreeMap::new() })`
     ///   and consumes no hints.
     /// - Out-of-range indices return `InvalidProof`.
@@ -312,7 +347,7 @@ mod tests {
     #[test]
     fn open_batch_cases() {
         let (_, sponge, compress) = bb::test_components();
-        let lmcs: TestLmcs = LmcsConfig::new_aligned(sponge, compress);
+        let lmcs: TestLmcs = LmcsConfig::new(sponge, compress);
         let matrices = vec![small_matrix(4, 2, 0), small_matrix(4, 3, 100)];
         let tree = lmcs.build_tree(matrices);
         let widths = tree.widths();

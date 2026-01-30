@@ -6,7 +6,6 @@ use core::array;
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_stateful_hasher::StatefulHasher;
 
 /// Extension trait for `PackedValue` providing columnar pack/unpack operations.
 ///
@@ -68,33 +67,6 @@ pub fn pad_rows_to_alignment<F: Default>(mut rows: Vec<Vec<F>>, alignment: usize
         row.resize_with(padded_len, || F::default());
     }
     rows
-}
-
-/// Compute a leaf digest from row slices and a salt.
-///
-/// This is a zero-copy helper for callers that already have row slices
-/// and don't want to materialize an owned opening.
-///
-/// Note: only the provided row elements are absorbed. Any alignment padding must be
-/// included in `rows` by the caller. LMCS does not enforce that padded values are zero.
-pub(crate) fn digest_rows_and_salt<'a, F, D, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
-    sponge: &H,
-    rows: impl IntoIterator<Item = &'a [F]>,
-    salt: &[F],
-) -> [D; DIGEST_ELEMS]
-where
-    F: Copy + 'a,
-    D: Default + Copy,
-    H: StatefulHasher<F, [D; DIGEST_ELEMS], State = [D; WIDTH]>,
-{
-    let mut state = [D::default(); WIDTH];
-    for row in rows {
-        sponge.absorb_into(&mut state, row.iter().copied());
-    }
-    if !salt.is_empty() {
-        sponge.absorb_into(&mut state, salt.iter().copied());
-    }
-    sponge.squeeze(&state)
 }
 
 /// Upsample matrix to exactly `target_height` rows via nearest-neighbor repetition.

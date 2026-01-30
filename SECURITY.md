@@ -33,6 +33,8 @@ This document provides a focused guide for security auditors reviewing the Lifte
 - `widths` (matrix widths, in commitment order).
 - `log_max_height` (Merkle tree height / max domain size).
 - The ordered list of matrices; permutation changes the commitment.
+- For MMCS verification, `Dimensions` (widths already aligned, heights in commitment order) are
+  trusted statement data; verification does not re-check ordering or power-of-two constraints.
 
 **Commitment preimage**:
 - Each leaf hashes the concatenation of lifted rows in matrix order, with an
@@ -83,17 +85,17 @@ This document provides a focused guide for security auditors reviewing the Lifte
 **Key invariants to verify**:
 - [ ] Siblings are consumed in canonical order (left-to-right, bottom-to-top)
 - [ ] Missing siblings return `InvalidProof`
-- [ ] Duplicate indices require identical rows/salt
+- [ ] Duplicate indices are coalesced in the transcript (first-occurrence order); callers receive identical openings for each occurrence
 - [ ] Out-of-range indices return `InvalidProof`
 - [ ] Extra hints are ignored and left unread (callers can enforce transcript exhaustion)
 
 ### 2. Leaf Digest Computation (`p3-miden-lmcs`)
 
-**File**: `p3-miden-lmcs/src/utils.rs`
+**File**: `p3-miden-lmcs/src/lmcs.rs`
 
 | Function | What to Check |
 |----------|---------------|
-| `digest_rows_and_salt` | Width validation (caller), salt absorption order |
+| `Lmcs::hash` | Width validation (caller), salt absorption order |
 
 **File**: `p3-miden-lmcs/src/lifted_tree.rs`
 
@@ -117,7 +119,7 @@ This document provides a focused guide for security auditors reviewing the Lifte
 |----------|---------------|
 | `DeepPoly::new` | Coefficient derivation, accumulation order |
 | `accumulate_matrices` | Virtual upsampling during accumulation |
-| `derive_coeffs_from_challenge` | Alignment padding, reversed coefficient order |
+| `DeepPoly::from_evals` (inline coeffs) | Alignment padding, reversed negative coefficient order |
 
 **Key invariants to verify**:
 - [ ] Evaluations observed into transcript before grinding
@@ -242,7 +244,7 @@ Required order for the channel-driven PCS:
 
 | Assumption | Where Relied Upon | Consequence if False |
 |------------|-------------------|---------------------|
-| Matrices sorted by height | `build_leaf_states_upsampled` | Wrong leaf digests |
+| Matrices sorted by height | `build_leaf_states_upsampled` | Wrong leaf hashes |
 | Evaluation points outside domain | `batch_eval_lifted`, `DeepOracle::open_batch` | Division by zero |
 | `SALT_ELEMS` matches actual salt | `HidingLmcsConfig` | Verification failure |
 | Packed/scalar paths equivalent | SIMD code paths | Wrong outputs |
@@ -253,7 +255,7 @@ Required order for the channel-driven PCS:
 - [ ] `open_batch` consumes exactly the required siblings in canonical order
 - [ ] `validate_heights` rejects non-sorted input
 - [ ] `build_leaf_states_upsampled` upsamples correctly
-- [ ] `digest_rows_and_salt` absorbs rows and salt in correct order
+- [ ] `Lmcs::hash` absorbs rows and salt in correct order
 - [ ] `prove_batch` emits siblings in canonical order
 
 ### DEEP Quotient (`p3-miden-lifted-fri/deep`)

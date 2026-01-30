@@ -142,7 +142,7 @@ mod tests {
     use p3_dft::Radix2DFTSmallBatch;
     use p3_field::{Field, PrimeCharacteristicRing};
     use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-    use p3_miden_lmcs::{LmcsConfig, LmcsTree};
+    use p3_miden_lmcs::{Lmcs, LmcsConfig, LmcsTree};
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
@@ -168,7 +168,7 @@ mod tests {
         let mut rng = SmallRng::seed_from_u64(42);
         let dft = Radix2DFTSmallBatch::<bb::F>::default();
         let (_, sponge, compress) = bb::test_components();
-        let lmcs: TestLmcs = LmcsConfig::new_aligned(sponge, compress);
+        let lmcs: TestLmcs = LmcsConfig::new(sponge, compress);
 
         let log_blowup = 1;
         let log_max_height = 4;
@@ -177,7 +177,7 @@ mod tests {
         let trace_large = RowMajorMatrix::rand(&mut rng, 1 << 3, 2);
         let traces = vec![trace_small.clone(), trace_large.clone()];
 
-        let tree =
+        let tree: <TestLmcs as Lmcs>::Tree<RowMajorMatrix<bb::F>> =
             lde_commit_traces::<bb::F, _, _>(&dft, &lmcs, log_max_height, log_blowup, &traces);
 
         let leaves = tree.leaves();

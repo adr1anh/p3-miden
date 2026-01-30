@@ -2,15 +2,18 @@
 //!
 //! These implementations adapt LMCS trees/proofs to the standard [`Mmcs`] interface
 //! used by FRI and other PCS code. The proof format mirrors [`crate::Proof`]:
-//! opened rows (and optional salt) plus sibling digests from leaf to root.
+//! opened rows (and optional salt) plus sibling hashes from leaf to root.
 //!
 //! Nuances:
 //! - `open_batch` does not read transcript hints; it builds a single-leaf opening
 //!   directly from the in-memory [`LiftedMerkleTree`].
-//! - `verify_batch` recomputes the leaf digest from rows+salt, derives widths and
+//! - `verify_batch` recomputes the leaf hash from rows+salt, derives widths and
 //!   the expected authentication-path length from [`Dimensions`], and checks the root.
 //!   The caller must supply dimensions in the same height order used to build the tree,
-//!   with widths already aligned to the LMCS alignment.
+//!   with widths matching the committed rows (including any alignment padding if
+//!   `build_aligned_tree` was used). `Dimensions` are trusted
+//!   statement data; verification does not re-check height ordering or power-of-two
+//!   constraints beyond row-length checks.
 //! - The hiding configuration delegates to the inner `LmcsConfig` implementation so
 //!   proof shape and validation stay identical; only tree construction consumes randomness.
 
@@ -25,14 +28,13 @@ use core::iter::zip;
 use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::PackedValue;
 use p3_matrix::{Dimensions, Matrix};
-use p3_miden_stateful_hasher::StatefulHasher;
+use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 use p3_util::log2_ceil_usize;
 use serde::{Deserialize, Serialize};
 
 use crate::LmcsTree;
 use crate::lifted_tree::LiftedMerkleTree;
-use crate::utils::digest_rows_and_salt;
 use crate::{Lmcs, LmcsConfig, LmcsError};
 
 // ============================================================================
@@ -47,6 +49,7 @@ where
     PF::Value: PartialEq,
     H: StatefulHasher<PF, [PD; DIGEST_ELEMS], State = [PD; WIDTH]>
         + StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>
+        + Alignable<PF::Value, PD::Value>
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>
         + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
@@ -56,8 +59,8 @@ where
 {
     type ProverData<M> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST_ELEMS, SALT_ELEMS>;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST_ELEMS>;
-    /// Proof includes salt and siblings: `([F; SALT_ELEMS], Vec<[D; DIGEST_ELEMS]>)`
-    type Proof = ([PF::Value; SALT_ELEMS], Vec<[PD::Value; DIGEST_ELEMS]>);
+    /// Proof includes salt and siblings: `([F; SALT_ELEMS], Vec<Self::Commitment>)`
+    type Proof = ([PF::Value; SALT_ELEMS], Vec<Self::Commitment>);
     type Error = LmcsError;
 
     fn commit<M: Matrix<PF::Value>>(
@@ -92,18 +95,19 @@ where
         tree.leaves.iter().collect()
     }
 
-    /// Verify a single-leaf opening against `commit`.
+    /// Verify a single-leaf opening against `commitment`.
     ///
     /// Security notes:
     /// - `dimensions.width` is interpreted as the committed row length (including any
-    ///   alignment padding); LMCS does not enforce that padded values are zero.
+    ///   alignment padding if `build_aligned_tree` was used); LMCS does not enforce
+    ///   that padded values are zero.
     /// - `dimensions` must match the commitment; out-of-range `index` returns
     ///   `InvalidProof`.
     /// - Returns `InvalidProof` for malformed rows/siblings, `RootMismatch` for a
     ///   well-formed proof to a different root.
     fn verify_batch(
         &self,
-        commit: &Self::Commitment,
+        commitment: &Self::Commitment,
         dimensions: &[Dimensions],
         index: usize,
         batch_opening: BatchOpeningRef<'_, PF::Value, Self>,
@@ -121,8 +125,11 @@ where
             }
         }
 
-        let leaf_digest =
-            digest_rows_and_salt(&self.sponge, rows.iter().map(|row| row.as_slice()), salt);
+        let leaf_hash = self.hash(
+            rows.iter()
+                .map(|row| row.as_slice())
+                .chain(core::iter::once(salt.as_slice())),
+        );
 
         let max_height = dimensions
             .iter()
@@ -138,16 +145,16 @@ where
             return Err(LmcsError::InvalidProof);
         }
 
-        let computed_root = {
-            let mut current = leaf_digest;
+        let computed_commitment = {
+            let mut current = leaf_hash;
             let mut pos = index;
 
-            for sibling_digest in siblings {
+            for sibling_hash in siblings {
                 let is_left = pos & 1 == 0;
                 current = if is_left {
-                    self.compress.compress([current, *sibling_digest])
+                    self.compress(current, *sibling_hash)
                 } else {
-                    self.compress.compress([*sibling_digest, current])
+                    self.compress(*sibling_hash, current)
                 };
                 pos >>= 1;
             }
@@ -155,7 +162,7 @@ where
             current
         };
 
-        if Hash::from(computed_root) != *commit {
+        if computed_commitment != *commitment {
             return Err(LmcsError::RootMismatch);
         }
 

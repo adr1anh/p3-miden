@@ -21,18 +21,23 @@ use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError};
 ///
 /// `open_batch` delegates to the inner `LmcsConfig`, so hint layout and proof shape
 /// match the non-hiding implementation except for
-/// the presence of salt. The RNG is only used during `build_tree`.
+/// the presence of salt. The RNG is only used during tree construction.
 ///
 /// # Type Parameters
 ///
 /// - `PF`: Packed field element type for SIMD operations.
-/// - `PD`: Packed digest element type.
+/// - `PD`: Packed hash word element type.
 /// - `H`: Stateful hasher/sponge type.
 /// - `C`: 2-to-1 compression function type.
 /// - `R`: Random number generator type.
 /// - `WIDTH`: State width for the hasher.
-/// - `DIGEST`: Number of elements in a digest.
+/// - `DIGEST`: Number of elements in a hash.
 /// - `SALT`: Number of salt elements per leaf (must be > 0).
+///
+/// # Security notes
+/// - `SALT` should be sized so `SALT * sizeof(PF::Value)` meets the target security parameter.
+/// - `R` should be an appropriately seeded CSPRNG; weaker RNGs can undermine hiding.
+/// - Cloning this config clones RNG state. Re-seed if you need independent salts per config.
 ///
 /// # Example
 ///
@@ -43,9 +48,9 @@ use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError};
 ///
 /// let rng = StdRng::seed_from_u64(42);
 /// let config =
-///     HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new_aligned(sponge, compress, rng);
+///     HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new(sponge, compress, rng);
 ///
-/// let tree = config.build_tree(matrices);
+/// let tree = config.build_aligned_tree(matrices);
 /// let root = tree.root();
 /// ```
 #[derive(Clone, Debug)]
@@ -68,7 +73,7 @@ pub struct HidingLmcsConfig<
 impl<PF, PD, H, C, R, const WIDTH: usize, const DIGEST: usize, const SALT: usize>
     HidingLmcsConfig<PF, PD, H, C, R, WIDTH, DIGEST, SALT>
 {
-    /// Create a new hiding LMCS configuration with alignment 1.
+    /// Create a new hiding LMCS configuration.
     ///
     /// # Compile-time Error
     ///
@@ -78,24 +83,6 @@ impl<PF, PD, H, C, R, const WIDTH: usize, const DIGEST: usize, const SALT: usize
         const { assert!(SALT > 0) }
         Self {
             inner: LmcsConfig::new(sponge, compress),
-            rng: RefCell::new(rng),
-        }
-    }
-
-    /// Create a new hiding LMCS configuration using the hasher's alignment.
-    ///
-    /// # Compile-time Error
-    ///
-    /// This constructor is only available when `SALT > 0`.
-    pub fn new_aligned(sponge: H, compress: C, rng: R) -> Self
-    where
-        PF: PackedValue,
-        PD: PackedValue,
-        H: Alignable<PF::Value, PD::Value>,
-    {
-        const { assert!(SALT > 0) }
-        Self {
-            inner: LmcsConfig::new_aligned(sponge, compress),
             rng: RefCell::new(rng),
         }
     }
@@ -110,6 +97,7 @@ where
     StandardUniform: Distribution<PF::Value>,
     H: StatefulHasher<PF::Value, [PD::Value; DIGEST], State = [PD::Value; WIDTH]>
         + StatefulHasher<PF, [PD; DIGEST], State = [PD; WIDTH]>
+        + Alignable<PF::Value, PD::Value>
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST], 2>
         + PseudoCompressionFunction<[PD; DIGEST], 2>
@@ -117,7 +105,7 @@ where
 {
     type F = PF::Value;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST>;
-    type BatchProof = BatchProof<PF::Value, PD::Value, DIGEST, SALT>;
+    type BatchProof = BatchProof<PF::Value, Self::Commitment, SALT>;
     type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, SALT>;
 
     /// Build a tree with per-leaf salt sampled from the RNG.
@@ -127,17 +115,41 @@ where
         let tree_height = leaves.last().map(|m| m.height()).unwrap_or(0);
         let salt = RowMajorMatrix::rand(&mut *self.rng.borrow_mut(), tree_height, SALT);
 
-        LiftedMerkleTree::build::<PF, PD, H, C, WIDTH>(
+        LiftedMerkleTree::build_with_alignment::<PF, PD, H, C, WIDTH>(
             &self.inner.sponge,
             &self.inner.compress,
             leaves,
             Some(salt),
-            self.inner.alignment(),
+            1,
         )
     }
 
-    fn alignment(&self) -> usize {
-        self.inner.alignment()
+    /// Build a tree with per-leaf salt sampled from the RNG and hasher alignment padding.
+    ///
+    /// Preconditions match `LmcsConfig::build_tree`; panics if `leaves` is empty.
+    fn build_aligned_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
+        let tree_height = leaves.last().map(|m| m.height()).unwrap_or(0);
+        let salt = RowMajorMatrix::rand(&mut *self.rng.borrow_mut(), tree_height, SALT);
+
+        LiftedMerkleTree::build_with_alignment::<PF, PD, H, C, WIDTH>(
+            &self.inner.sponge,
+            &self.inner.compress,
+            leaves,
+            Some(salt),
+            <H as Alignable<PF::Value, PD::Value>>::ALIGNMENT,
+        )
+    }
+
+    fn hash<'a, I>(&self, rows: I) -> Self::Commitment
+    where
+        I: IntoIterator<Item = &'a [Self::F]>,
+        Self::F: 'a,
+    {
+        self.inner.hash(rows)
+    }
+
+    fn compress(&self, left: Self::Commitment, right: Self::Commitment) -> Self::Commitment {
+        self.inner.compress(left, right)
     }
 
     fn open_batch<Ch>(

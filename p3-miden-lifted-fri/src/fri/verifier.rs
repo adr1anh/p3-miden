@@ -26,7 +26,6 @@ use alloc::vec::Vec;
 
 use p3_challenger::CanSample;
 use p3_field::{ExtensionField, TwoAdicField};
-use p3_miden_lmcs::utils::aligned_len;
 use p3_miden_lmcs::{Lmcs, LmcsError};
 use p3_miden_transcript::VerifierChannel;
 use p3_util::reverse_bits_len;
@@ -140,10 +139,8 @@ where
 
             // Verify LMCS opening - dimensions are flattened (EF elements stored as F)
             let base_width = arity * EF::DIMENSION;
-            // LMCS may pad rows to its alignment; the padded tail is part of the commitment
-            // and need not be zero, so the verifier ignores it.
-            let aligned_width = aligned_len(base_width, lmcs.alignment());
-            let widths = [aligned_width];
+            // FRI round commitments are unaligned, so use the base width directly.
+            let widths = [base_width];
 
             let opened_rows = lmcs
                 .open_batch(
