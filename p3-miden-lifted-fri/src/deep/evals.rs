@@ -22,6 +22,10 @@ impl<EF: Field> DeepEvals<EF> {
     /// Create `DeepEvals` from grouped row-major matrices.
     ///
     /// Returns `None` if groups are empty, the first group is empty, or heights are inconsistent.
+    ///
+    /// # Panics
+    /// Panics if any matrix has an invalid width (e.g., zero), as rejected by
+    /// `RowMajorMatrix::new`.
     pub fn new(groups: Vec<Vec<RowMajorMatrix<EF>>>) -> Option<Self> {
         let num_points = groups.first()?.first()?.height();
         if groups.iter().flatten().any(|m| m.height() != num_points) {

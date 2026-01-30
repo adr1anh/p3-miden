@@ -31,7 +31,8 @@ use thiserror::Error;
 pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
     /// Trace commitments with their widths (one per trace tree).
     ///
-    /// Widths are expected to be aligned to the LMCS alignment.
+    /// Widths must match the committed rows (including any alignment padding if
+    /// `build_aligned_tree` was used).
     commitments: Vec<(L::Commitment, Vec<usize>)>,
 
     /// Log2 of the LDE domain height (tree has 2^log_lde_height leaves).
@@ -52,7 +53,7 @@ pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
 impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L> {
     /// Construct by reading evaluations, checking PoW, and sampling challenges.
     ///
-    /// Commitment widths must already include any alignment padding.
+    /// Commitment widths must match the committed rows (including any alignment padding).
     /// All commitments are expected to be lifted to the same `log_lde_height`.
     ///
     /// `log_lde_height` is the log₂ of the LDE evaluation domain height (i.e. the height of

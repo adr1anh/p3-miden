@@ -10,7 +10,10 @@
 //! - `verify_batch` recomputes the leaf hash from rows+salt, derives widths and
 //!   the expected authentication-path length from [`Dimensions`], and checks the root.
 //!   The caller must supply dimensions in the same height order used to build the tree,
-//!   with widths already aligned to the LMCS alignment.
+//!   with widths matching the committed rows (including any alignment padding if
+//!   `build_aligned_tree` was used). `Dimensions` are trusted
+//!   statement data; verification does not re-check height ordering or power-of-two
+//!   constraints beyond row-length checks.
 //! - The hiding configuration delegates to the inner `LmcsConfig` implementation so
 //!   proof shape and validation stay identical; only tree construction consumes randomness.
 
@@ -25,7 +28,7 @@ use core::iter::zip;
 use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::PackedValue;
 use p3_matrix::{Dimensions, Matrix};
-use p3_miden_stateful_hasher::StatefulHasher;
+use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 use p3_util::log2_ceil_usize;
 use serde::{Deserialize, Serialize};
@@ -46,6 +49,7 @@ where
     PF::Value: PartialEq,
     H: StatefulHasher<PF, [PD; DIGEST_ELEMS], State = [PD; WIDTH]>
         + StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>
+        + Alignable<PF::Value, PD::Value>
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>
         + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
@@ -95,7 +99,8 @@ where
     ///
     /// Security notes:
     /// - `dimensions.width` is interpreted as the committed row length (including any
-    ///   alignment padding); LMCS does not enforce that padded values are zero.
+    ///   alignment padding if `build_aligned_tree` was used); LMCS does not enforce
+    ///   that padded values are zero.
     /// - `dimensions` must match the commitment; out-of-range `index` returns
     ///   `InvalidProof`.
     /// - Returns `InvalidProof` for malformed rows/siblings, `RootMismatch` for a

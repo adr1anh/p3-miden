@@ -31,7 +31,7 @@ pub type TestVerifierChannel<'a> = VerifierTranscript<'a, F, TestCommitment, Cha
 
 pub fn test_lmcs() -> BaseLmcs {
     let (_, sponge, compress) = test_components();
-    LmcsConfig::new_aligned(sponge, compress)
+    LmcsConfig::new(sponge, compress)
 }
 
 pub fn prover_channel() -> TestProverChannel {
@@ -108,8 +108,8 @@ fn test_pcs_open_verify_roundtrip() {
     let matrix = random_lde_matrix(rng, log_poly_degree, log_blowup, num_columns, F::GENERATOR);
     let matrices: Vec<RowMajorMatrix<F>> = vec![matrix];
 
-    // Commit matrices via LMCS
-    let tree = lmcs.build_tree(matrices);
+    // Commit matrices via LMCS (aligned for trace commitments)
+    let tree = lmcs.build_aligned_tree(matrices);
     let commitment = tree.root();
     let widths = tree.widths();
     let lde_height = tree.leaves().last().map(|m| m.height()).unwrap_or(0);
@@ -158,6 +158,94 @@ fn test_pcs_open_verify_roundtrip() {
         2,
         "Should have 2 evaluation points"
     );
+    assert!(
+        verifier_channel.is_empty(),
+        "transcript should be fully consumed"
+    );
+}
+
+#[test]
+fn test_pcs_open_verify_multi_trace_roundtrip() {
+    let rng = &mut SmallRng::seed_from_u64(24);
+    let lmcs = test_lmcs();
+
+    let log_blowup = 2;
+    let log_final_degree = 2;
+    let log_poly_degree = 6; // polynomial degree = 64
+
+    let fri = FriParams {
+        log_blowup,
+        fold: FriFold::ARITY_2,
+        log_final_degree,
+        proof_of_work_bits: 1, // Low for fast tests (per-round)
+    };
+    let deep = DeepParams {
+        proof_of_work_bits: 1, // Low for fast tests
+    };
+    let params = PcsParams {
+        deep,
+        fri,
+        num_queries: 5,
+        query_proof_of_work_bits: 1,
+    };
+
+    // Build two trace trees with the same LDE height but different widths.
+    let matrix_a = random_lde_matrix(rng, log_poly_degree, log_blowup, 2, F::GENERATOR);
+    let matrix_b = random_lde_matrix(rng, log_poly_degree, log_blowup, 4, F::GENERATOR);
+
+    let tree_a = lmcs.build_aligned_tree(vec![matrix_a]);
+    let tree_b = lmcs.build_aligned_tree(vec![matrix_b]);
+
+    let lde_height_a = tree_a.leaves().last().map(|m| m.height()).unwrap_or(0);
+    let lde_height_b = tree_b.leaves().last().map(|m| m.height()).unwrap_or(0);
+    assert_eq!(
+        lde_height_a, lde_height_b,
+        "multi-trace test expects a shared LDE height"
+    );
+    let log_lde_height = log2_strict_usize(lde_height_a);
+
+    let eval_points = [rng.sample(StandardUniform), rng.sample(StandardUniform)];
+    let trace_trees: &[&_] = &[&tree_a, &tree_b];
+
+    let commitments = vec![
+        (tree_a.root(), tree_a.widths()),
+        (tree_b.root(), tree_b.widths()),
+    ];
+
+    // Prover: observe both commitments in order before opening.
+    let mut challenger = test_challenger();
+    for (commitment, _) in commitments.iter() {
+        challenger.observe(*commitment);
+    }
+    let mut prover_channel = ProverTranscript::new(challenger);
+
+    open_with_channel::<F, EF, _, _, _, 2>(
+        &params,
+        &lmcs,
+        log_lde_height,
+        eval_points,
+        trace_trees,
+        &mut prover_channel,
+    );
+    let transcript = prover_channel.into_data();
+
+    // Verifier: observe commitments in the same order.
+    let mut challenger = test_challenger();
+    for (commitment, _) in commitments.iter() {
+        challenger.observe(*commitment);
+    }
+    let mut verifier_channel = VerifierTranscript::from_data(challenger, &transcript);
+
+    let result = verify_with_channel::<F, EF, _, _, 2>(
+        &params,
+        &lmcs,
+        &commitments,
+        log_lde_height,
+        eval_points,
+        &mut verifier_channel,
+    );
+
+    assert!(result.is_ok(), "Verification should succeed: {:?}", result);
     assert!(
         verifier_channel.is_empty(),
         "transcript should be fully consumed"

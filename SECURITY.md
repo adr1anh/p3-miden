@@ -33,6 +33,8 @@ This document provides a focused guide for security auditors reviewing the Lifte
 - `widths` (matrix widths, in commitment order).
 - `log_max_height` (Merkle tree height / max domain size).
 - The ordered list of matrices; permutation changes the commitment.
+- For MMCS verification, `Dimensions` (widths already aligned, heights in commitment order) are
+  trusted statement data; verification does not re-check ordering or power-of-two constraints.
 
 **Commitment preimage**:
 - Each leaf hashes the concatenation of lifted rows in matrix order, with an
@@ -117,7 +119,7 @@ This document provides a focused guide for security auditors reviewing the Lifte
 |----------|---------------|
 | `DeepPoly::new` | Coefficient derivation, accumulation order |
 | `accumulate_matrices` | Virtual upsampling during accumulation |
-| `derive_coeffs_from_challenge` | Alignment padding, reversed coefficient order |
+| `DeepPoly::from_evals` (inline coeffs) | Alignment padding, reversed negative coefficient order |
 
 **Key invariants to verify**:
 - [ ] Evaluations observed into transcript before grinding

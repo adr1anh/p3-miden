@@ -49,11 +49,11 @@ folds evaluations by the chosen arity to test low degree.
   height of committed LDE matrices). When a trace degree is known, the typical mapping is:
   `log_lde_height = log_trace_height + log_blowup` (plus any caller-chosen extension).
 - Lifting semantics follow `p3-miden-lmcs`.
-- Alignment padding is a transcript-formatting convenience: openings are padded to the
-  sponge's alignment (rate), which keeps verifier implementations uniform. This works because
-  the underlying sponge pads with zeros after absorbing a list of elements. The padded columns
-  are treated as additional polynomials and are checked for low degree by the PCS, but they are
-  not forced to be zero unless the caller/AIR enforces that.
+- Alignment padding is a transcript-formatting convenience for trace commitments built with
+  `build_aligned_tree` (alignment is recorded on the tree). FRI round commitments are unaligned. Padding keeps verifier parsing
+  uniform because the underlying sponge pads with zeros after absorbing a list of elements.
+  The padded columns are treated as additional polynomials and are checked for low degree by
+  the PCS, but they are not forced to be zero unless the caller/AIR enforces that.
 - Transcript ordering (observe → grind → sample) is security-critical; see
   `SECURITY.md`.
 

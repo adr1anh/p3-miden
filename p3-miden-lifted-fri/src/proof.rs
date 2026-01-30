@@ -7,7 +7,6 @@ use alloc::vec::Vec;
 use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_miden_lmcs::Lmcs;
-use p3_miden_lmcs::utils::aligned_len;
 use p3_miden_transcript::VerifierChannel;
 
 /// Structured transcript view for the full PCS interaction.
@@ -41,7 +40,7 @@ where
 {
     /// Parse a PCS transcript view from a verifier channel.
     ///
-    /// Commitment widths must already include any alignment padding, and all
+    /// Commitment widths must match the committed rows (including any alignment padding), and all
     /// commitments are expected to be lifted to the same `log_lde_height`.
     ///
     /// `log_lde_height` is the log₂ of the LDE evaluation domain height (i.e. the height of
@@ -100,8 +99,8 @@ where
                 .map(|&idx| idx >> (log_arity * (round + 1)))
                 .collect();
             let base_width = arity * EF::DIMENSION;
-            let aligned_width = aligned_len(base_width, lmcs.alignment());
-            let widths = [aligned_width];
+            // FRI round openings are unaligned, so use the base width directly.
+            let widths = [base_width];
             let batch = lmcs
                 .read_batch_proof_from_channel(&widths, log_num_rows, &round_indices, channel)
                 .ok()?;

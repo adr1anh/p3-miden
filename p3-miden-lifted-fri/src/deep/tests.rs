@@ -3,7 +3,6 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_field::FieldArray;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use rand::distr::StandardUniform;
@@ -11,13 +10,11 @@ use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
 
 use super::DeepParams;
-use super::interpolate::PointQuotients;
 use super::prover::DeepPoly;
 use super::verifier::DeepOracle;
 use crate::tests::{
     EF, F, prover_channel_with_commitment, test_lmcs, verifier_channel_with_commitment,
 };
-use crate::utils::bit_reversed_coset_points;
 
 /// End-to-end: prover's `DeepPoly.open()` must match verifier's channel-based openings.
 #[test]
@@ -33,14 +30,9 @@ fn deep_quotient_end_to_end() {
     let params = DeepParams {
         proof_of_work_bits: 1, // Low for fast tests
     };
-    let alignment = lmcs.alignment();
-
     // Two random opening points
     let z1: EF = rng.sample(StandardUniform);
     let z2: EF = rng.sample(StandardUniform);
-
-    // Coset points in bit-reversed order
-    let coset_points = bit_reversed_coset_points::<F>(log_lde_height);
 
     // Create matrices of varying heights (ascending order required)
     // specs: (log_scaling, width) where height = n >> log_scaling
@@ -53,26 +45,19 @@ fn deep_quotient_end_to_end() {
         })
         .collect();
 
-    // Step 1: Commit matrices via LMCS
-    let tree = lmcs.build_tree(matrices);
+    // Step 1: Commit matrices via LMCS (aligned for trace commitments)
+    let tree = lmcs.build_aligned_tree(matrices);
     let commitment = tree.root();
     let widths = tree.widths();
 
-    // Step 2: Compute batched evaluations at both opening points
-    let quotient = PointQuotients::<F, EF, 2>::new(FieldArray([z1, z2]), &coset_points);
-
-    let matrices_ref: Vec<&RowMajorMatrix<F>> = tree.leaves().iter().collect();
-    let matrices_groups = vec![matrices_ref];
-    let batched_evals = quotient.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
-
     // Step 3: Prover constructs DeepPoly (handles observe, grind, sample internally)
     let mut prover_channel = prover_channel_with_commitment(&commitment);
-    let deep_poly = DeepPoly::new(
+    let trace_trees: &[&_] = &[&tree];
+    let deep_poly = DeepPoly::from_trees::<crate::tests::BaseLmcs, _, 2, _>(
         &params,
-        &matrices_groups,
-        batched_evals,
-        &quotient,
-        alignment,
+        trace_trees,
+        [z1, z2],
+        log_blowup,
         &mut prover_channel,
     );
     let sample_indices = vec![0, 1, lde_height / 4, lde_height / 2, lde_height - 1];

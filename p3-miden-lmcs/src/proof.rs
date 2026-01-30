@@ -73,7 +73,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
     /// This parses rows/salt for each unique queried index in first-occurrence order
     /// (coalescing duplicates), then consumes exactly the hinted sibling hashes
     /// implied by the query set and tree depth.
-    /// Widths must already include any alignment padding.
+    /// Widths must match the committed row lengths (including any alignment padding if used).
     pub fn read_from_channel<Ch>(
         widths: &[usize],
         log_max_height: usize,

@@ -231,17 +231,17 @@ where
     D: Copy + Default + PartialEq + Send + Sync,
     M: Matrix<F>,
 {
-    /// Internal builder for creating trees with optional salt.
+    /// Builder for creating trees with optional salt and explicit alignment.
     ///
     /// Preconditions:
     /// - `leaves` is non-empty and heights are powers of two.
     /// - Matrices are sorted by height (shortest to tallest).
     ///
-    /// `alignment` controls transcript padding only; LMCS does not enforce that padded
-    /// columns are zero.
+    /// `alignment` controls transcript padding only; it does not affect the commitment.
+    /// LMCS does not enforce that padded columns are zero.
     ///
     /// Panics if `leaves` is empty.
-    pub(crate) fn build<PF, PD, H, C, const WIDTH: usize>(
+    pub(crate) fn build_with_alignment<PF, PD, H, C, const WIDTH: usize>(
         h: &H,
         c: &C,
         leaves: Vec<M>,
@@ -562,14 +562,12 @@ mod tests {
 
     use p3_matrix::Matrix;
     use p3_matrix::dense::RowMajorMatrix;
+    use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
     use p3_miden_stateful_hasher::StatefulHasher;
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
-    use crate::tests::{
-        DIGEST, F, P, RATE, Sponge, build_leaves_single, components, concatenate_matrices,
-        matrix_scenarios,
-    };
+    use crate::tests::{DIGEST, F, P, RATE, Sponge, build_leaves_single, concatenate_matrices};
     use crate::utils::upsample_matrix;
 
     fn build_leaves_upsampled(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
@@ -582,10 +580,10 @@ mod tests {
     /// 2. Explicit lifting equals single-matrix concatenation baseline
     #[test]
     fn upsampled_equivalence() {
-        let (sponge, _compressor) = components();
+        let (_, sponge, _compressor) = bb::test_components();
         let mut rng = SmallRng::seed_from_u64(42);
 
-        for scenario in matrix_scenarios() {
+        for scenario in p3_miden_dev_utils::fixtures::matrix_scenarios::<P>(RATE) {
             let matrices: Vec<RowMajorMatrix<F>> = scenario
                 .into_iter()
                 .map(|(h, w)| RowMajorMatrix::rand(&mut rng, h, w))

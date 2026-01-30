@@ -28,12 +28,12 @@ const BASE_SHAPES: &[(usize, usize)] = &[(4, 5), (8, 3)];
 
 fn mmcs() -> BaseMmcs {
     let (_, sponge, compress) = test_components();
-    LmcsConfig::new_aligned(sponge, compress)
+    LmcsConfig::new(sponge, compress)
 }
 
 fn hiding_mmcs(rng: SmallRng) -> HidingMmcs {
     let (_, sponge, compress) = test_components();
-    HidingLmcsConfig::new_aligned(sponge, compress, rng)
+    HidingLmcsConfig::new(sponge, compress, rng)
 }
 
 fn random_matrices(rng: &mut SmallRng, shapes: &[(usize, usize)]) -> Vec<RowMatrix> {

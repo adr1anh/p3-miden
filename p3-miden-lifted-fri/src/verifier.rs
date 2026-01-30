@@ -32,7 +32,8 @@ use crate::fri::verifier::FriOracle;
 /// In that common case, the trace subgroup `H` has size `2^(log_lde_height - params.fri.log_blowup)`,
 /// while the LDE coset `gK` has size `2^log_lde_height`.
 ///
-/// Commitment widths are expected to be aligned to the LMCS alignment.
+/// Trace commitment widths are expected to include any alignment padding
+/// (i.e., trees built with `build_aligned_tree`).
 ///
 /// Returns `Ok(evals)` where each group/matrix is a row-major matrix with one row per point.
 pub fn verify_with_channel<F, EF, L, Ch, const N: usize>(

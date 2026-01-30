@@ -27,8 +27,9 @@ type Opening<F, C> = (Vec<Vec<F>>, C);
 /// Hints are not observed into the Fiat-Shamir challenger.
 ///
 /// `open_batch` expects `widths` and `log_max_height` to match the committed tree,
-/// rejects empty `indices`, and ignores extra hint data. Widths must already include
-/// alignment padding. Duplicate indices are coalesced and expanded in the returned openings.
+/// rejects empty `indices`, and ignores extra hint data. Widths must match the
+/// committed row lengths (including any alignment padding if `build_aligned_tree`
+/// was used). Duplicate indices are coalesced and expanded in the returned openings.
 /// is returned. [`BatchProof::read_from_channel`](crate::BatchProof::read_from_channel) parses
 /// the same hint stream without hashing, and [`BatchProof::single_proofs`](crate::BatchProof::single_proofs)
 /// can reconstruct per-index proofs (keyed by index) without verifying against a commitment. Empty indices
@@ -54,37 +55,18 @@ pub struct LmcsConfig<
     pub sponge: H,
     /// 2-to-1 compression function for building internal tree nodes.
     pub compress: C,
-    /// Column alignment used for transcript openings.
-    alignment: usize,
     pub(crate) _phantom: PhantomData<(PF, PD)>,
 }
 
 impl<PF, PD, H, C, const WIDTH: usize, const DIGEST: usize, const SALT_ELEMS: usize>
     LmcsConfig<PF, PD, H, C, WIDTH, DIGEST, SALT_ELEMS>
 {
-    /// Create a new LMCS configuration with alignment 1.
+    /// Create a new LMCS configuration.
     #[inline]
     pub const fn new(sponge: H, compress: C) -> Self {
         Self {
             sponge,
             compress,
-            alignment: 1,
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Create a new LMCS configuration using the hasher's alignment.
-    #[inline]
-    pub fn new_aligned(sponge: H, compress: C) -> Self
-    where
-        PF: PackedValue,
-        PD: PackedValue,
-        H: Alignable<PF::Value, PD::Value>,
-    {
-        Self {
-            sponge,
-            compress,
-            alignment: <H as Alignable<PF::Value, PD::Value>>::ALIGNMENT,
             _phantom: PhantomData,
         }
     }
@@ -97,6 +79,7 @@ where
     PD: PackedValue + Default,
     H: StatefulHasher<PF::Value, [PD::Value; DIGEST], State = [PD::Value; WIDTH]>
         + StatefulHasher<PF, [PD; DIGEST], State = [PD; WIDTH]>
+        + Alignable<PF::Value, PD::Value>
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST], 2>
         + PseudoCompressionFunction<[PD; DIGEST], 2>
@@ -107,7 +90,7 @@ where
     type BatchProof = BatchProof<PF::Value, Self::Commitment, SALT_ELEMS>;
     type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, SALT_ELEMS>;
 
-    /// Build a tree from matrices.
+    /// Build a tree from matrices with no transcript padding (alignment = 1).
     ///
     /// Preconditions:
     /// - `leaves` is non-empty.
@@ -117,17 +100,32 @@ where
     /// lifted matrix than intended.
     fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
         const { assert!(SALT_ELEMS == 0) }
-        LiftedMerkleTree::build::<PF, PD, H, C, WIDTH>(
+        LiftedMerkleTree::build_with_alignment::<PF, PD, H, C, WIDTH>(
             &self.sponge,
             &self.compress,
             leaves,
             None,
-            self.alignment,
+            1,
         )
     }
 
-    fn alignment(&self) -> usize {
-        self.alignment
+    /// Build a tree from matrices using the hasher alignment for transcript padding.
+    ///
+    /// Preconditions:
+    /// - `leaves` is non-empty.
+    /// - Matrix heights are powers of two and sorted by height (shortest to tallest).
+    ///
+    /// Panics if `leaves` is empty. Incorrect height order commits to a different
+    /// lifted matrix than intended.
+    fn build_aligned_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
+        const { assert!(SALT_ELEMS == 0) }
+        LiftedMerkleTree::build_with_alignment::<PF, PD, H, C, WIDTH>(
+            &self.sponge,
+            &self.compress,
+            leaves,
+            None,
+            <H as Alignable<PF::Value, PD::Value>>::ALIGNMENT,
+        )
     }
 
     fn hash<'a, I>(&self, rows: I) -> Self::Commitment
@@ -153,9 +151,10 @@ where
     ///
     /// Security notes:
     /// - `widths` and `log_max_height` must describe the committed tree; they are not checked.
-    /// - `widths` must already include alignment padding; LMCS does not enforce that padded
-    ///   values are zero. Verifiers cannot distinguish zero padding from arbitrary values
-    ///   unless they check the opened rows or constrain them elsewhere.
+    /// - `widths` must match the committed row lengths (including any alignment padding
+    ///   if `build_aligned_tree` was used); LMCS does not enforce that padded values are
+    ///   zero. Verifiers cannot distinguish zero padding from arbitrary values unless
+    ///   they check the opened rows or constrain them elsewhere.
     /// - Empty `indices` returns `InvalidProof`.
     /// - Duplicate indices are coalesced in the transcript (first-occurrence order);
     ///   openings are returned for each occurrence.
@@ -296,9 +295,10 @@ where
     ///
     /// Security notes:
     /// - `widths` and `log_max_height` are trusted parameters.
-    /// - `widths` must already include alignment padding; LMCS does not enforce that padded
-    ///   values are zero. Verifiers cannot distinguish zero padding from arbitrary values
-    ///   unless they check the opened rows or constrain them elsewhere.
+    /// - `widths` must match the committed row lengths (including any alignment padding
+    ///   if `build_aligned_tree` was used); LMCS does not enforce that padded values are
+    ///   zero. Verifiers cannot distinguish zero padding from arbitrary values unless
+    ///   they check the opened rows or constrain them elsewhere.
     /// - Empty `indices` returns `Ok(BatchProof { openings: BTreeMap::new(), siblings: BTreeMap::new() })`
     ///   and consumes no hints.
     /// - Out-of-range indices return `InvalidProof`.
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn open_batch_cases() {
         let (_, sponge, compress) = bb::test_components();
-        let lmcs: TestLmcs = LmcsConfig::new_aligned(sponge, compress);
+        let lmcs: TestLmcs = LmcsConfig::new(sponge, compress);
         let matrices = vec![small_matrix(4, 2, 0), small_matrix(4, 3, 100)];
         let tree = lmcs.build_tree(matrices);
         let widths = tree.widths();

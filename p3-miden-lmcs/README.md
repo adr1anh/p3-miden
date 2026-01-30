@@ -49,7 +49,8 @@ binding.
 | Item | Purpose |
 |------|---------|
 | `LmcsConfig` / `HidingLmcsConfig` | Build non-hiding or salted commitments |
-| `Lmcs::build_tree` | Build a commitment tree from matrices |
+| `Lmcs::build_tree` | Build a commitment tree with no transcript padding |
+| `Lmcs::build_aligned_tree` | Build a tree using the hasher alignment for transcript padding |
 | `LmcsTree::prove_batch` | Prove openings at multiple indices |
 | `Lmcs::open_batch` | Verify batch openings |
 | `BatchProof` / `Proof` | Parsed proof formats |
@@ -62,8 +63,8 @@ binding.
 - Query indices are in range of the max height.
 - Duplicate indices are coalesced in the transcript (first-occurrence order); verifiers
   return the same opening for each occurrence.
-- Alignment padding (if any) must be included in absorbed rows; LMCS does not
-  enforce zero-padding.
+- If `build_aligned_tree` is used, alignment padding (as recorded on the tree) must be
+  included in absorbed rows; LMCS does not enforce zero-padding.
 - Hash and compression functions are collision-resistant.
 
 ## Code Map

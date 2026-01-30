@@ -5,16 +5,14 @@
 use alloc::vec::Vec;
 
 use p3_challenger::{CanSample, CanSampleBits};
-use p3_field::{ExtensionField, FieldArray, TwoAdicField};
+use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_miden_transcript::ProverChannel;
 
 use crate::PcsParams;
-use crate::deep::PointQuotients;
 use crate::deep::prover::DeepPoly;
 use crate::fri::prover::FriPolys;
-use crate::utils::bit_reversed_coset_points;
 
 /// Open committed matrices at N evaluation points, writing to a prover channel.
 ///
@@ -32,7 +30,8 @@ use crate::utils::bit_reversed_coset_points;
 /// In that common case, the trace subgroup `H` has size `2^(log_lde_height - params.fri.log_blowup)`,
 /// while the LDE coset `gK` has size `2^log_lde_height`.
 ///
-/// Alignment is derived from the LMCS instance to pad DEEP evaluations consistently.
+/// Alignment is derived from the trace trees to pad DEEP evaluations consistently.
+/// Trace trees must be built with `build_aligned_tree` to match this padding.
 pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
@@ -47,14 +46,6 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     M: Matrix<F>,
     Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
-    // ─────────────────────────────────────────────────────────────────────────
-    // Extract matrix structure from trees (one group per trace tree)
-    // ─────────────────────────────────────────────────────────────────────────
-    let matrices_groups: Vec<Vec<&M>> = trace_trees
-        .iter()
-        .map(|tree| tree.leaves().iter().collect())
-        .collect();
-
     // Determine LDE domain size from the supplied LDE height.
     // For now, all trace trees must share this height; mixed LDE heights are not supported yet.
     assert!(!trace_trees.is_empty(), "at least one trace tree required");
@@ -65,25 +56,14 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
             .all(|tree| tree.height() == expected_height),
         "mixed LDE heights are not supported yet",
     );
-    let coset_points = bit_reversed_coset_points::<F>(log_lde_height);
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Compute evaluations at all N opening points (batched)
-    // ─────────────────────────────────────────────────────────────────────────
-    let quotient = PointQuotients::<F, EF, N>::new(FieldArray::from(eval_points), &coset_points);
-    let batched_evals =
-        quotient.batch_eval_lifted(&matrices_groups, &coset_points, params.fri.log_blowup);
-    let alignment = lmcs.alignment();
-
     // ─────────────────────────────────────────────────────────────────────────
     // Construct DEEP quotient (observes evals, grinds, samples α and β)
     // ─────────────────────────────────────────────────────────────────────────
-    let deep_poly = DeepPoly::new(
+    let deep_poly = DeepPoly::from_trees::<L, M, N, Ch>(
         &params.deep,
-        &matrices_groups,
-        batched_evals,
-        &quotient,
-        alignment,
+        trace_trees,
+        eval_points,
+        params.fri.log_blowup,
         channel,
     );
 

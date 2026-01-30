@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::PackedValue;
 use p3_matrix::{Dimensions, Matrix};
-use p3_miden_stateful_hasher::StatefulHasher;
+use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 use rand::Rng;
 use rand::distr::{Distribution, StandardUniform};
@@ -34,6 +34,7 @@ where
     StandardUniform: Distribution<PF::Value>,
     H: StatefulHasher<PF, [PD; DIGEST_ELEMS], State = [PD; WIDTH]>
         + StatefulHasher<PF::Value, [PD::Value; DIGEST_ELEMS], State = [PD::Value; WIDTH]>
+        + Alignable<PF::Value, PD::Value>
         + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>
         + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
