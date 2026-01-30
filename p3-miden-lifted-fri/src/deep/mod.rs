@@ -27,6 +27,13 @@
 //! appear to be evaluated at the same point z on the same domain. The prover computes
 //! `fᵢ(zʳ)` for degree-d polynomials, but this equals `fᵢ'(z)` where `fᵢ'(X) = fᵢ(Xʳ)`
 //! is the lifted polynomial. This uniformity enables the `f_reduced` factorization.
+//!
+//! ## Preconditions (caller responsibility)
+//!
+//! The DEEP constructors assume all opening points are valid: distinct and outside the
+//! trace subgroup `H` and the LDE evaluation coset `gK`. Invalid points can trigger
+//! division by zero in the barycentric weights. In practice, the outer STARK protocol
+//! is expected to enforce this before invoking DEEP.
 
 mod evals;
 mod interpolate;

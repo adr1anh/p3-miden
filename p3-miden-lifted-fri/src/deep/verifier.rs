@@ -56,6 +56,9 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
     /// Commitment widths must match the committed rows (including any alignment padding).
     /// All commitments are expected to be lifted to the same `log_lde_height`.
     ///
+    /// Preconditions: `eval_points` must be distinct and lie outside the trace subgroup `H`
+    /// and LDE evaluation coset `gK`. The outer protocol is expected to enforce this.
+    ///
     /// `log_lde_height` is the log₂ of the LDE evaluation domain height (i.e. the height of
     /// the committed LDE matrices). When a trace degree is known, it is typically
     /// `log_trace_height + params.fri.log_blowup` (plus any extension used by the caller).
