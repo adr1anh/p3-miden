@@ -98,7 +98,10 @@ fn malformed_transcript_is_rejected() {
         &public_values,
         bb::test_challenger(),
     );
-    assert!(baseline.is_ok(), "baseline proof should verify: {baseline:?}");
+    assert!(
+        baseline.is_ok(),
+        "baseline proof should verify: {baseline:?}"
+    );
 
     let (mut fields, commitments) = proof.transcript.clone().into_parts();
     fields.push(bb::F::ONE);

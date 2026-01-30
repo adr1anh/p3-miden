@@ -34,6 +34,9 @@ impl<EF> DeepPoly<EF> {
     /// matrices at `eval_points`, and then calls [`Self::from_evals`]. The returned `DeepPoly`
     /// owns only the DEEP quotient evaluations; if you need aligned evaluation matrices for
     /// testing, call `from_evals` directly.
+    ///
+    /// Preconditions: `eval_points` must be distinct and lie outside the trace subgroup `H`
+    /// and LDE evaluation coset `gK`. The outer protocol is expected to enforce this.
     pub fn from_trees<L, M, const N: usize, Ch>(
         params: &DeepParams,
         trace_trees: &[&L::Tree<M>],

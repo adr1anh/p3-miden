@@ -21,10 +21,8 @@ type BaseMmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 type RowMatrix = RowMajorMatrix<F>;
 const SALT: usize = 4;
 type HidingMmcs = HidingLmcsConfig<P, P, Sponge, Compress, SmallRng, WIDTH, DIGEST, SALT>;
-type BaseTree = <BaseMmcs as Lmcs>::Tree<RowMatrix>;
-type HidingTree = <HidingMmcs as Lmcs>::Tree<RowMatrix>;
-
 const BASE_SHAPES: &[(usize, usize)] = &[(4, 5), (8, 3)];
+type OpeningProof = <BaseMmcs as Mmcs<F>>::Proof;
 
 fn mmcs() -> BaseMmcs {
     let (_, sponge, compress) = test_components();
@@ -36,62 +34,52 @@ fn hiding_mmcs(rng: SmallRng) -> HidingMmcs {
     HidingLmcsConfig::new(sponge, compress, rng)
 }
 
-fn random_matrices(rng: &mut SmallRng, shapes: &[(usize, usize)]) -> Vec<RowMatrix> {
-    shapes
-        .iter()
-        .map(|&(h, w)| RowMajorMatrix::rand(rng, h, w))
-        .collect()
-}
-
-fn dimensions_from_tree<C, T>(tree: &T) -> Vec<Dimensions>
+fn tree_context<C, T>(tree: &T) -> (C, Vec<Dimensions>, usize)
 where
     T: LmcsTree<F, C, RowMatrix>,
 {
-    tree.leaves()
+    let commitment = tree.root();
+    let dimensions = tree
+        .leaves()
         .iter()
         .zip(tree.widths())
         .map(|(m, width)| Dimensions {
             width,
             height: m.height(),
         })
-        .collect()
-}
-
-fn tree_context<C, T>(tree: &T) -> (C, Vec<Dimensions>, usize)
-where
-    T: LmcsTree<F, C, RowMatrix>,
-{
-    let commitment = tree.root();
-    let dimensions = dimensions_from_tree(tree);
+        .collect();
     let index = tree.height() / 2;
     (commitment, dimensions, index)
 }
 
-fn base_tree(seed: u64, shapes: &[(usize, usize)]) -> (BaseMmcs, BaseTree) {
+fn build_tree_with_alignment<C>(
+    mmcs: &C,
+    seed: u64,
+    shapes: &[(usize, usize)],
+    aligned: bool,
+) -> C::Tree<RowMatrix>
+where
+    C: Lmcs<F = F>,
+{
     let mut rng = SmallRng::seed_from_u64(seed);
-    let matrices = random_matrices(&mut rng, shapes);
-    let mmcs = mmcs();
-    let tree = mmcs.build_tree(matrices);
-    (mmcs, tree)
-}
-
-fn hiding_tree(seed: u64, shapes: &[(usize, usize)], salt_seed: u64) -> (HidingMmcs, HidingTree) {
-    let mut rng = SmallRng::seed_from_u64(seed);
-    let matrices = random_matrices(&mut rng, shapes);
-    let mmcs = hiding_mmcs(SmallRng::seed_from_u64(salt_seed));
-    let tree = mmcs.build_tree(matrices);
-    (mmcs, tree)
+    // Generate deterministic random matrices for the requested shapes.
+    let matrices = shapes
+        .iter()
+        .map(|&(h, w)| RowMajorMatrix::rand(&mut rng, h, w))
+        .collect();
+    if aligned {
+        mmcs.build_aligned_tree(matrices)
+    } else {
+        mmcs.build_tree(matrices)
+    }
 }
 
 #[test]
 fn extract_proofs_roundtrip() {
     let mmcs = mmcs();
 
-    let test = |seed: u64, matrices: &[(usize, usize)], indices: &[usize]| {
-        let mut rng = SmallRng::seed_from_u64(seed);
-        let matrices = random_matrices(&mut rng, matrices);
-
-        let tree = mmcs.build_tree(matrices);
+    let test = |seed: u64, shapes: &[(usize, usize)], indices: &[usize]| {
+        let tree = build_tree_with_alignment(&mmcs, seed, shapes, false);
         let widths = tree.widths();
         let log_max_height = log2_strict_usize(tree.height());
         let (commitment, dimensions, _) = tree_context(&tree);
@@ -146,7 +134,8 @@ fn extract_proofs_roundtrip() {
 
 #[test]
 fn mmcs_roundtrip_non_hiding() {
-    let (mmcs, tree) = base_tree(10, BASE_SHAPES);
+    let mmcs = mmcs();
+    let tree = build_tree_with_alignment(&mmcs, 10, BASE_SHAPES, false);
     let (commitment, dimensions, index) = tree_context(&tree);
 
     let batch_opening = Mmcs::open_batch(&mmcs, index, &tree);
@@ -167,7 +156,8 @@ fn mmcs_roundtrip_non_hiding() {
 
 #[test]
 fn mmcs_roundtrip_hiding() {
-    let (mmcs, tree) = hiding_tree(11, BASE_SHAPES, 12);
+    let mmcs = hiding_mmcs(SmallRng::seed_from_u64(12));
+    let tree = build_tree_with_alignment(&mmcs, 11, BASE_SHAPES, false);
     let (commitment, dimensions, index) = tree_context(&tree);
 
     let batch_opening = Mmcs::open_batch(&mmcs, index, &tree);
@@ -182,81 +172,150 @@ fn mmcs_roundtrip_hiding() {
 }
 
 #[test]
-fn mmcs_verify_rejects_wrong_row_count() {
-    let (mmcs, tree) = base_tree(20, BASE_SHAPES);
-    let (commitment, dimensions, index) = tree_context(&tree);
+fn mmcs_verify_rejects_invalid_openings() {
+    let mmcs = mmcs();
+    type MutateFn = fn(
+        usize,
+        usize,
+        &[Dimensions],
+        &mut Vec<Dimensions>,
+        &mut usize,
+        &mut Vec<Vec<F>>,
+        &mut OpeningProof,
+    ) -> Result<(), LmcsError>;
 
-    let batch_opening = Mmcs::open_batch(&mmcs, index, &tree);
-    let opened_values = &batch_opening.opened_values[..batch_opening.opened_values.len() - 1];
-    let batch_opening_ref = BatchOpeningRef {
-        opened_values,
-        opening_proof: &batch_opening.opening_proof,
-    };
+    struct Case {
+        name: &'static str,
+        seed: u64,
+        aligned: bool,
+        mutate: MutateFn,
+    }
 
-    assert_eq!(
-        Mmcs::verify_batch(&mmcs, &commitment, &dimensions, index, batch_opening_ref),
-        Err(LmcsError::InvalidProof)
-    );
-}
+    let cases: &[Case] = &[
+        Case {
+            name: "wrong_row_count",
+            seed: 20,
+            aligned: false,
+            mutate: |_height, _alignment, _unaligned, _dims, _index, opened_values, _proof| {
+                opened_values.pop();
+                Err(LmcsError::InvalidProof)
+            },
+        },
+        Case {
+            name: "wrong_row_width",
+            seed: 21,
+            aligned: false,
+            mutate: |_height, _alignment, _unaligned, _dims, _index, opened_values, _proof| {
+                if let Some(row) = opened_values.first_mut() {
+                    row.pop();
+                }
+                Err(LmcsError::InvalidProof)
+            },
+        },
+        Case {
+            name: "wrong_siblings_len",
+            seed: 22,
+            aligned: false,
+            mutate: |_height, _alignment, _unaligned, _dims, _index, _opened_values, proof| {
+                proof.1.pop();
+                Err(LmcsError::InvalidProof)
+            },
+        },
+        Case {
+            name: "out_of_range_index",
+            seed: 24,
+            aligned: false,
+            mutate: |height, _alignment, _unaligned, _dims, index, _opened_values, _proof| {
+                *index = height;
+                Err(LmcsError::InvalidProof)
+            },
+        },
+        Case {
+            name: "misordered_dimensions",
+            seed: 25,
+            aligned: false,
+            mutate: |_height, _alignment, _unaligned, dims, _index, _opened_values, _proof| {
+                if dims.len() > 1 {
+                    dims.swap(0, 1);
+                }
+                Err(LmcsError::InvalidProof)
+            },
+        },
+        Case {
+            name: "unaligned_dimensions",
+            seed: 26,
+            aligned: true,
+            mutate: |_height, alignment, unaligned, dims, _index, _opened_values, _proof| {
+                dims.clone_from_slice(unaligned);
+                if alignment > 1 {
+                    Err(LmcsError::InvalidProof)
+                } else {
+                    Ok(())
+                }
+            },
+        },
+        Case {
+            name: "root_mismatch",
+            seed: 23,
+            aligned: false,
+            mutate: |_height, _alignment, _unaligned, _dims, _index, opened_values, _proof| {
+                if let Some(cell) = opened_values.first_mut().and_then(|row| row.first_mut()) {
+                    *cell += F::ONE;
+                }
+                Err(LmcsError::RootMismatch)
+            },
+        },
+    ];
 
-#[test]
-fn mmcs_verify_rejects_wrong_row_width() {
-    let (mmcs, tree) = base_tree(21, BASE_SHAPES);
-    let (commitment, dimensions, index) = tree_context(&tree);
+    for case in cases {
+        let tree = build_tree_with_alignment(&mmcs, case.seed, BASE_SHAPES, case.aligned);
+        let (commitment, dimensions, index) = tree_context(&tree);
+        let unaligned_dimensions: Vec<Dimensions> = tree
+            .leaves()
+            .iter()
+            .map(|m| Dimensions {
+                width: m.width(),
+                height: m.height(),
+            })
+            .collect();
+        let height = tree.height();
+        let alignment = tree.alignment();
+        let batch_opening = Mmcs::open_batch(&mmcs, index, &tree);
 
-    let batch_opening = Mmcs::open_batch(&mmcs, index, &tree);
-    let mut bad_rows = batch_opening.opened_values.clone();
-    bad_rows[0].pop();
+        Mmcs::verify_batch(
+            &mmcs,
+            &commitment,
+            &dimensions,
+            index,
+            (&batch_opening).into(),
+        )
+        .expect("baseline opening should verify");
 
-    let opening_proof = batch_opening.opening_proof.clone();
-    let batch_opening_ref = BatchOpeningRef {
-        opened_values: &bad_rows,
-        opening_proof: &opening_proof,
-    };
+        let mut dims = dimensions.clone();
+        let mut idx = index;
+        let mut opened_values = batch_opening.opened_values.clone();
+        let mut opening_proof = batch_opening.opening_proof.clone();
 
-    assert_eq!(
-        Mmcs::verify_batch(&mmcs, &commitment, &dimensions, index, batch_opening_ref),
-        Err(LmcsError::InvalidProof)
-    );
-}
+        let expected = (case.mutate)(
+            height,
+            alignment,
+            &unaligned_dimensions,
+            &mut dims,
+            &mut idx,
+            &mut opened_values,
+            &mut opening_proof,
+        );
+        let result = Mmcs::verify_batch(
+            &mmcs,
+            &commitment,
+            &dims,
+            idx,
+            BatchOpeningRef::new(&opened_values, &opening_proof),
+        );
 
-#[test]
-fn mmcs_verify_rejects_wrong_siblings_len() {
-    let (mmcs, tree) = base_tree(22, BASE_SHAPES);
-    let (commitment, dimensions, index) = tree_context(&tree);
-
-    let batch_opening = Mmcs::open_batch(&mmcs, index, &tree);
-    let mut opening_proof = batch_opening.opening_proof.clone();
-    opening_proof.1.pop();
-
-    let batch_opening_ref = BatchOpeningRef {
-        opened_values: &batch_opening.opened_values,
-        opening_proof: &opening_proof,
-    };
-
-    assert_eq!(
-        Mmcs::verify_batch(&mmcs, &commitment, &dimensions, index, batch_opening_ref),
-        Err(LmcsError::InvalidProof)
-    );
-}
-
-#[test]
-fn mmcs_verify_rejects_root_mismatch() {
-    let (mmcs, tree) = base_tree(23, BASE_SHAPES);
-    let (commitment, dimensions, index) = tree_context(&tree);
-
-    let batch_opening = Mmcs::open_batch(&mmcs, index, &tree);
-    let mut bad_rows = batch_opening.opened_values.clone();
-    bad_rows[0][0] += F::ONE;
-
-    let opening_proof = batch_opening.opening_proof.clone();
-    let batch_opening_ref = BatchOpeningRef {
-        opened_values: &bad_rows,
-        opening_proof: &opening_proof,
-    };
-
-    assert_eq!(
-        Mmcs::verify_batch(&mmcs, &commitment, &dimensions, index, batch_opening_ref),
-        Err(LmcsError::RootMismatch)
-    );
+        match expected {
+            Ok(()) => result.expect(case.name),
+            Err(err) => assert_eq!(result, Err(err), "{}", case.name),
+        }
+    }
 }

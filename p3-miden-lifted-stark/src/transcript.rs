@@ -20,9 +20,9 @@
 //! 8) Beta (extension element): Horner combine across AIRs in permutation order.
 //! 9) Quotient commitment (LMCS root).
 //! 10) Zeta (extension element): OOD point; rejection-sample until `zeta^N != 1`
-//!    and zeta is not in the max LDE coset gK. The first valid zeta is used
-//!    (loop expected to run once with overwhelming probability), and zeta_next
-//!    is derived as zeta * h_max.
+//!     and zeta is not in the max LDE coset gK. The first valid zeta is used
+//!     (loop expected to run once with overwhelming probability), and zeta_next
+//!     is derived as zeta * h_max.
 //! 11) PCS transcript (lifted FRI: DEEP + FRI + query hints).
 //!
 //! If this order changes, update prover + verifier in lockstep.

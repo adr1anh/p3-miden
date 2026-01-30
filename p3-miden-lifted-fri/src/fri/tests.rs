@@ -1,10 +1,15 @@
 //! Integration tests for FRI protocol commit/verify cycles.
 
+use alloc::vec;
 use alloc::vec::Vec;
 use p3_challenger::CanObserve;
-use p3_field::{PrimeCharacteristicRing, TwoAdicField};
+use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
+use p3_field::PrimeCharacteristicRing;
+use p3_matrix::Matrix;
+use p3_matrix::bitrev::BitReversibleMatrix;
+use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_transcript::{VerifierChannel, VerifierTranscript};
-use p3_util::{log2_strict_usize, reverse_bits_len};
+use p3_util::log2_strict_usize;
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -16,11 +21,59 @@ use crate::tests::{
     BaseLmcs, Challenger, EF, F, TestTranscriptData, evals_at, prover_channel, random_lde_matrix,
     sample_indices, test_challenger, test_lmcs, verifier_channel,
 };
-use crate::utils::horner;
 
 // ============================================================================
 // Integration tests
 // ============================================================================
+
+struct FriRoundtripCase {
+    name: &'static str,
+    log_poly_degree: usize,
+    log_blowup: usize,
+    log_final_degree: usize,
+    fold: FriFold,
+    proof_of_work_bits: usize,
+    num_queries: usize,
+}
+
+const FRI_ROUNDTRIP_CASES: &[FriRoundtripCase] = &[
+    FriRoundtripCase {
+        name: "arity-2",
+        log_poly_degree: 10,
+        log_blowup: 2,
+        log_final_degree: 2,
+        fold: FriFold::ARITY_2,
+        proof_of_work_bits: 1,
+        num_queries: 3,
+    },
+    FriRoundtripCase {
+        name: "arity-4",
+        log_poly_degree: 10,
+        log_blowup: 2,
+        log_final_degree: 2,
+        fold: FriFold::ARITY_4,
+        proof_of_work_bits: 1,
+        num_queries: 3,
+    },
+    FriRoundtripCase {
+        name: "arity-8",
+        log_poly_degree: 10,
+        log_blowup: 2,
+        log_final_degree: 2,
+        fold: FriFold::ARITY_8,
+        proof_of_work_bits: 1,
+        num_queries: 3,
+    },
+    FriRoundtripCase {
+        name: "blowup-0",
+        log_poly_degree: 8,
+        log_blowup: 0,
+        log_final_degree: 3,
+        fold: FriFold::ARITY_2,
+        proof_of_work_bits: 0,
+        num_queries: 2,
+    },
+];
 
 fn prove_queries(
     params: &FriParams,
@@ -56,48 +109,48 @@ fn verify_queries(
     result
 }
 
-/// Test that commit_phase produces valid proofs that verify_queries accepts.
-///
-/// This test:
-/// 1. Generates a random polynomial and computes its LDE
-/// 2. Runs the FRI commit phase to fold down to final polynomial
-/// 3. Verifies a fixed batch of query indices across all fold arities
-fn test_fri_commit_verify_roundtrip(log_poly_degree: usize, fold: FriFold) {
-    let mut rng = SmallRng::seed_from_u64(42);
+fn run_roundtrip_case(case: &FriRoundtripCase, seed: u64) -> Result<(), FriError> {
+    let mut rng = SmallRng::seed_from_u64(seed);
     let lmcs = test_lmcs();
 
     let params = FriParams {
-        log_blowup: 2,
-        fold,
-        log_final_degree: 2,
-        proof_of_work_bits: 1, // Low for fast tests (per-round)
+        log_blowup: case.log_blowup,
+        fold: case.fold,
+        log_final_degree: case.log_final_degree,
+        proof_of_work_bits: case.proof_of_work_bits,
     };
 
-    // Generate random LDE evaluations
-    let evals = random_lde_matrix(&mut rng, log_poly_degree, params.log_blowup, 1, F::ONE).values;
+    let evals =
+        random_lde_matrix::<F, EF>(&mut rng, case.log_poly_degree, case.log_blowup, 1, F::ONE)
+            .values;
     let lde_size = evals.len();
+    let indices = sample_indices(&mut rng, lde_size, case.num_queries);
+    let initial_evals = evals_at(&evals, &indices);
 
-    // Generate batch of query indices
-    let query_indices = sample_indices(&mut rng, lde_size, 3);
-    let initial_evals = evals_at(&evals, &query_indices);
-
-    let transcript = prove_queries(&params, &lmcs, evals, &query_indices);
+    let transcript = prove_queries(&params, &lmcs, evals, &indices);
     verify_queries(
         &params,
         &lmcs,
         &transcript,
         lde_size,
-        &query_indices,
+        &indices,
         &initial_evals,
         None,
     )
-    .expect("low-degree test should pass");
 }
 
+/// Table-driven roundtrip cases that must verify successfully.
 #[test]
-fn test_fri_commit_verify_all_arities() {
-    for fold in [FriFold::ARITY_2, FriFold::ARITY_4, FriFold::ARITY_8] {
-        test_fri_commit_verify_roundtrip(10, fold);
+fn test_fri_roundtrip_cases() {
+    for (case_idx, case) in FRI_ROUNDTRIP_CASES.iter().enumerate() {
+        let seed = 42 + case_idx as u64;
+        let result = run_roundtrip_case(case, seed);
+        assert!(
+            result.is_ok(),
+            "case {} failed with {:?}",
+            case.name,
+            result
+        );
     }
 }
 
@@ -263,41 +316,6 @@ fn test_fri_zero_rounds_final_poly_only() {
     .expect("zero-round FRI should verify");
 }
 
-/// FRI with no blowup but with folding rounds.
-#[test]
-fn test_fri_blowup_zero_with_rounds() {
-    let mut rng = SmallRng::seed_from_u64(321);
-    let lmcs = test_lmcs();
-
-    let log_poly_degree = 8;
-    let log_blowup = 0;
-    let log_final_degree = 3;
-
-    let params = FriParams {
-        log_blowup,
-        fold: FriFold::ARITY_2,
-        log_final_degree,
-        proof_of_work_bits: 0,
-    };
-
-    let evals = random_lde_matrix::<F, EF>(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
-    let lde_size = evals.len();
-    let indices = sample_indices(&mut rng, lde_size, 2);
-    let initial_evals = evals_at(&evals, &indices);
-    let transcript = prove_queries(&params, &lmcs, evals, &indices);
-
-    verify_queries(
-        &params,
-        &lmcs,
-        &transcript,
-        lde_size,
-        &indices,
-        &initial_evals,
-        None,
-    )
-    .expect("FRI with blowup=0 should verify");
-}
-
 /// Test that the final polynomial is correctly computed by evaluating it
 /// at points in the final domain and comparing with folded values.
 #[test]
@@ -305,7 +323,7 @@ fn test_final_polynomial_correctness() {
     let mut rng = SmallRng::seed_from_u64(123);
     let lmcs = test_lmcs();
 
-    let log_poly_degree = 8;
+    let log_poly_degree = 6;
     let log_blowup = 2;
     let log_final_degree = 3;
 
@@ -316,10 +334,28 @@ fn test_final_polynomial_correctness() {
         proof_of_work_bits: 0, // No grinding for this test
     };
 
-    let evals = random_lde_matrix::<F, EF>(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
+    let poly_degree = 1 << log_poly_degree;
+    let final_degree = 1 << log_final_degree;
+    let rounds = log_poly_degree - log_final_degree;
+    let stride = 1 << rounds;
+
+    let g_coeffs: Vec<EF> = (0..final_degree)
+        .map(|_| rng.sample(StandardUniform))
+        .collect();
+    let mut f_coeffs = vec![EF::ZERO; poly_degree];
+    for (i, coeff) in g_coeffs.iter().enumerate() {
+        f_coeffs[i * stride] = *coeff;
+    }
+
+    let coeffs_matrix = RowMajorMatrix::new(f_coeffs, 1);
+    let dft = Radix2DFTSmallBatch::<F>::default();
+    // DFT output is already in standard order for Radix2DFTSmallBatch.
+    let evals_h = dft.coset_dft_algebra_batch(coeffs_matrix, F::ONE);
+    let lde = dft.coset_lde_algebra_batch(evals_h, log_blowup, F::ONE);
+    let evals = lde.bit_reverse_rows().to_row_major_matrix().values;
 
     let mut prover_channel = prover_channel();
-    let _fri_polys = FriPolys::<F, EF, _>::new(&params, &lmcs, evals, &mut prover_channel);
+    let _fri_polys = FriPolys::<F, EF, _>::new(&params, &lmcs, evals.clone(), &mut prover_channel);
     let transcript = prover_channel.into_data();
 
     let mut v_channel = verifier_channel(&transcript);
@@ -328,28 +364,14 @@ fn test_final_polynomial_correctness() {
         FriTranscript::from_verifier_channel(&params, log_domain_size, &mut v_channel)
             .expect("transcript parsing should succeed");
 
-    // Verify final polynomial has correct degree
-    let final_degree = 1 << log_final_degree;
     assert_eq!(
         fri_transcript.final_poly.len(),
-        final_degree,
+        g_coeffs.len(),
         "Final polynomial should have {} coefficients",
-        final_degree
+        g_coeffs.len()
     );
-
-    // Evaluate final polynomial at several points in the final domain
-    let log_final_height = log_final_degree + log_blowup;
-    let final_height = 1 << log_final_height;
-    let g = F::two_adic_generator(log_final_height);
-
-    for idx in 0..final_height {
-        // Point in bit-reversed final domain
-        let x: F = g.exp_u64(reverse_bits_len(idx, log_final_height) as u64);
-
-        // Evaluate polynomial via Horner
-        let poly_eval: EF = horner(x, fri_transcript.final_poly.iter().rev().copied());
-
-        // The polynomial should be well-defined (just check it doesn't panic)
-        let _ = poly_eval;
-    }
+    assert_eq!(
+        fri_transcript.final_poly, g_coeffs,
+        "Final polynomial coefficients should match the base polynomial"
+    );
 }
