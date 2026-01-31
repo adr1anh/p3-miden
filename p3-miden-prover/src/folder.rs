@@ -6,20 +6,21 @@ use p3_miden_air::MidenAirBuilder;
 
 use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
 
-// Batch size for buffered base-field constraints. This is a small fixed window to reduce
-// per-constraint overhead without growing stack/regs too much in the hot path.
+// Batch size for buffered base-field constraints.
+// Kept small to reduce per-constraint overhead without inflating stack/regs.
 const PENDING_BASE_BATCH: usize = 16;
 
 /// Handles constraint accumulation for the prover in a STARK system.
 ///
-/// This struct is responsible for evaluating constraints corresponding to a given row in the trace matrix.
-/// It accumulates them into a single value using a randomized challenge.
+/// This struct evaluates constraints for a given row in the trace matrix.
+/// It accumulates them into a single value using a randomized challenge:
 /// `C_0 + alpha C_1 + alpha^2 C_2 + ...`
 #[derive(Debug)]
 pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// The matrix containing rows on which the constraint polynomial is to be evaluated
     pub main: RowMajorMatrixView<'a, PackedVal<SC>>,
-    /// The matrix containing rows on which the aux constraint polynomial is to be evaluated (may have zero width)
+    /// The matrix containing rows on which the aux constraint polynomial is to be evaluated
+    /// (may have zero width)
     pub aux: RowMajorMatrixView<'a, PackedChallenge<SC>>,
     /// The randomness used to compute the aux trace; can be zero width.
     /// Cached EF randomness packed from base randomness to avoid temporary leaks
@@ -36,7 +37,8 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     pub is_first_row: PackedVal<SC>,
     /// Evaluations of the Selector polynomial for the last row of the trace
     pub is_last_row: PackedVal<SC>,
-    /// Evaluations of the Selector polynomial for rows where transition constraints should be applied
+    /// Evaluations of the Selector polynomial for rows where transition constraints
+    /// should be applied
     pub is_transition: PackedVal<SC>,
     /// Challenge powers used for randomized constraint combination
     pub alpha_powers: &'a [SC::Challenge],
@@ -48,8 +50,8 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// Current constraint index being processed
     pub constraint_index: usize,
 
-    // Small batching buffer for base-field `assert_zero` calls. We flush this buffer before any
-    // extension-field constraint to preserve constraint ordering across the full stream.
+    // Buffer base-field `assert_zero` calls in small batches.
+    // Flush before any extension-field constraint to keep ordering intact.
     pub(crate) pending_base_start: usize,
     pub(crate) pending_base_len: usize,
     pub(crate) pending_base: [PackedVal<SC>; PENDING_BASE_BATCH],
@@ -64,12 +66,12 @@ impl<'a, SC: StarkGenericConfig> ProverConstraintFolder<'a, SC> {
         }
 
         let start = self.pending_base_start;
-        // Pull out references so we can update `accumulator` without tripping borrowck.
+        // Copy refs so we can update `accumulator` without borrow checker conflicts.
         let decomposed_alpha_powers = self.decomposed_alpha_powers;
         let pending_base = &self.pending_base;
 
         if n == PENDING_BASE_BATCH {
-            // Fast path for the common case: flush a full batch using the const-generic kernel.
+            // Fast path: flush a full batch via the const-generic kernel.
             self.accumulator += PackedChallenge::<SC>::from_basis_coefficients_fn(|i| {
                 let alpha_powers = &decomposed_alpha_powers[i][start..(start + PENDING_BASE_BATCH)];
                 PackedVal::<SC>::packed_linear_combination::<PENDING_BASE_BATCH>(
@@ -78,8 +80,7 @@ impl<'a, SC: StarkGenericConfig> ProverConstraintFolder<'a, SC> {
                 )
             });
         } else {
-            // Tail flush (end-of-eval / before `assert_zero_ext`): keep it simple and avoid a big
-            // const-generic match ladder for small `n`.
+            // Tail flush before `assert_zero_ext`/end-of-eval; use a small loop for n.
             let pending_base = &pending_base[..n];
             self.accumulator += PackedChallenge::<SC>::from_basis_coefficients_fn(|i| {
                 let alpha_powers = &decomposed_alpha_powers[i][start..(start + n)];
@@ -161,8 +162,7 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
 
     #[inline]
     fn assert_zeros<const N: usize, I: Into<Self::Expr>>(&mut self, array: [I; N]) {
-        // `assert_zero` is buffered for batching. `assert_zeros` must flush first to avoid
-        // interleaving constraints and breaking the pending base batch bookkeeping.
+        // `assert_zero` is buffered; flush to avoid interleaving and breaking batching order.
         self.flush_pending_base();
 
         let expr_array = array.map(Into::into);
@@ -179,7 +179,7 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
     where
         I: Into<Self::ExprEF>,
     {
-        // Ensure base-field pending constraints remain contiguous in the constraint stream.
+        // Flush base-field pending constraints to keep the stream contiguous.
         self.flush_pending_base();
 
         let alpha_power = self.alpha_powers[self.constraint_index];
@@ -214,7 +214,8 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
 pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     /// Pair of consecutive rows from the committed polynomial evaluations
     pub main: ViewPair<'a, SC::Challenge>,
-    /// Pair of consecutive rows from the committed polynomial evaluations (may have zero width)
+    /// Pair of consecutive rows from the committed polynomial evaluations (may have
+    /// zero width)
     pub aux: ViewPair<'a, SC::Challenge>,
     /// The randomness used to compute the aux tract; can be zero width.
     pub randomness: &'a [SC::Challenge],
@@ -230,7 +231,8 @@ pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     pub is_first_row: SC::Challenge,
     /// Evaluations of the Selector polynomial for the last row of the trace
     pub is_last_row: SC::Challenge,
-    /// Evaluations of the Selector polynomial for rows where transition constraints should be applied
+    /// Evaluations of the Selector polynomial for rows where transition constraints
+    /// should be applied
     pub is_transition: SC::Challenge,
     /// Single challenge value used for constraint combination
     pub alpha: SC::Challenge,
