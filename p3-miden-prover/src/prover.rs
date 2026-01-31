@@ -522,10 +522,8 @@ where
             coeffs.push(decomposed_alpha_powers[i][idx]);
         }
     }
-    let ext_alpha_powers: Vec<PackedChallenge<SC>> = ext_indices
-        .iter()
-        .map(|&idx| Into::<PackedChallenge<SC>>::into(alpha_powers[idx]))
-        .collect();
+    let ext_alpha_powers: Vec<SC::Challenge> =
+        ext_indices.iter().map(|&idx| alpha_powers[idx]).collect();
 
     let packed_aux_bus_boundary_values: Vec<PackedChallenge<SC>> = aux_bus_boundary_values
         .iter()

@@ -3,6 +3,7 @@ use p3_field::{BasedVectorSpace, PackedField, PrimeCharacteristicRing};
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::ViewPair;
 use p3_miden_air::MidenAirBuilder;
+use p3_miden_uni_stark::PackedChallengeLinearCombination;
 
 use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
 
@@ -43,7 +44,7 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// Base-field alpha powers ordered to match base constraint emission.
     pub base_alpha_powers: &'a [Vec<Val<SC>>],
     /// Extension-field alpha powers ordered to match extension constraint emission.
-    pub ext_alpha_powers: &'a [PackedChallenge<SC>],
+    pub ext_alpha_powers: &'a [SC::Challenge],
     /// Running accumulator for all constraints multiplied by challenge powers
     /// `C_0 + alpha C_1 + alpha^2 C_2 + ...`
     pub accumulator: PackedChallenge<SC>,
@@ -60,16 +61,13 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
 impl<'a, SC: StarkGenericConfig> ProverConstraintFolder<'a, SC> {
     #[inline(always)]
     fn packed_linear_combination_ext<const N: usize>(
-        coeffs: &[PackedChallenge<SC>],
+        coeffs: &[SC::Challenge],
         exprs: &[PackedChallenge<SC>],
     ) -> PackedChallenge<SC> {
-        let mut acc = PackedChallenge::<SC>::ZERO;
-        let mut i = 0;
-        while i < N {
-            acc += coeffs[i] * exprs[i];
-            i += 1;
-        }
-        acc
+        let combine =
+            <PackedChallenge<SC> as PackedChallengeLinearCombination<SC::Challenge>>
+                ::packed_linear_combination::<N>;
+        combine(coeffs, exprs)
     }
 
     #[inline]
@@ -90,7 +88,7 @@ impl<'a, SC: StarkGenericConfig> ProverConstraintFolder<'a, SC> {
             let mut acc = PackedVal::<SC>::ZERO;
             let mut start = 0;
             while start + CONSTRAINT_BATCH <= base_len {
-                acc += PackedVal::<SC>::packed_linear_combination::<CONSTRAINT_BATCH>(
+                acc += <PackedVal<SC> as PackedField>::packed_linear_combination::<CONSTRAINT_BATCH>(
                     &coeffs[start..start + CONSTRAINT_BATCH],
                     &base_constraints[start..start + CONSTRAINT_BATCH],
                 );
@@ -120,7 +118,7 @@ impl<'a, SC: StarkGenericConfig> ProverConstraintFolder<'a, SC> {
             .iter()
             .zip(ext_constraints[start..ext_len].iter())
         {
-            self.accumulator += *coeff * *expr;
+            self.accumulator += *expr * *coeff;
         }
     }
 }
