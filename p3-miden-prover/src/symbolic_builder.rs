@@ -91,6 +91,52 @@ where
     builder.constraints()
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConstraintType {
+    Base,
+    Ext,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ConstraintLayout {
+    pub base_indices: Vec<usize>,
+    pub ext_indices: Vec<usize>,
+}
+
+impl ConstraintLayout {
+    pub(crate) fn total_constraints(&self) -> usize {
+        self.base_indices.len() + self.ext_indices.len()
+    }
+}
+
+#[instrument(name = "evaluate constraints symbolically", skip_all, level = "debug")]
+pub(crate) fn get_symbolic_constraints_with_layout<F, EF, A>(
+    air: &A,
+    preprocessed_width: usize,
+    num_public_values: usize,
+    aux_width: usize,
+    num_randomness: usize,
+) -> (Vec<SymbolicExpression<F>>, ConstraintLayout)
+where
+    F: Field,
+    EF: ExtensionField<F>,
+    A: MidenAir<F, EF>,
+{
+    let num_periodic_values = air.periodic_table().len();
+    let mut builder = SymbolicAirBuilder::<F>::new_with_periodic(
+        preprocessed_width,
+        air.width(),
+        aux_width,
+        num_randomness,
+        num_public_values,
+        num_periodic_values,
+    );
+    air.eval(&mut builder);
+    let layout = builder.layout();
+    let constraints = builder.constraints();
+    (constraints, layout)
+}
+
 /// An `AirBuilder` for evaluating constraints symbolically, and recording them for later use.
 #[derive(Debug)]
 pub struct SymbolicAirBuilder<F: Field> {
@@ -102,6 +148,7 @@ pub struct SymbolicAirBuilder<F: Field> {
     public_values: Vec<SymbolicVariable<F>>,
     periodic_values: Vec<SymbolicVariable<F>>,
     constraints: Vec<SymbolicExpression<F>>,
+    constraint_types: Vec<ConstraintType>,
 }
 
 impl<F: Field> SymbolicAirBuilder<F> {
@@ -169,11 +216,27 @@ impl<F: Field> SymbolicAirBuilder<F> {
             public_values,
             periodic_values,
             constraints: vec![],
+            constraint_types: vec![],
         }
     }
 
     pub fn constraints(self) -> Vec<SymbolicExpression<F>> {
         self.constraints
+    }
+
+    pub(crate) fn layout(&self) -> ConstraintLayout {
+        let mut base_indices = Vec::new();
+        let mut ext_indices = Vec::new();
+        for (idx, kind) in self.constraint_types.iter().enumerate() {
+            match kind {
+                ConstraintType::Base => base_indices.push(idx),
+                ConstraintType::Ext => ext_indices.push(idx),
+            }
+        }
+        ConstraintLayout {
+            base_indices,
+            ext_indices,
+        }
     }
 
     pub(crate) fn sample_randomness(num_randomness: usize) -> Vec<SymbolicVariable<F>> {
@@ -222,6 +285,7 @@ impl<F: Field> MidenAirBuilder for SymbolicAirBuilder<F> {
 
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
         self.constraints.push(x.into());
+        self.constraint_types.push(ConstraintType::Base);
     }
 
     fn permutation(&self) -> Self::MP {
@@ -245,6 +309,7 @@ impl<F: Field> MidenAirBuilder for SymbolicAirBuilder<F> {
         I: Into<Self::ExprEF>,
     {
         self.constraints.push(x.into());
+        self.constraint_types.push(ConstraintType::Ext);
     }
 
     fn preprocessed(&self) -> Self::M {

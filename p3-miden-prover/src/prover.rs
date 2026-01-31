@@ -19,7 +19,7 @@ use crate::util::prover_row_to_ext;
 use crate::{
     AirWithBoundaryConstraints, Commitments, Domain, OpenedValues, PackedChallenge, PackedVal,
     Proof, ProverConstraintFolder, StarkGenericConfig, Val, get_log_quotient_degree,
-    get_symbolic_constraints,
+    get_symbolic_constraints_with_layout,
 };
 
 /// Commits the preprocessed trace if present.
@@ -70,7 +70,7 @@ where
     // Compute the constraint polynomials as vectors of symbolic expressions.
     let aux_width = air.aux_width();
     let num_randomness = air.num_randomness();
-    let symbolic_constraints = get_symbolic_constraints(
+    let (symbolic_constraints, constraint_layout) = get_symbolic_constraints_with_layout(
         air,
         preprocessed_width,
         public_values.len(),
@@ -80,6 +80,7 @@ where
 
     // Count the number of constraints that we have.
     let constraint_count = symbolic_constraints.len();
+    debug_assert_eq!(constraint_count, constraint_layout.total_constraints());
 
     // Each constraint polynomial looks like `C_j(X_1, ..., X_w, Y_1, ..., Y_w, Z_1, ..., Z_j)`.
     // When evaluated on a given row, the X_i's will be the `i`'th element of the that row, the
@@ -287,6 +288,8 @@ where
         preprocessed_on_quotient_domain.as_ref(),
         alpha,
         constraint_count,
+        &constraint_layout.base_indices,
+        &constraint_layout.ext_indices,
     );
 
     // Due to `alpha`, evaluations of `Q` all lie in the extension field `E`.
@@ -453,6 +456,8 @@ pub fn quotient_values<SC, A, Mat>(
     preprocessed_on_quotient_domain: Option<&Mat>,
     alpha: SC::Challenge,
     constraint_count: usize,
+    base_indices: &[usize],
+    ext_indices: &[usize],
 ) -> Vec<SC::Challenge>
 where
     SC: StarkGenericConfig + Sync,
@@ -501,8 +506,25 @@ where
             alpha_powers
                 .iter()
                 .map(|x| x.as_basis_coefficients_slice()[i])
-                .collect()
+                .collect::<Vec<Val<SC>>>()
         })
+        .collect();
+
+    let base_count = base_indices.len();
+    let ext_count = ext_indices.len();
+
+    // Reorder alpha powers to match the compressed base/ext constraint streams.
+    let mut base_alpha_powers: Vec<Vec<Val<SC>>> = (0..SC::Challenge::DIMENSION)
+        .map(|_| Vec::with_capacity(base_count))
+        .collect();
+    for &idx in base_indices.iter() {
+        for (i, coeffs) in base_alpha_powers.iter_mut().enumerate() {
+            coeffs.push(decomposed_alpha_powers[i][idx]);
+        }
+    }
+    let ext_alpha_powers: Vec<PackedChallenge<SC>> = ext_indices
+        .iter()
+        .map(|&idx| Into::<PackedChallenge<SC>>::into(alpha_powers[idx]))
         .collect();
 
     let packed_aux_bus_boundary_values: Vec<PackedChallenge<SC>> = aux_bus_boundary_values
@@ -510,6 +532,25 @@ where
         .copied()
         .map(Into::into)
         .collect();
+
+    let packed_randomness: Vec<PackedChallenge<SC>> =
+        randomness.iter().copied().map(Into::into).collect();
+    let periodic_is_empty = periodic_table.is_empty();
+    let periodic_width = periodic_on_quotient.width();
+    let periodic_on_quotient_packed = if periodic_is_empty {
+        None
+    } else {
+        let packed_rows = quotient_size.div_ceil(PackedVal::<SC>::WIDTH);
+        let mut packed_values = Vec::with_capacity(packed_rows * periodic_width);
+        for i_start in (0..quotient_size).step_by(PackedVal::<SC>::WIDTH) {
+            for col_idx in 0..periodic_width {
+                packed_values.push(PackedVal::<SC>::from_fn(|j| {
+                    *periodic_on_quotient.get(i_start + j, col_idx)
+                }));
+            }
+        }
+        Some(RowMajorMatrix::new(packed_values, periodic_width))
+    };
 
     info_span!("evaluate constraints on quotient domain").in_scope(|| {
         (0..quotient_size)
@@ -564,22 +605,14 @@ where
                     )
                 });
 
-                // Pack challenges for constraint evaluation
-                let packed_randomness: Vec<PackedChallenge<SC>> =
-                    randomness.iter().copied().map(Into::into).collect();
-
                 // Grab precomputed periodic evaluations for this packed chunk.
-                let periodic_values: Vec<PackedVal<SC>> = if periodic_table.is_empty() {
-                    Vec::new()
+                let periodic_values = if let Some(packed) = periodic_on_quotient_packed.as_ref() {
+                    let row = i_start / PackedVal::<SC>::WIDTH;
+                    let start = row * periodic_width;
+                    let end = start + periodic_width;
+                    &packed.values[start..end]
                 } else {
-                    let num_cols = periodic_on_quotient.width();
-                    (0..num_cols)
-                        .map(|col_idx| {
-                            PackedVal::<SC>::from_fn(|j| {
-                                *periodic_on_quotient.get(i_start + j, col_idx)
-                            })
-                        })
-                        .collect()
+                    &[]
                 };
 
                 let accumulator = PackedChallenge::<SC>::ZERO;
@@ -588,23 +621,23 @@ where
                     aux: aux.as_view(),
                     preprocessed: preprocessed.as_ref().map(|m| m.as_view()),
                     public_values,
-                    periodic_values: &periodic_values,
+                    periodic_values,
                     is_first_row,
                     is_last_row,
                     is_transition,
-                    alpha_powers: &alpha_powers,
-                    decomposed_alpha_powers: &decomposed_alpha_powers,
+                    base_alpha_powers: &base_alpha_powers,
+                    ext_alpha_powers: &ext_alpha_powers,
                     accumulator,
                     constraint_index: 0,
-                    pending_base_start: 0,
-                    pending_base_len: 0,
-                    pending_base: core::array::from_fn(|_| PackedVal::<SC>::ZERO),
-                    packed_randomness,
+                    constraint_count,
+                    base_constraints: Vec::with_capacity(base_count),
+                    ext_constraints: Vec::with_capacity(ext_count),
+                    packed_randomness: packed_randomness.as_slice(),
                     aux_bus_boundary_values: &packed_aux_bus_boundary_values,
                 };
 
                 air.eval(&mut folder);
-                folder.flush_pending_base();
+                folder.finalize_constraints();
 
                 // quotient(x) = constraints(x) / Z_H(x)
                 let quotient = folder.accumulator * inv_vanishing;

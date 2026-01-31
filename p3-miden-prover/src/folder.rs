@@ -6,9 +6,9 @@ use p3_miden_air::MidenAirBuilder;
 
 use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
 
-// Batch size for buffered base-field constraints.
-// Kept small to reduce per-constraint overhead without inflating stack/regs.
-const PENDING_BASE_BATCH: usize = 16;
+// Batch size for constraint linear-combination chunks.
+// Kept small to reduce overhead without inflating stack/regs.
+pub(crate) const CONSTRAINT_BATCH: usize = 8;
 
 /// Handles constraint accumulation for the prover in a STARK system.
 ///
@@ -24,7 +24,7 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     pub aux: RowMajorMatrixView<'a, PackedChallenge<SC>>,
     /// The randomness used to compute the aux trace; can be zero width.
     /// Cached EF randomness packed from base randomness to avoid temporary leaks
-    pub packed_randomness: Vec<PackedChallenge<SC>>,
+    pub packed_randomness: &'a [PackedChallenge<SC>],
     /// Aux trace bus boundary values packed from base field to extension field
     pub aux_bus_boundary_values: &'a [PackedChallenge<SC>],
     /// The preprocessed columns (if any)
@@ -40,59 +40,88 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// Evaluations of the Selector polynomial for rows where transition constraints
     /// should be applied
     pub is_transition: PackedVal<SC>,
-    /// Challenge powers used for randomized constraint combination
-    pub alpha_powers: &'a [SC::Challenge],
-    /// Challenge powers decomposed into their base field component.
-    pub decomposed_alpha_powers: &'a [Vec<Val<SC>>],
+    /// Base-field alpha powers ordered to match base constraint emission.
+    pub base_alpha_powers: &'a [Vec<Val<SC>>],
+    /// Extension-field alpha powers ordered to match extension constraint emission.
+    pub ext_alpha_powers: &'a [PackedChallenge<SC>],
     /// Running accumulator for all constraints multiplied by challenge powers
     /// `C_0 + alpha C_1 + alpha^2 C_2 + ...`
     pub accumulator: PackedChallenge<SC>,
     /// Current constraint index being processed
     pub constraint_index: usize,
-
-    // Buffer base-field `assert_zero` calls in small batches.
-    // Flush before any extension-field constraint to keep ordering intact.
-    pub(crate) pending_base_start: usize,
-    pub(crate) pending_base_len: usize,
-    pub(crate) pending_base: [PackedVal<SC>; PENDING_BASE_BATCH],
+    /// Total constraint count expected for this AIR.
+    pub constraint_count: usize,
+    /// Collected base-field constraints for this row.
+    pub base_constraints: Vec<PackedVal<SC>>,
+    /// Collected extension-field constraints for this row.
+    pub ext_constraints: Vec<PackedChallenge<SC>>,
 }
 
 impl<'a, SC: StarkGenericConfig> ProverConstraintFolder<'a, SC> {
+    #[inline(always)]
+    fn packed_linear_combination_ext<const N: usize>(
+        coeffs: &[PackedChallenge<SC>],
+        exprs: &[PackedChallenge<SC>],
+    ) -> PackedChallenge<SC> {
+        let mut acc = PackedChallenge::<SC>::ZERO;
+        let mut i = 0;
+        while i < N {
+            acc += coeffs[i] * exprs[i];
+            i += 1;
+        }
+        acc
+    }
+
     #[inline]
-    pub fn flush_pending_base(&mut self) {
-        let n = self.pending_base_len;
-        if n == 0 {
-            return;
+    pub fn finalize_constraints(&mut self) {
+        debug_assert_eq!(self.constraint_index, self.constraint_count);
+        debug_assert_eq!(
+            self.base_constraints.len(),
+            self.base_alpha_powers.first().map_or(0, Vec::len)
+        );
+        debug_assert_eq!(self.ext_constraints.len(), self.ext_alpha_powers.len());
+
+        let base_constraints = &self.base_constraints;
+        let base_alpha_powers = self.base_alpha_powers;
+        let base_len = base_constraints.len();
+
+        self.accumulator = PackedChallenge::<SC>::from_basis_coefficients_fn(|i| {
+            let coeffs = &base_alpha_powers[i];
+            let mut acc = PackedVal::<SC>::ZERO;
+            let mut start = 0;
+            while start + CONSTRAINT_BATCH <= base_len {
+                acc += PackedVal::<SC>::packed_linear_combination::<CONSTRAINT_BATCH>(
+                    &coeffs[start..start + CONSTRAINT_BATCH],
+                    &base_constraints[start..start + CONSTRAINT_BATCH],
+                );
+                start += CONSTRAINT_BATCH;
+            }
+            for (coeff, expr) in coeffs[start..base_len]
+                .iter()
+                .zip(base_constraints[start..base_len].iter())
+            {
+                acc += *expr * *coeff;
+            }
+            acc
+        });
+
+        let ext_constraints = &self.ext_constraints;
+        let ext_alpha_powers = self.ext_alpha_powers;
+        let ext_len = ext_constraints.len();
+        let mut start = 0;
+        while start + CONSTRAINT_BATCH <= ext_len {
+            self.accumulator += Self::packed_linear_combination_ext::<CONSTRAINT_BATCH>(
+                &ext_alpha_powers[start..start + CONSTRAINT_BATCH],
+                &ext_constraints[start..start + CONSTRAINT_BATCH],
+            );
+            start += CONSTRAINT_BATCH;
         }
-
-        let start = self.pending_base_start;
-        // Copy refs so we can update `accumulator` without borrow checker conflicts.
-        let decomposed_alpha_powers = self.decomposed_alpha_powers;
-        let pending_base = &self.pending_base;
-
-        if n == PENDING_BASE_BATCH {
-            // Fast path: flush a full batch via the const-generic kernel.
-            self.accumulator += PackedChallenge::<SC>::from_basis_coefficients_fn(|i| {
-                let alpha_powers = &decomposed_alpha_powers[i][start..(start + PENDING_BASE_BATCH)];
-                PackedVal::<SC>::packed_linear_combination::<PENDING_BASE_BATCH>(
-                    alpha_powers,
-                    pending_base,
-                )
-            });
-        } else {
-            // Tail flush before `assert_zero_ext`/end-of-eval; use a small loop for n.
-            let pending_base = &pending_base[..n];
-            self.accumulator += PackedChallenge::<SC>::from_basis_coefficients_fn(|i| {
-                let alpha_powers = &decomposed_alpha_powers[i][start..(start + n)];
-                let mut acc = PackedVal::<SC>::ZERO;
-                for (coeff, expr) in alpha_powers.iter().zip(pending_base.iter()) {
-                    acc += *expr * *coeff;
-                }
-                acc
-            });
+        for (coeff, expr) in ext_alpha_powers[start..ext_len]
+            .iter()
+            .zip(ext_constraints[start..ext_len].iter())
+        {
+            self.accumulator += *coeff * *expr;
         }
-
-        self.pending_base_len = 0;
     }
 }
 
@@ -147,30 +176,14 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
     #[inline]
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
         let x = x.into();
-        if self.pending_base_len == 0 {
-            self.pending_base_start = self.constraint_index;
-        }
-
-        self.pending_base[self.pending_base_len] = x;
-        self.pending_base_len += 1;
+        self.base_constraints.push(x);
         self.constraint_index += 1;
-
-        if self.pending_base_len == PENDING_BASE_BATCH {
-            self.flush_pending_base();
-        }
     }
 
     #[inline]
     fn assert_zeros<const N: usize, I: Into<Self::Expr>>(&mut self, array: [I; N]) {
-        // `assert_zero` is buffered; flush to avoid interleaving and breaking batching order.
-        self.flush_pending_base();
-
         let expr_array = array.map(Into::into);
-        self.accumulator += PackedChallenge::<SC>::from_basis_coefficients_fn(|i| {
-            let alpha_powers = &self.decomposed_alpha_powers[i]
-                [self.constraint_index..(self.constraint_index + N)];
-            PackedVal::<SC>::packed_linear_combination::<N>(alpha_powers, &expr_array)
-        });
+        self.base_constraints.extend(expr_array);
         self.constraint_index += N;
     }
 
@@ -179,11 +192,8 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
     where
         I: Into<Self::ExprEF>,
     {
-        // Flush base-field pending constraints to keep the stream contiguous.
-        self.flush_pending_base();
-
-        let alpha_power = self.alpha_powers[self.constraint_index];
-        self.accumulator += Into::<PackedChallenge<SC>>::into(alpha_power) * x.into();
+        let x = x.into();
+        self.ext_constraints.push(x);
         self.constraint_index += 1;
     }
 
@@ -194,7 +204,7 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
 
     #[inline]
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
-        self.packed_randomness.as_slice()
+        self.packed_randomness
     }
 
     fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
