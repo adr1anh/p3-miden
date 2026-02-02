@@ -517,97 +517,103 @@ where
             .into_par_iter()
             .step_by(PackedVal::<SC>::WIDTH)
             .flat_map_iter(|i_start| {
-            let i_range = i_start..i_start + PackedVal::<SC>::WIDTH;
+                let i_range = i_start..i_start + PackedVal::<SC>::WIDTH;
 
-            let is_first_row = *PackedVal::<SC>::from_slice(&sels.is_first_row[i_range.clone()]);
-            let is_last_row = *PackedVal::<SC>::from_slice(&sels.is_last_row[i_range.clone()]);
-            let is_transition = *PackedVal::<SC>::from_slice(&sels.is_transition[i_range.clone()]);
-            let inv_vanishing = *PackedVal::<SC>::from_slice(&sels.inv_vanishing[i_range.clone()]);
+                let is_first_row =
+                    *PackedVal::<SC>::from_slice(&sels.is_first_row[i_range.clone()]);
+                let is_last_row = *PackedVal::<SC>::from_slice(&sels.is_last_row[i_range.clone()]);
+                let is_transition =
+                    *PackedVal::<SC>::from_slice(&sels.is_transition[i_range.clone()]);
+                let inv_vanishing =
+                    *PackedVal::<SC>::from_slice(&sels.inv_vanishing[i_range.clone()]);
 
-            let main = RowMajorMatrix::new(
-                trace_on_quotient_domain
-                    .vertically_packed_row_pair::<PackedVal<SC>>(i_start, next_step),
-                width,
-            );
-            let aux = aux_trace_on_quotient_domain.as_ref().map_or_else(
-                || RowMajorMatrix::new(vec![], 0),
-                |aux_trace| {
-                    // Aux trace is stored in flattened base field format (each EF element = D base elements)
-                    // We need to convert it to packed extension field format
-                    let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
-                    let base_packed: Vec<PackedVal<SC>> =
-                        aux_trace.vertically_packed_row_pair(i_start, next_step);
-                    let ef_width = aux_trace.width() / d;
-                    // Convert from packed base field to packed extension field.
-                    // Each EF element is formed from D consecutive base field elements.
-                    let ef_packed: Vec<PackedChallenge<SC>> = (0..ef_width * 2)
-                        .map(|i| {
-                            PackedChallenge::<SC>::from_basis_coefficients_fn(|j| {
-                                base_packed[i * d + j]
+                let main = RowMajorMatrix::new(
+                    trace_on_quotient_domain
+                        .vertically_packed_row_pair::<PackedVal<SC>>(i_start, next_step),
+                    width,
+                );
+                let aux = aux_trace_on_quotient_domain.as_ref().map_or_else(
+                    || RowMajorMatrix::new(vec![], 0),
+                    |aux_trace| {
+                        // Aux trace is stored in flattened base field format (each EF element = D base elements)
+                        // We need to convert it to packed extension field format
+                        let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
+                        let base_packed: Vec<PackedVal<SC>> =
+                            aux_trace.vertically_packed_row_pair(i_start, next_step);
+                        let ef_width = aux_trace.width() / d;
+                        // Convert from packed base field to packed extension field.
+                        // Each EF element is formed from D consecutive base field elements.
+                        let ef_packed: Vec<PackedChallenge<SC>> = (0..ef_width * 2)
+                            .map(|i| {
+                                PackedChallenge::<SC>::from_basis_coefficients_fn(|j| {
+                                    base_packed[i * d + j]
+                                })
+                            })
+                            .collect();
+
+                        RowMajorMatrix::new(ef_packed, ef_width)
+                    },
+                );
+
+                let preprocessed = preprocessed_on_quotient_domain.map(|preprocessed| {
+                    let preprocessed_width = preprocessed.width();
+                    RowMajorMatrix::new(
+                        preprocessed
+                            .vertically_packed_row_pair::<PackedVal<SC>>(i_start, next_step),
+                        preprocessed_width,
+                    )
+                });
+
+                // Pack challenges for constraint evaluation
+                let packed_randomness: Vec<PackedChallenge<SC>> =
+                    randomness.iter().copied().map(Into::into).collect();
+
+                // Grab precomputed periodic evaluations for this packed chunk.
+                let periodic_values: Vec<PackedVal<SC>> = if periodic_table.is_empty() {
+                    Vec::new()
+                } else {
+                    let num_cols = periodic_on_quotient.width();
+                    (0..num_cols)
+                        .map(|col_idx| {
+                            PackedVal::<SC>::from_fn(|j| {
+                                *periodic_on_quotient.get(i_start + j, col_idx)
                             })
                         })
-                        .collect();
+                        .collect()
+                };
 
-                    RowMajorMatrix::new(ef_packed, ef_width)
-                },
-            );
+                let accumulator = PackedChallenge::<SC>::ZERO;
+                let mut folder: ProverConstraintFolder<'_, SC> = ProverConstraintFolder {
+                    main: main.as_view(),
+                    aux: aux.as_view(),
+                    preprocessed: preprocessed.as_ref().map(|m| m.as_view()),
+                    public_values,
+                    periodic_values: &periodic_values,
+                    is_first_row,
+                    is_last_row,
+                    is_transition,
+                    alpha_powers: &alpha_powers,
+                    decomposed_alpha_powers: &decomposed_alpha_powers,
+                    accumulator,
+                    constraint_index: 0,
+                    packed_randomness,
+                    aux_bus_boundary_values: &packed_aux_bus_boundary_values,
+                };
 
-            let preprocessed = preprocessed_on_quotient_domain.map(|preprocessed| {
-                let preprocessed_width = preprocessed.width();
-                RowMajorMatrix::new(
-                    preprocessed
-                        .vertically_packed_row_pair::<PackedVal<SC>>(i_start, next_step),
-                    preprocessed_width,
-                )
-            });
+                air.eval(&mut folder);
 
-            // Pack challenges for constraint evaluation
-            let packed_randomness: Vec<PackedChallenge<SC>> =
-                randomness.iter().copied().map(Into::into).collect();
+                // quotient(x) = constraints(x) / Z_H(x)
+                let quotient = folder.accumulator * inv_vanishing;
 
-            // Grab precomputed periodic evaluations for this packed chunk.
-            let periodic_values: Vec<PackedVal<SC>> = if periodic_table.is_empty() {
-                Vec::new()
-            } else {
-                let num_cols = periodic_on_quotient.width();
-                (0..num_cols)
-                    .map(|col_idx| {
-                        PackedVal::<SC>::from_fn(|j| {
-                            *periodic_on_quotient.get(i_start + j, col_idx)
+                // "Transpose" D packed base coefficients into WIDTH scalar extension coefficients.
+                (0..core::cmp::min(quotient_size, PackedVal::<SC>::WIDTH)).map(
+                    move |idx_in_packing| {
+                        SC::Challenge::from_basis_coefficients_fn(|coeff_idx| {
+                            quotient.as_basis_coefficients_slice()[coeff_idx].as_slice()
+                                [idx_in_packing]
                         })
-                    })
-                    .collect()
-            };
-
-            let accumulator = PackedChallenge::<SC>::ZERO;
-            let mut folder: ProverConstraintFolder<'_, SC> = ProverConstraintFolder {
-                main: main.as_view(),
-                aux: aux.as_view(),
-                preprocessed: preprocessed.as_ref().map(|m| m.as_view()),
-                public_values,
-                periodic_values: &periodic_values,
-                is_first_row,
-                is_last_row,
-                is_transition,
-                alpha_powers: &alpha_powers,
-                decomposed_alpha_powers: &decomposed_alpha_powers,
-                accumulator,
-                constraint_index: 0,
-                packed_randomness,
-                aux_bus_boundary_values: &packed_aux_bus_boundary_values,
-            };
-
-            air.eval(&mut folder);
-
-            // quotient(x) = constraints(x) / Z_H(x)
-            let quotient = folder.accumulator * inv_vanishing;
-
-            // "Transpose" D packed base coefficients into WIDTH scalar extension coefficients.
-            (0..core::cmp::min(quotient_size, PackedVal::<SC>::WIDTH)).map(move |idx_in_packing| {
-                SC::Challenge::from_basis_coefficients_fn(|coeff_idx| {
-                    quotient.as_basis_coefficients_slice()[coeff_idx].as_slice()[idx_in_packing]
-                })
-            })
+                    },
+                )
             })
             .collect()
     })

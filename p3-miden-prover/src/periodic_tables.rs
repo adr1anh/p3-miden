@@ -390,12 +390,15 @@ mod tests {
         };
 
         // Method 1: Optimized method (compute_periodic_on_quotient_eval_domain)
-        let optimized_table =
-            compute_periodic_on_quotient_eval_domain(&periodic_table, &trace_domain, &quotient_domain);
+        let optimized_table = compute_periodic_on_quotient_eval_domain(
+            &periodic_table,
+            &trace_domain,
+            &quotient_domain,
+        );
         let optimized_result: Vec<Vec<Val>> = (0..periodic_table.len())
             .map(|col_idx| {
                 (0..quotient_size)
-                    .map(|i| optimized_table.get(i, col_idx).clone())
+                    .map(|i| *optimized_table.get(i, col_idx))
                     .collect()
             })
             .collect();
@@ -469,12 +472,15 @@ mod tests {
             pts
         };
 
-        let optimized_table =
-            compute_periodic_on_quotient_eval_domain(&periodic_table, &trace_domain, &quotient_domain);
+        let optimized_table = compute_periodic_on_quotient_eval_domain(
+            &periodic_table,
+            &trace_domain,
+            &quotient_domain,
+        );
         let optimized_result: Vec<Vec<Val>> = (0..periodic_table.len())
             .map(|col_idx| {
                 (0..quotient_size)
-                    .map(|i| optimized_table.get(i, col_idx).clone())
+                    .map(|i| *optimized_table.get(i, col_idx))
                     .collect()
             })
             .collect();
