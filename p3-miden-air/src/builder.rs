@@ -69,7 +69,7 @@ pub trait MidenAirBuilder: Sized {
     // ==================== Associated Types from AirBuilderWithPeriodicValues ====================
 
     /// Type representing a periodic value.
-    type PeriodicVal: Into<Self::Expr> + Into<Self::ExprEF> + Copy;
+    type PeriodicVal: Into<Self::Expr> + Copy;
 
     // ==================== Associated Types from ExtensionBuilder ====================
 

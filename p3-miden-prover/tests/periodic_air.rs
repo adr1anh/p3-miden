@@ -79,13 +79,13 @@ impl<F: Field, EF: ExtensionField<F>> MidenAir<F, EF> for FibonacciPeriodicAir {
         when_transition.assert_eq(next.b.clone(), local.a.clone() + local.b.clone());
 
         // Periodic column constraint:
-        // Note: periodic values are in the extension field (ExprEF), so we need to convert
-        // Convert selector (Var) to Expr, then to ExprEF
 
         // 1. selector must equal the periodic value
         let selector_expr: AB::Expr = local.selector.clone().into();
         let selector_ef: AB::ExprEF = selector_expr.into();
-        builder.assert_eq_ext(selector_ef.clone(), periodic_selector);
+        let periodic_selector_expr: AB::Expr = periodic_selector.into();
+        let periodic_selector_ef: AB::ExprEF = periodic_selector_expr.into();
+        builder.assert_eq_ext(selector_ef.clone(), periodic_selector_ef);
 
         // 2. verify the alternating pattern
         // If current selector is 0, next must be 1, and vice versa
