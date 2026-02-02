@@ -31,13 +31,15 @@ use p3_miden_air::MidenAir;
 use p3_miden_lifted_fri::verifier::verify_with_channel as verify_pcs_with_channel;
 use p3_miden_lifted_fri::{PcsError, PcsTranscript};
 use p3_miden_lmcs::Lmcs;
-use p3_miden_transcript::{TranscriptData, VerifierChannel, VerifierTranscript};
+use p3_miden_transcript::{
+    InitTranscript, TranscriptData, TranscriptError, VerifierChannel, VerifierTranscript,
+};
 use p3_util::log2_strict_usize;
 
 use p3_miden_lifted_stark::{
     ConstraintFolder, LayoutSnapshot, LiftedStarkConfig, ParamsSnapshot, Proof, align_width,
-    eval_periodic_values, read_periodic_tables, row_pair_matrix, sample_ext, sample_ood_zeta,
-    selectors_at, trim_row,
+    eval_periodic_values, observe_init_domain_sep, observe_init_public_values,
+    read_periodic_tables, row_pair_matrix, sample_ext, sample_ood_zeta, selectors_at, trim_row,
 };
 
 // -----------------------------------------------------------------------------
@@ -47,12 +49,25 @@ use p3_miden_lifted_stark::{
 #[derive(Debug)]
 pub enum VerifierError {
     Pcs(PcsError),
+    Transcript(TranscriptError),
     InvalidTranscript,
     InvalidAuxShape,
     ConstraintMismatch,
     TranscriptNotConsumed,
     ParamsMismatch,
     PublicValuesMismatch,
+}
+
+impl From<PcsError> for VerifierError {
+    fn from(err: PcsError) -> Self {
+        Self::Pcs(err)
+    }
+}
+
+impl From<TranscriptError> for VerifierError {
+    fn from(err: TranscriptError) -> Self {
+        Self::Transcript(err)
+    }
 }
 
 /// Replayable transcript view for debugging or audit tooling.
@@ -89,7 +104,7 @@ where
     EF: ExtensionField<L::F>,
 {
     /// Parse a full transcript by replaying a verifier channel.
-    pub fn from_verifier_channel<Ch>(lmcs: &L, channel: &mut Ch) -> Option<Self>
+    pub fn from_verifier_channel<Ch>(lmcs: &L, channel: &mut Ch) -> Result<Self, VerifierError>
     where
         Ch: VerifierChannel<F = L::F, Commitment = L::Commitment>
             + CanSample<L::F>
@@ -142,7 +157,9 @@ where
             (commitments.quotient, layout.quotient_widths.clone()),
         ];
 
-        let pcs_params = params.to_pcs_params()?;
+        let pcs_params = params
+            .to_pcs_params()
+            .ok_or(VerifierError::InvalidTranscript)?;
         let pcs = PcsTranscript::from_verifier_channel::<Ch, 2>(
             &pcs_params,
             lmcs,
@@ -152,7 +169,7 @@ where
             channel,
         )?;
 
-        Some(Self {
+        Ok(Self {
             params,
             layout,
             periodic_tables,
@@ -207,15 +224,13 @@ where
     }
 
     // === Public parameters ===
-    let params_snapshot = ParamsSnapshot::read_from_channel::<F, _>(channel)
-        .ok_or(VerifierError::InvalidTranscript)?;
+    let params_snapshot = ParamsSnapshot::read_from_channel::<F, _>(channel)?;
     if !params_snapshot.matches_config(config) {
         return Err(VerifierError::ParamsMismatch);
     }
 
     // === Instance layout ===
-    let layout = LayoutSnapshot::read_from_channel::<F, _>(channel)
-        .ok_or(VerifierError::InvalidTranscript)?;
+    let layout = LayoutSnapshot::read_from_channel::<F, _>(channel)?;
     if layout.num_airs != airs.len() {
         return Err(VerifierError::InvalidTranscript);
     }
@@ -247,8 +262,7 @@ where
 
     // === Periodic tables (per air, unpermuted order) ===
     // Periodic tables are in AIR order and must match the AIR's column counts.
-    let periodic_tables = read_periodic_tables::<F, _>(channel, layout.num_airs)
-        .ok_or(VerifierError::InvalidTranscript)?;
+    let periodic_tables = read_periodic_tables::<F, _>(channel, layout.num_airs)?;
     for (idx, air) in airs.iter().enumerate() {
         if periodic_tables[idx].len() != air.periodic_table().len() {
             return Err(VerifierError::InvalidTranscript);
@@ -258,9 +272,7 @@ where
     // === Read commitments + sample randomness ===
     // Commitment order must mirror the prover: main, (sample randomness), aux,
     // (sample alphas, beta), quotient.
-    let main_commit = *channel
-        .receive_commitment()
-        .ok_or(VerifierError::InvalidTranscript)?;
+    let main_commit = *channel.receive_commitment()?;
 
     // === Randomness per air ===
     // Randomness is sampled per AIR (AIR order), and must match air.num_randomness().
@@ -275,9 +287,7 @@ where
         randomness_per_air.push(randomness);
     }
 
-    let aux_commit = *channel
-        .receive_commitment()
-        .ok_or(VerifierError::InvalidTranscript)?;
+    let aux_commit = *channel.receive_commitment()?;
 
     // === Alpha per air ===
     // Alpha is sampled after aux commitment to bind folding to aux trace contents.
@@ -289,9 +299,7 @@ where
     // Beta is used for the Horner combine across AIRs (permutation order).
     let beta: EF = sample_ext::<F, EF, _>(channel);
 
-    let quotient_commit = *channel
-        .receive_commitment()
-        .ok_or(VerifierError::InvalidTranscript)?;
+    let quotient_commit = *channel.receive_commitment()?;
 
     // === Zeta (OOD) ===
     // Rejection-sample zeta so it is not in H or gK (avoid divide-by-zero).
@@ -321,8 +329,7 @@ where
         layout.log_max_height,
         [zeta, zeta_next],
         channel,
-    )
-    .map_err(VerifierError::Pcs)?;
+    )?;
 
     let groups = evals.groups();
     if groups.len() != 3 {
@@ -451,6 +458,9 @@ where
         + CanSample<F>
         + CanSampleBits<usize>,
 {
-    let mut channel = VerifierTranscript::from_data(challenger, &proof.transcript);
+    let mut init = InitTranscript::<F, L::Commitment, _>::new(challenger);
+    observe_init_domain_sep(&mut init);
+    observe_init_public_values(&mut init, public_values);
+    let mut channel = init.into_verifier(&proof.transcript);
     verify_with_channel::<F, EF, A, L, Dft, _>(config, airs, public_values, &mut channel)
 }

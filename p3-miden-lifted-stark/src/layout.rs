@@ -10,7 +10,7 @@ use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_air::MidenAir;
-use p3_miden_transcript::{ProverChannel, VerifierChannel};
+use p3_miden_transcript::{ProverChannel, TranscriptError, VerifierChannel};
 use p3_util::log2_strict_usize;
 
 use crate::utils::align_width;
@@ -150,7 +150,7 @@ pub struct LayoutSnapshot {
 }
 
 impl LayoutSnapshot {
-    pub fn write_to_channel<F, Ch>(&self, channel: &mut Ch) -> Option<()>
+    pub fn write_to_channel<F, Ch>(&self, channel: &mut Ch) -> Result<(), TranscriptError>
     where
         F: PrimeField64,
         Ch: ProverChannel<F = F>,
@@ -163,10 +163,10 @@ impl LayoutSnapshot {
         send_usize_list::<F, _>(channel, &self.num_randomness)?;
         send_air_widths::<F, _>(channel, &self.air_widths)?;
         send_usize_list::<F, _>(channel, &self.quotient_widths)?;
-        Some(())
+        Ok(())
     }
 
-    pub fn read_from_channel<F, Ch>(channel: &mut Ch) -> Option<Self>
+    pub fn read_from_channel<F, Ch>(channel: &mut Ch) -> Result<Self, TranscriptError>
     where
         F: PrimeField64,
         Ch: VerifierChannel<F = F>,
@@ -180,7 +180,7 @@ impl LayoutSnapshot {
         let air_widths = read_air_widths::<F, _>(channel, num_airs)?;
         let quotient_widths = read_usize_list::<F, _>(channel, 1)?;
 
-        Some(Self {
+        Ok(Self {
             num_airs,
             log_degrees,
             permutation,
@@ -193,16 +193,17 @@ impl LayoutSnapshot {
     }
 }
 
-fn send_usize<F, Ch>(channel: &mut Ch, value: usize) -> Option<()>
+fn send_usize<F, Ch>(channel: &mut Ch, value: usize) -> Result<(), TranscriptError>
 where
     F: PrimeField64,
     Ch: ProverChannel<F = F>,
 {
-    let value = u64::try_from(value).ok()?;
-    channel.send_u64(value)
+    let value = u64::try_from(value).map_err(|_| TranscriptError::InvalidEncoding)?;
+    channel.send_u64(value);
+    Ok(())
 }
 
-fn send_usize_list<F, Ch>(channel: &mut Ch, values: &[usize]) -> Option<()>
+fn send_usize_list<F, Ch>(channel: &mut Ch, values: &[usize]) -> Result<(), TranscriptError>
 where
     F: PrimeField64,
     Ch: ProverChannel<F = F>,
@@ -210,19 +211,19 @@ where
     for &value in values {
         send_usize::<F, _>(channel, value)?;
     }
-    Some(())
+    Ok(())
 }
 
-fn read_usize<F, Ch>(channel: &mut Ch) -> Option<usize>
+fn read_usize<F, Ch>(channel: &mut Ch) -> Result<usize, TranscriptError>
 where
     F: PrimeField64,
     Ch: VerifierChannel<F = F>,
 {
     let value = channel.receive_u64()?;
-    usize::try_from(value).ok()
+    usize::try_from(value).map_err(|_| TranscriptError::InvalidEncoding)
 }
 
-fn read_usize_list<F, Ch>(channel: &mut Ch, count: usize) -> Option<Vec<usize>>
+fn read_usize_list<F, Ch>(channel: &mut Ch, count: usize) -> Result<Vec<usize>, TranscriptError>
 where
     F: PrimeField64,
     Ch: VerifierChannel<F = F>,
@@ -231,10 +232,10 @@ where
     for _ in 0..count {
         out.push(read_usize::<F, _>(channel)?);
     }
-    Some(out)
+    Ok(out)
 }
 
-fn send_air_widths<F, Ch>(channel: &mut Ch, widths: &[AirWidths]) -> Option<()>
+fn send_air_widths<F, Ch>(channel: &mut Ch, widths: &[AirWidths]) -> Result<(), TranscriptError>
 where
     F: PrimeField64,
     Ch: ProverChannel<F = F>,
@@ -243,10 +244,10 @@ where
         send_usize::<F, _>(channel, width.trace)?;
         send_usize::<F, _>(channel, width.aux)?;
     }
-    Some(())
+    Ok(())
 }
 
-fn read_air_widths<F, Ch>(channel: &mut Ch, count: usize) -> Option<Vec<AirWidths>>
+fn read_air_widths<F, Ch>(channel: &mut Ch, count: usize) -> Result<Vec<AirWidths>, TranscriptError>
 where
     F: PrimeField64,
     Ch: VerifierChannel<F = F>,
@@ -257,5 +258,5 @@ where
         let aux = read_usize::<F, _>(channel)?;
         out.push(AirWidths { trace, aux });
     }
-    Some(out)
+    Ok(out)
 }

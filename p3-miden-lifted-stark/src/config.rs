@@ -13,7 +13,7 @@ use p3_miden_lifted_fri::PcsParams;
 use p3_miden_lifted_fri::deep::DeepParams;
 use p3_miden_lifted_fri::fri::{FriFold, FriParams};
 use p3_miden_lmcs::Lmcs;
-use p3_miden_transcript::{ProverChannel, VerifierChannel};
+use p3_miden_transcript::{ProverChannel, TranscriptError, VerifierChannel};
 
 #[derive(Clone)]
 pub struct LiftedStarkConfig<F, L, Dft> {
@@ -56,14 +56,15 @@ impl ParamsSnapshot {
         }
     }
 
-    pub fn write_to_channel<F, Ch>(&self, channel: &mut Ch) -> Option<()>
+    pub fn write_to_channel<F, Ch>(&self, channel: &mut Ch) -> Result<(), TranscriptError>
     where
         F: PrimeField64,
         Ch: ProverChannel<F = F>,
     {
-        let mut send_len = |value: usize| {
-            let value = u64::try_from(value).ok()?;
-            channel.send_u64(value)
+        let mut send_len = |value: usize| -> Result<(), TranscriptError> {
+            let value = u64::try_from(value).map_err(|_| TranscriptError::InvalidEncoding)?;
+            channel.send_u64(value);
+            Ok(())
         };
 
         send_len(self.log_blowup)?;
@@ -74,20 +75,21 @@ impl ParamsSnapshot {
         send_len(self.num_queries)?;
         send_len(self.query_pow_bits)?;
         send_len(self.alignment)?;
-        Some(())
+        Ok(())
     }
 
-    pub fn read_from_channel<F, Ch>(channel: &mut Ch) -> Option<Self>
+    pub fn read_from_channel<F, Ch>(channel: &mut Ch) -> Result<Self, TranscriptError>
     where
         F: PrimeField64,
         Ch: VerifierChannel<F = F>,
     {
-        let mut read_len = || {
+        let mut read_len = || -> Result<usize, TranscriptError> {
             let value = channel.receive_u64()?;
-            usize::try_from(value).ok()
+            let value = usize::try_from(value).map_err(|_| TranscriptError::InvalidEncoding)?;
+            Ok(value)
         };
 
-        Some(Self {
+        Ok(Self {
             log_blowup: read_len()?,
             fold_log_arity: read_len()?,
             log_final_degree: read_len()?,

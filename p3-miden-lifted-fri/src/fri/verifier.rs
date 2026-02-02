@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 use p3_challenger::CanSample;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_lmcs::{Lmcs, LmcsError};
-use p3_miden_transcript::VerifierChannel;
+use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
 use thiserror::Error;
 
@@ -79,23 +79,16 @@ where
         let mut rounds = Vec::with_capacity(num_rounds);
 
         for _ in 0..num_rounds {
-            let commitment = channel
-                .receive_commitment()
-                .ok_or(FriError::InvalidProofStructure)?
-                .clone();
+            let commitment = channel.receive_commitment()?.clone();
 
-            if channel.grind(params.proof_of_work_bits).is_none() {
-                return Err(FriError::InvalidPowWitness);
-            }
+            channel.grind(params.proof_of_work_bits)?;
 
             let beta: EF = channel.sample_algebra_element();
             rounds.push(FriRoundOracle { commitment, beta });
         }
 
         let final_degree = params.final_poly_degree(log_domain_size);
-        let final_poly = channel
-            .receive_algebra_slice(final_degree)
-            .ok_or(FriError::InvalidProofStructure)?;
+        let final_poly = channel.receive_algebra_slice(final_degree)?;
 
         Ok(Self { rounds, final_poly })
     }
@@ -231,6 +224,6 @@ pub enum FriError {
     EvaluationMismatch { row_index: usize, position: usize },
     #[error("final polynomial mismatch")]
     FinalPolyMismatch,
-    #[error("invalid proof-of-work witness")]
-    InvalidPowWitness,
+    #[error("transcript error: {0}")]
+    TranscriptError(#[from] TranscriptError),
 }

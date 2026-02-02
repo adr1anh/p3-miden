@@ -8,7 +8,7 @@
 //! [`BatchProof`] parses hints without hashing, and can be turned into per-index
 //! [`Proof`] objects once the hashing context is available.
 
-use crate::Lmcs;
+use crate::{Lmcs, LmcsError};
 use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
@@ -79,14 +79,14 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         log_max_height: usize,
         indices: &[usize],
         channel: &mut Ch,
-    ) -> Option<Self>
+    ) -> Result<Self, LmcsError>
     where
         F: Copy,
         C: Copy + PartialEq,
         Ch: VerifierChannel<F = F, Commitment = C>,
     {
         if indices.is_empty() {
-            return Some(Self {
+            return Ok(Self {
                 openings: BTreeMap::new(),
                 siblings: BTreeMap::new(),
             });
@@ -98,7 +98,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         // Read openings in first-occurrence order, skipping duplicates.
         for &index in indices {
             if index >= max_height {
-                return None;
+                return Err(LmcsError::InvalidProof);
             }
             let entry = match openings.entry(index) {
                 Entry::Occupied(_) => continue,
@@ -112,7 +112,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
             }
 
             let salt_slice = channel.receive_hint_field_slice(SALT_ELEMS)?;
-            let salt: [F; SALT_ELEMS] = salt_slice.try_into().ok()?;
+            let salt: [F; SALT_ELEMS] = salt_slice.try_into().unwrap();
 
             entry.insert(LeafOpening { rows, salt });
         }
@@ -122,17 +122,17 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         for (current_depth, missing_pos) in
             required_siblings(openings.keys().copied(), log_max_height)
         {
-            let sibling_hash: C = channel.receive_hint_commitment().copied()?;
+            let sibling_hash: C = *channel.receive_hint_commitment()?;
 
             if siblings
                 .insert((current_depth, missing_pos), sibling_hash)
                 .is_some_and(|existing| existing != sibling_hash)
             {
-                return None;
+                return Err(LmcsError::InvalidProof);
             }
         }
 
-        Some(Self { openings, siblings })
+        Ok(Self { openings, siblings })
     }
 
     /// Reconstruct per-index proofs by hashing rows/salt and rebuilding paths.

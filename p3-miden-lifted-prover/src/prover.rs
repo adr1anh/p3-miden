@@ -54,14 +54,14 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_air::MidenAir;
 use p3_miden_lifted_fri::prover::open_with_channel;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
-use p3_miden_transcript::{ProverChannel, ProverTranscript};
+use p3_miden_transcript::{InitTranscript, ProverChannel, ProverTranscript};
 use p3_util::log2_strict_usize;
 
 use p3_miden_lifted_stark::{
     ConstraintFolder, LayoutSnapshot, LiftedStarkConfig, ParamsSnapshot, Proof, TraceLayout,
-    build_periodic_ldes, lde_matrix, pad_matrix, row_as_ext, row_pair_matrix, row_to_ext,
-    sample_ext, sample_ood_zeta, selectors_at, shift_for_ratio, upsample_bitrev,
-    vanishing_inv_bitrev, write_periodic_tables,
+    build_periodic_ldes, lde_matrix, observe_init_domain_sep, observe_init_public_values,
+    pad_matrix, row_as_ext, row_pair_matrix, row_to_ext, sample_ext, sample_ood_zeta, selectors_at,
+    shift_for_ratio, upsample_bitrev, vanishing_inv_bitrev, write_periodic_tables,
 };
 
 // -----------------------------------------------------------------------------
@@ -349,7 +349,10 @@ where
         + CanSample<F>
         + CanSampleBits<usize>,
 {
-    let mut channel = ProverTranscript::new(challenger);
+    let mut init = InitTranscript::<F, L::Commitment, _>::new(challenger);
+    observe_init_domain_sep(&mut init);
+    observe_init_public_values(&mut init, public_values);
+    let mut channel = init.into_prover();
     prove_with_channel::<F, EF, A, L, Dft, _>(config, airs, traces, public_values, &mut channel)
         .expect("proof parameters must fit in transcript field elements");
     Proof {

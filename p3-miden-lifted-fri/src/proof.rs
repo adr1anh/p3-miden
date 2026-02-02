@@ -1,5 +1,6 @@
 //! PCS transcript data structures.
 
+use crate::PcsError;
 use crate::PcsParams;
 use crate::deep::DeepTranscript;
 use crate::fri::FriTranscript;
@@ -53,14 +54,14 @@ where
         log_lde_height: usize,
         eval_points: [EF; N],
         channel: &mut Ch,
-    ) -> Option<Self>
+    ) -> Result<Self, PcsError>
     where
         Ch: VerifierChannel<F = L::F, Commitment = L::Commitment>
             + CanSample<L::F>
             + CanSampleBits<usize>,
     {
         if commitments.is_empty() {
-            return None;
+            return Err(PcsError::NoCommitments);
         }
 
         let deep_transcript = DeepTranscript::from_verifier_channel::<Ch>(
@@ -83,9 +84,8 @@ where
             .iter()
             .map(|(_commitment, widths)| {
                 lmcs.read_batch_proof_from_channel(widths, log_lde_height, &indices, channel)
-                    .ok()
             })
-            .collect::<Option<Vec<_>>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
 
         let log_arity = params.fri.fold.log_arity();
         let arity = params.fri.fold.arity();
@@ -101,13 +101,12 @@ where
             let base_width = arity * EF::DIMENSION;
             // FRI round openings are unaligned, so use the base width directly.
             let widths = [base_width];
-            let batch = lmcs
-                .read_batch_proof_from_channel(&widths, log_num_rows, &round_indices, channel)
-                .ok()?;
+            let batch =
+                lmcs.read_batch_proof_from_channel(&widths, log_num_rows, &round_indices, channel)?;
             fri_openings.push(batch);
         }
 
-        Some(Self {
+        Ok(Self {
             deep_transcript,
             fri_transcript,
             query_pow_witness,

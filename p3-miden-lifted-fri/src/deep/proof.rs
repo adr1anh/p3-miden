@@ -1,7 +1,6 @@
 //! DEEP transcript data structures.
 
-use crate::deep::DeepEvals;
-use crate::deep::DeepParams;
+use crate::deep::{DeepError, DeepEvals, DeepParams};
 use alloc::vec::Vec;
 use p3_challenger::CanSample;
 use p3_field::{ExtensionField, Field, TwoAdicField};
@@ -35,7 +34,7 @@ where
         commitments: &[(<Ch as VerifierChannel>::Commitment, Vec<usize>)],
         num_eval_points: usize,
         channel: &mut Ch,
-    ) -> Option<Self>
+    ) -> Result<Self, DeepError>
     where
         Ch: VerifierChannel<F = F> + CanSample<F>,
     {
@@ -49,7 +48,7 @@ where
         let challenge_columns: EF = channel.sample_algebra_element();
         let challenge_points: EF = channel.sample_algebra_element();
 
-        Some(Self {
+        Ok(Self {
             evals,
             pow_witness,
             challenge_columns,
