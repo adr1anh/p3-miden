@@ -18,7 +18,7 @@ type Opening<F, C> = (Vec<Vec<F>>, C);
 /// LMCS configuration holding cryptographic primitives (sponge + compression).
 ///
 /// This implementation defines the transcript hint layout used by
-/// [`LiftedMerkleTree::prove_batch`](crate::LiftedMerkleTree::prove_batch) and consumed by
+/// [`LmcsTree::prove_batch`](crate::LmcsTree::prove_batch) and consumed by
 /// `open_batch` and [`BatchProof::read_from_channel`](crate::BatchProof::read_from_channel):
 /// - For each *distinct* query index (in caller order, skipping duplicates): one row per
 ///   matrix (in leaf order), then `SALT_ELEMS` field elements of salt.

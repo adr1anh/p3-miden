@@ -55,7 +55,7 @@ use serde::{Deserialize, Serialize};
 /// ## Transcript Hints
 ///
 /// `prove_batch` streams transcript hints in the format expected by
-/// [`LmcsConfig::open_batch`](crate::LmcsConfig::open_batch):
+/// [`Lmcs::open_batch`](crate::Lmcs::open_batch):
 /// - For each query index (in caller order): one row per matrix (in leaf order), then
 ///   `SALT_ELEMS` field elements of salt.
 /// - Each row is padded with explicit zeros to the LMCS alignment.
