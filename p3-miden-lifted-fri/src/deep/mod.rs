@@ -41,7 +41,7 @@ mod proof;
 pub(crate) mod prover;
 pub(crate) mod verifier;
 
-pub use evals::{BatchedEvals, BatchedGroupEvals, DeepEvals};
+pub use evals::DeepEvals;
 pub use interpolate::PointQuotients;
 pub use proof::DeepTranscript;
 pub use verifier::DeepError;

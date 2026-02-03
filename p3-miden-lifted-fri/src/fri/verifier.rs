@@ -48,6 +48,8 @@ where
     EF: ExtensionField<F>,
     L: Lmcs<F = F>,
 {
+    /// Log₂ of the initial domain size.
+    log_domain_size: usize,
     /// Per-round commitment and folding challenge.
     rounds: Vec<FriRoundOracle<L::Commitment, EF>>,
     /// Coefficients of the final low-degree polynomial.
@@ -89,7 +91,11 @@ where
         let final_degree = params.final_poly_degree(log_domain_size);
         let final_poly = channel.receive_algebra_slice(final_degree)?;
 
-        Ok(Self { rounds, final_poly })
+        Ok(Self {
+            log_domain_size,
+            rounds,
+            final_poly,
+        })
     }
 
     /// Test low-degree proximity by reading openings from a verifier channel.
@@ -106,7 +112,7 @@ where
     {
         let log_arity = params.fold.log_arity();
         let arity = params.fold.arity();
-        let mut log_domain_size = self.log_domain_size(params);
+        let mut log_domain_size = self.log_domain_size;
 
         if indices.len() != initial_evals.len() {
             return Err(FriError::InvalidProofStructure);
@@ -195,16 +201,6 @@ where
         }
 
         Ok(())
-    }
-
-    /// Derive the initial domain size from proof structure.
-    ///
-    /// `log_domain_size = num_rounds * log_folding_factor + log_final_poly_degree + log_blowup`
-    #[inline]
-    fn log_domain_size(&self, params: &FriParams) -> usize {
-        let log_final_poly_degree = self.final_poly.len().trailing_zeros() as usize;
-        let log_max_degree = self.rounds.len() * params.fold.log_arity() + log_final_poly_degree;
-        log_max_degree + params.log_blowup
     }
 }
 
