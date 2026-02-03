@@ -81,11 +81,24 @@ Because verification parses the transcript as it goes, we avoid redundant struct
 This keeps proofs compact but means malformed transcripts typically surface as parse failures
 or evaluation mismatches rather than bespoke "shape" errors.
 
-We also provide structured transcript views (`PcsTranscript`, `DeepTranscript`, `FriTranscript`,
-`BatchProof`, etc.). These exist for compatibility and for reconstructing the full transcript
-(including prover messages, verifier challenges, and PoW witnesses) without re-running
-verification. They validate parsing shape only and do **not** guarantee proof validity.
+### Structured Types (Export Only)
+
+We provide structured transcript views (`PcsTranscript`, `DeepTranscript`, `FriTranscript`,
+`BatchProof`, etc.). These are **not used in production verification**; they exist for:
+- Exporting proofs in a structured format for debugging or analysis.
+- Reconstructing the full prover-verifier interaction (including challenges and PoW witnesses)
+  without re-running verification.
+- Enabling recursive verifiers that need structured proof data.
+
+These types validate parsing shape only and do **not** guarantee proof validity.
 Examples include `LmcsConfig::read_batch_proof_from_channel` and `BatchProof::single_proofs`.
+
+### Future: Transcript Fingerprint
+
+A transcript fingerprint (hash squeezed from the challenger after full consumption) may be
+added to verify implementation equivalence: two verifiers processing the same valid proof
+should produce identical fingerprints, providing a lightweight check that transcript
+handling is consistent across implementations.
 
 ## Alignment and Padding Contract (LMCS + PCS)
 
@@ -282,3 +295,35 @@ allocations scale with transcript lengths provided via the channel; upstream mus
 - DEEP tests: `p3-miden-lifted-fri/src/deep/tests.rs`.
 - Sponge alignment semantics: `p3-miden-stateful-hasher/src/field_sponge.rs`,
   `p3-miden-stateful-hasher/src/serializing_sponge.rs`.
+
+## Soundness Analysis
+
+### DEEP Quotient Soundness
+
+TODO
+
+### FRI Soundness
+
+TODO
+
+### Upsampling Soundness
+
+TODO
+
+Key argument: the verifier sees only equal-height matrices (via upsampling). A cheating
+prover cannot exploit height differences because all openings occur at the uniform height.
+The upsampling operation preserves polynomial evaluations under the lifting map f(X) → f(X^r).
+
+### Overall PCS Soundness
+
+TODO
+
+## Security Parameters
+
+TODO: To be filled with the composed STARK protocol.
+
+Placeholder for guidance on:
+- Query count selection
+- `log_blowup` recommendations
+- `log_final_degree` bounds
+- PoW bits for grinding
