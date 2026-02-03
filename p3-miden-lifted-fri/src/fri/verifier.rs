@@ -31,9 +31,8 @@ use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
 use thiserror::Error;
 
-use crate::utils::horner;
-
 use crate::fri::FriParams;
+use crate::utils::horner;
 
 /// FRI low-degree test oracle.
 ///

@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{ExtensionField, TwoAdicField};
-use p3_miden_lmcs::{Lmcs, LmcsError};
+use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use thiserror::Error;
 
@@ -109,8 +109,6 @@ pub enum PcsError {
     DeepError(#[from] DeepError),
     #[error("FRI error: {0}")]
     FriError(#[from] FriError),
-    #[error("LMCS error: {0}")]
-    LmcsError(#[from] LmcsError),
     #[error("transcript error: {0}")]
     TranscriptError(#[from] TranscriptError),
 }

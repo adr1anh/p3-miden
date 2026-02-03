@@ -20,4 +20,4 @@ pub use data::TranscriptData;
 pub use error::TranscriptError;
 pub use init::InitTranscript;
 pub use prover::{ProverChannel, ProverTranscript};
-pub use verifier::{VerifierChannel, VerifierTranscript};
+pub use verifier::{TranscriptError, VerifierChannel, VerifierTranscript};

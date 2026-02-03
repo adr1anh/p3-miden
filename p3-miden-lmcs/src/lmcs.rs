@@ -18,7 +18,7 @@ type Opening<F, C> = (Vec<Vec<F>>, C);
 /// LMCS configuration holding cryptographic primitives (sponge + compression).
 ///
 /// This implementation defines the transcript hint layout used by
-/// [`LiftedMerkleTree::prove_batch`](crate::LiftedMerkleTree::prove_batch) and consumed by
+/// [`LmcsTree::prove_batch`](crate::LmcsTree::prove_batch) and consumed by
 /// `open_batch` and [`BatchProof::read_from_channel`](crate::BatchProof::read_from_channel):
 /// - For each *distinct* query index (in caller order, skipping duplicates): one row per
 ///   matrix (in leaf order), then `SALT_ELEMS` field elements of salt.
@@ -195,12 +195,9 @@ where
             let rows = widths
                 .iter()
                 .map(|&width| channel.receive_hint_field_slice(width).map(Vec::from))
-                .collect::<Option<Vec<_>>>()
-                .ok_or(LmcsError::InvalidProof)?;
+                .collect::<Result<Vec<_>, _>>()?;
 
-            let salt_slice = channel
-                .receive_hint_field_slice(SALT_ELEMS)
-                .ok_or(LmcsError::InvalidProof)?;
+            let salt_slice = channel.receive_hint_field_slice(SALT_ELEMS)?;
             let salt: [PF::Value; SALT_ELEMS] = salt_slice.try_into().unwrap();
 
             let leaf_hash = self.hash(
@@ -247,10 +244,7 @@ where
                     let sibling_hash =
                         match children_iter.next_if(|(pos, _)| *pos == sibling_position) {
                             Some((_, hash)) => *hash,
-                            None => channel
-                                .receive_hint_commitment()
-                                .copied()
-                                .ok_or(LmcsError::InvalidProof)?,
+                            None => *channel.receive_hint_commitment()?,
                         };
 
                     // Determine left/right ordering: left child has even position (bit 0 = 0).
@@ -313,8 +307,12 @@ where
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>,
     {
-        BatchProof::read_from_channel(widths, log_max_height, indices, channel)
-            .ok_or(LmcsError::InvalidProof)
+        Ok(BatchProof::read_from_channel(
+            widths,
+            log_max_height,
+            indices,
+            channel,
+        )?)
     }
 }
 // ============================================================================
@@ -453,7 +451,9 @@ mod tests {
                 &indices,
                 &mut verifier_channel,
             ),
-            Err(LmcsError::InvalidProof)
+            Err(LmcsError::TranscriptError(
+                p3_miden_transcript::TranscriptError::NoMoreCommitments
+            ))
         );
 
         // empty indices

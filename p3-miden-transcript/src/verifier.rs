@@ -5,7 +5,8 @@ use alloc::vec::Vec;
 use p3_challenger::{
     CanObserve, CanSample, CanSampleBits, CanSampleUniformBits, GrindingChallenger,
 };
-use p3_field::{BasedVectorSpace, Field, PrimeField64};
+use p3_field::{BasedVectorSpace, Field};
+use thiserror::Error;
 
 use crate::TranscriptData;
 
@@ -39,25 +40,28 @@ pub trait VerifierChannel {
     type F: Field;
     type Commitment: Copy;
 
-    fn receive_field_slice(&mut self, count: usize) -> Option<&[Self::F]>;
+    fn receive_field_slice(&mut self, count: usize) -> Result<&[Self::F], TranscriptError>;
 
-    fn receive_commitment_slice(&mut self, count: usize) -> Option<&[Self::Commitment]>;
+    fn receive_commitment_slice(
+        &mut self,
+        count: usize,
+    ) -> Result<&[Self::Commitment], TranscriptError>;
 
-    fn receive_field(&mut self) -> Option<&Self::F> {
+    fn receive_field(&mut self) -> Result<&Self::F, TranscriptError> {
         self.receive_field_slice(1)
-            .and_then(|values| values.first())
+            .map(|values| values.first().unwrap())
     }
 
-    fn receive_algebra_element<A>(&mut self) -> Option<A>
+    fn receive_algebra_element<A>(&mut self) -> Result<A, TranscriptError>
     where
         Self::F: Field,
         A: BasedVectorSpace<Self::F>,
     {
         let coeffs = self.receive_field_slice(A::DIMENSION)?;
-        Some(A::from_basis_coefficients_slice(coeffs).unwrap())
+        Ok(A::from_basis_coefficients_slice(coeffs).unwrap())
     }
 
-    fn receive_algebra_slice<A>(&mut self, count: usize) -> Option<Vec<A>>
+    fn receive_algebra_slice<A>(&mut self, count: usize) -> Result<Vec<A>, TranscriptError>
     where
         Self::F: Field,
         A: BasedVectorSpace<Self::F>,
@@ -67,36 +71,32 @@ pub trait VerifierChannel {
             let coeffs = self.receive_field_slice(A::DIMENSION)?;
             values.push(A::from_basis_coefficients_slice(coeffs).unwrap());
         }
-        Some(values)
+        Ok(values)
     }
 
-    fn receive_commitment(&mut self) -> Option<&Self::Commitment> {
+    fn receive_commitment(&mut self) -> Result<&Self::Commitment, TranscriptError> {
         self.receive_commitment_slice(1)
-            .and_then(|values| values.first())
+            .map(|values| values.first().unwrap())
     }
 
-    fn receive_u64(&mut self) -> Option<u64>
-    where
-        Self::F: PrimeField64,
-    {
-        self.receive_field().map(|value| value.as_canonical_u64())
-    }
+    fn receive_hint_field_slice(&mut self, count: usize) -> Result<&[Self::F], TranscriptError>;
 
-    fn receive_hint_field_slice(&mut self, count: usize) -> Option<&[Self::F]>;
+    fn receive_hint_commitment_slice(
+        &mut self,
+        count: usize,
+    ) -> Result<&[Self::Commitment], TranscriptError>;
 
-    fn receive_hint_commitment_slice(&mut self, count: usize) -> Option<&[Self::Commitment]>;
-
-    fn receive_hint_field(&mut self) -> Option<&Self::F> {
+    fn receive_hint_field(&mut self) -> Result<&Self::F, TranscriptError> {
         self.receive_hint_field_slice(1)
-            .and_then(|values| values.first())
+            .map(|values| values.first().unwrap())
     }
 
-    fn receive_hint_commitment(&mut self) -> Option<&Self::Commitment> {
+    fn receive_hint_commitment(&mut self) -> Result<&Self::Commitment, TranscriptError> {
         self.receive_hint_commitment_slice(1)
-            .and_then(|values| values.first())
+            .map(|values| values.first().unwrap())
     }
 
-    fn grind(&mut self, bits: usize) -> Option<Self::F>;
+    fn grind(&mut self, bits: usize) -> Result<Self::F, TranscriptError>;
 
     fn is_empty(&self) -> bool;
 
@@ -118,33 +118,43 @@ where
     type Commitment = C;
 
     // === Observed data ===
-    fn receive_field_slice(&mut self, count: usize) -> Option<&'a [Self::F]> {
-        let values = pop_slice(&mut self.fields, count)?;
+    fn receive_field_slice(&mut self, count: usize) -> Result<&'a [Self::F], TranscriptError> {
+        let values = pop_slice(&mut self.fields, count).ok_or(TranscriptError::NoMoreFields)?;
         self.challenger.observe_slice(values);
-        Some(values)
+        Ok(values)
     }
 
-    fn receive_commitment_slice(&mut self, count: usize) -> Option<&'a [Self::Commitment]> {
-        let values = pop_slice(&mut self.commitments, count)?;
+    fn receive_commitment_slice(
+        &mut self,
+        count: usize,
+    ) -> Result<&'a [Self::Commitment], TranscriptError> {
+        let values =
+            pop_slice(&mut self.commitments, count).ok_or(TranscriptError::NoMoreCommitments)?;
         self.challenger.observe_slice(values);
-        Some(values)
+        Ok(values)
     }
 
-    fn receive_hint_field_slice(&mut self, count: usize) -> Option<&'a [Self::F]> {
-        pop_slice(&mut self.fields, count)
+    fn receive_hint_field_slice(&mut self, count: usize) -> Result<&'a [Self::F], TranscriptError> {
+        pop_slice(&mut self.fields, count).ok_or(TranscriptError::NoMoreFields)
     }
 
-    fn receive_hint_commitment_slice(&mut self, count: usize) -> Option<&'a [Self::Commitment]> {
-        pop_slice(&mut self.commitments, count)
+    fn receive_hint_commitment_slice(
+        &mut self,
+        count: usize,
+    ) -> Result<&'a [Self::Commitment], TranscriptError> {
+        pop_slice(&mut self.commitments, count).ok_or(TranscriptError::NoMoreCommitments)
     }
 
-    fn grind(&mut self, bits: usize) -> Option<Self::F> {
-        let (witness, rest) = self.fields.split_first()?;
+    fn grind(&mut self, bits: usize) -> Result<Self::F, TranscriptError> {
+        let (witness, rest) = self
+            .fields
+            .split_first()
+            .ok_or(TranscriptError::NoMoreFields)?;
         self.fields = rest;
         if self.challenger.check_witness(bits, *witness) {
-            Some(*witness)
+            Ok(*witness)
         } else {
-            None
+            Err(TranscriptError::InvalidGrinding)
         }
     }
 
@@ -193,4 +203,15 @@ fn pop_slice<'a, T>(values: &mut &'a [T], count: usize) -> Option<&'a [T]> {
     let (slice, rest) = values.split_at(count);
     *values = rest;
     Some(slice)
+}
+
+/// Errors that can occur during transcript consumption.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum TranscriptError {
+    #[error("no more field elements in transcript")]
+    NoMoreFields,
+    #[error("no more commitments in transcript")]
+    NoMoreCommitments,
+    #[error("invalid grinding witness")]
+    InvalidGrinding,
 }

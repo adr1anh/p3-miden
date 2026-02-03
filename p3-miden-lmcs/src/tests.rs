@@ -401,6 +401,6 @@ fn batch_proof_handles_empty_or_oob() {
             &[tree.height()],
             &mut verifier_channel,
         )
-        .is_none()
+        .is_err()
     );
 }

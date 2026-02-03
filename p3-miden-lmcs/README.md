@@ -11,21 +11,52 @@ order.
   compression function.
 - Support batch openings with canonical sibling emission.
 
-## Lifting & Commitment Sketch
+## Motivation
+
+Standard STARK proofs involve multiple evaluation matrices (e.g., main trace, auxiliary
+trace, constraint evaluations) with different heights. This heterogeneity complicates
+PCS integration: the verifier must track per-matrix heights, the DEEP quotient must
+handle different lifting factors, and recursive verifiers need height-dependent code paths.
+
+LMCS provides a **uniform-height view** by virtually upsampling shorter matrices to
+the maximum height. This simplifies downstream logic:
+- The PCS treats all matrices as having the same height.
+- DEEP batching applies the same domain points to all matrices.
+- Recursive verifiers avoid height-dependent branching.
+- Switching to alternative polynomial commitment schemes becomes easier.
+
+## Upsampling & Commitment Sketch
 
 Let a polynomial f be evaluated over a coset gK with |K| = n, stored in
-bit-reversed order. Let N = r * n be the max height. Lifting repeats each row r
-times, which corresponds to evaluating f'(X) = f(X^r) over a larger coset of
-size N. The commitment is the Merkle root of leaf hashes computed by absorbing
-lifted rows (in matrix order) into the configured `StatefulHasher`, optionally
+bit-reversed order. Let N = r · n be the max height. **Upsampling** repeats each
+row r times in the bit-reversed layout, which corresponds to evaluating the
+**lifted** polynomial f'(X) = f(X^r) over a larger coset of size N. The
+commitment is the Merkle root of leaf hashes computed by absorbing upsampled
+rows (in matrix order) into the configured `StatefulHasher`, optionally
 absorbing a salt, and then squeezing a hash:
 
 ```
 leaf(i) = squeeze(absorb(row_0(i) || row_1(i) || ... || row_{t-1}(i) || salt?))
 ```
 
-where row_j(i) is the lifted row for matrix j at index i. Matrix order is
+where row_j(i) is the upsampled row for matrix j at index i. Matrix order is
 binding.
+
+## Alignment
+
+When using sponge-based hashers, leaf hashing absorbs field elements up to the
+sponge rate before each permutation. **Alignment** ensures that each row
+contributes a fixed number of permutations, with implicit zero-padding for any
+remainder.
+
+`build_aligned_tree` records the aligned widths so that verifiers know how many
+elements to read per row. Benefits:
+- Fixed permutation count per leaf simplifies parsing.
+- No special end-of-row handling; padding is implicit in the sponge.
+- Easier to reason about hashing costs.
+
+For non-aligned trees (via `build_tree`), rows are absorbed directly without
+padding; verifiers must use the original widths.
 
 ## Protocol Contract (High Level)
 
@@ -53,7 +84,16 @@ binding.
 | `Lmcs::build_aligned_tree` | Build a tree using the hasher alignment for transcript padding |
 | `LmcsTree::prove_batch` | Prove openings at multiple indices |
 | `Lmcs::open_batch` | Verify batch openings |
-| `BatchProof` / `Proof` | Parsed proof formats |
+| `BatchProof` / `Proof` | Parsing helpers for export (see below) |
+
+### A Note on Proof Types
+
+`BatchProof` and `Proof` are **parsing helpers** for exporting and debugging
+proofs. They reconstruct the Merkle path structure from raw channel data but
+do **not** validate proofs themselves.
+
+Production verification uses `LmcsConfig::open_batch`, which parses and verifies
+directly from the channel without constructing intermediate `BatchProof` objects.
 
 ## Assumptions & Invariants
 

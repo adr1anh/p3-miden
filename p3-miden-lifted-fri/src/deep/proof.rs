@@ -1,10 +1,11 @@
 //! DEEP transcript data structures.
 
-use crate::deep::{DeepError, DeepEvals, DeepParams};
+use crate::deep::DeepEvals;
+use crate::deep::DeepParams;
 use alloc::vec::Vec;
 use p3_challenger::CanSample;
 use p3_field::{ExtensionField, Field, TwoAdicField};
-use p3_miden_transcript::VerifierChannel;
+use p3_miden_transcript::{TranscriptError, VerifierChannel};
 
 /// Structured transcript view for the DEEP interaction.
 ///
@@ -34,7 +35,7 @@ where
         commitments: &[(<Ch as VerifierChannel>::Commitment, Vec<usize>)],
         num_eval_points: usize,
         channel: &mut Ch,
-    ) -> Result<Self, DeepError>
+    ) -> Result<Self, TranscriptError>
     where
         Ch: VerifierChannel<F = F> + CanSample<F>,
     {

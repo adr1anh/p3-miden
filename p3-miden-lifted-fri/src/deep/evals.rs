@@ -19,30 +19,6 @@ pub struct DeepEvals<EF: Field> {
 }
 
 impl<EF: Field> DeepEvals<EF> {
-    /// Grouped row-major matrices, one per commitment group.
-    pub fn groups(&self) -> &[Vec<RowMajorMatrix<EF>>] {
-        &self.groups
-    }
-
-    /// Consume and return the grouped row-major matrices.
-    pub fn into_groups(self) -> Vec<Vec<RowMajorMatrix<EF>>> {
-        self.groups
-    }
-
-    /// Number of evaluation points (rows per matrix).
-    pub fn num_points(&self) -> usize {
-        self.num_points
-    }
-
-    pub(crate) fn reduce_point(&self, point_idx: usize, challenge: EF) -> EF {
-        let values = self.groups.iter().flat_map(move |group| {
-            group
-                .iter()
-                .flat_map(move |matrix| matrix.row(point_idx).expect("point index in range"))
-        });
-        horner(challenge, values)
-    }
-
     pub(crate) fn read_from_channel<F, Ch>(
         widths: &[&[usize]],
         num_points: usize,
@@ -88,6 +64,30 @@ impl<EF: Field> DeepEvals<EF> {
             .collect();
 
         Ok(Self { groups, num_points })
+    }
+
+    /// Grouped row-major matrices, one per commitment group.
+    pub fn groups(&self) -> &[Vec<RowMajorMatrix<EF>>] {
+        &self.groups
+    }
+
+    /// Consume and return the grouped row-major matrices.
+    pub fn into_groups(self) -> Vec<Vec<RowMajorMatrix<EF>>> {
+        self.groups
+    }
+
+    /// Number of evaluation points (rows per matrix).
+    pub fn num_points(&self) -> usize {
+        self.num_points
+    }
+
+    pub(crate) fn reduce_point(&self, point_idx: usize, challenge: EF) -> EF {
+        let values = self.groups.iter().flat_map(move |group| {
+            group
+                .iter()
+                .flat_map(move |matrix| matrix.row(point_idx).expect("point index in range"))
+        });
+        horner(challenge, values)
     }
 }
 
