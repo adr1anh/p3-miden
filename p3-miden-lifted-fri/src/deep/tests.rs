@@ -1,10 +1,12 @@
 //! End-to-end tests for DEEP quotient prover/verifier agreement.
 
+use alloc::collections::BTreeSet;
 use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
+use p3_util::reverse_bits_len;
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -60,8 +62,12 @@ fn deep_quotient_end_to_end() {
         log_blowup,
         &mut prover_channel,
     );
-    let sample_indices = vec![0, 1, lde_height / 4, lde_height / 2, lde_height - 1];
-    tree.prove_batch(&sample_indices, &mut prover_channel);
+    // Sample tree indices (bit-reversed exponents). Tree stores in bit-reversed order.
+    let tree_indices: BTreeSet<usize> = [0, 1, lde_height / 4, lde_height / 2, lde_height - 1]
+        .into_iter()
+        .map(|exp| reverse_bits_len(exp, log_lde_height))
+        .collect();
+    tree.prove_batch(tree_indices.iter().copied(), &mut prover_channel);
     let transcript = prover_channel.into_data();
 
     // Create commitments slice for multi-commitment API (single commitment in this case)
@@ -78,17 +84,18 @@ fn deep_quotient_end_to_end() {
     )
     .expect("DeepOracle construction should succeed");
 
-    // Step 5: Verify at multiple query indices (proofs are read from transcript)
+    // Step 5: Verify at multiple query tree indices (proofs are read from transcript)
     let verifier_evals = deep_oracle
-        .open_batch(&lmcs, &sample_indices, &mut verifier_channel)
+        .open_batch(&lmcs, &tree_indices, &mut verifier_channel)
         .expect("Merkle verification should pass");
 
-    for (i, &index) in sample_indices.iter().enumerate() {
-        let prover_eval = deep_poly.deep_evals[index];
-        let verifier_eval = verifier_evals[i];
+    for &tree_idx in &tree_indices {
+        // Prover's deep_evals are in bit-reversed order: deep_evals[tree_idx] = Q(g·ω^{bitrev(tree_idx)})
+        let prover_eval = deep_poly.deep_evals[tree_idx];
+        let verifier_eval = verifier_evals[&tree_idx];
         assert_eq!(
             prover_eval, verifier_eval,
-            "Prover and verifier disagree at index {index}"
+            "Prover and verifier disagree at tree index {tree_idx}"
         );
     }
 }

@@ -56,8 +56,8 @@ use serde::{Deserialize, Serialize};
 ///
 /// `prove_batch` streams transcript hints in the format expected by
 /// [`Lmcs::open_batch`](crate::Lmcs::open_batch):
-/// - For each query index (in caller order): one row per matrix (in leaf order), then
-///   `SALT_ELEMS` field elements of salt.
+/// - For each unique query index **in sorted tree index order** (ascending, deduplicated): one
+///   row per matrix (in leaf order), then `SALT_ELEMS` field elements of salt.
 /// - Each row is padded with explicit zeros to the LMCS alignment.
 ///   This allows verifiers to absorb fixed-size chunks without special-casing
 ///   the final partial chunk; padding is not enforced to be zero.
@@ -147,7 +147,9 @@ where
     /// Panics if any index is out of range. Rows are padded to `alignment` and those
     /// padding values are not validated by verification; callers that require zero
     /// padding must check the opened rows explicitly.
-    fn prove_batch<Ch>(&self, indices: &[usize], channel: &mut Ch)
+    ///
+    /// Leaf openings are written in **sorted tree index order** (ascending, deduplicated).
+    fn prove_batch<Ch>(&self, indices: impl IntoIterator<Item = usize>, channel: &mut Ch)
     where
         Ch: ProverChannel<F = F, Commitment = Hash<F, D, DIGEST_ELEMS>>,
     {
@@ -157,18 +159,17 @@ where
         let depth = log2_strict_usize(final_height);
         let alignment = self.alignment;
 
-        // Deduplicate in *input order*: serialize each leaf opening once, skipping repeats.
-        // This defines the transcript order for leaf openings.
-        let mut known = BTreeSet::new();
-        for &index in indices {
+        // Collect and deduplicate indices. BTreeSet iteration yields sorted order,
+        // which is critical for transcript determinism: both prover and verifier
+        // must process indices in the same order.
+        let unique_indices: BTreeSet<usize> = indices.into_iter().collect();
+
+        // Stream leaf openings in sorted tree index order.
+        for &index in &unique_indices {
             assert!(
                 index < final_height,
                 "index {index} out of range {final_height}"
             );
-            if !known.insert(index) {
-                continue;
-            }
-
             for m in self.leaves.iter() {
                 let height = m.height();
                 let log_scaling_factor = log2_strict_usize(final_height / height);
@@ -186,7 +187,10 @@ where
             }
         }
 
-        // Walk up the tree level by level using the same deduplicated set.
+        // Use the same sorted set for sibling traversal
+        let mut known = unique_indices;
+
+        // Walk up the tree level by level using the deduplicated set.
         for layer_idx in 0..depth {
             let mut parents = BTreeSet::new();
 

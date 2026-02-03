@@ -61,10 +61,11 @@
 //! ## Transcript Hints
 //!
 //! For the `LmcsConfig`/`LiftedMerkleTree` implementation in this crate, batch openings
-//! are streamed as transcript hints: for each query index, `prove_batch` writes one row
-//! per matrix (in tree leaf order) followed by optional salt. After all indices, missing
-//! sibling hashes are emitted level-by-level in canonical left-to-right, bottom-to-top
-//! order. Hints are not observed into the Fiat-Shamir challenger.
+//! are streamed as transcript hints: for each unique query index **in sorted tree index order**
+//! (ascending, deduplicated), `prove_batch` writes one row per matrix (in tree
+//! leaf order) followed by optional salt. After all indices, missing sibling hashes are
+//! emitted level-by-level in canonical left-to-right, bottom-to-top order. Hints are not
+//! observed into the Fiat-Shamir challenger.
 //!
 //! `LmcsConfig::open_batch` consumes only the hints it needs to reconstruct the root;
 //! extra hint data is left unread. It expects `widths` and `log_max_height` to match the
@@ -146,6 +147,7 @@ pub mod proof;
 mod tests;
 pub mod utils;
 
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use p3_matrix::Matrix;
@@ -160,6 +162,13 @@ pub use hiding_lmcs::HidingLmcsConfig;
 pub use lifted_tree::LiftedMerkleTree;
 pub use lmcs::LmcsConfig;
 pub use proof::{BatchProof, LeafOpening, Proof};
+
+// ============================================================================
+// Type Aliases
+// ============================================================================
+
+/// Opened rows keyed by leaf index, returned by [`Lmcs::open_batch`].
+pub type OpenedRows<F> = BTreeMap<usize, Vec<Vec<F>>>;
 
 // ============================================================================
 // Traits
@@ -207,14 +216,17 @@ pub trait Lmcs: Clone {
     /// `LmcsTree::prove_batch` implementation to produce compatible hints.
     /// `widths` and `log_max_height` must match the committed tree (including any
     /// alignment padding if `build_aligned_tree` was used).
+    ///
+    /// Returns a map from unique indices to their opened rows. Duplicate indices in
+    /// the input iterator are coalesced into a single entry in the output.
     fn open_batch<Ch>(
         &self,
         commitment: &Self::Commitment,
         widths: &[usize],
         log_max_height: usize,
-        indices: &[usize],
+        indices: impl IntoIterator<Item = usize>,
         channel: &mut Ch,
-    ) -> Result<Vec<Vec<Vec<Self::F>>>, LmcsError>
+    ) -> Result<OpenedRows<Self::F>, LmcsError>
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>;
 
@@ -263,7 +275,9 @@ pub trait LmcsTree<F, Commitment, M> {
     /// The hint format is implementation-defined and must be consumed by the
     /// corresponding `Lmcs::open_batch` implementation. Rows are padded to the
     /// tree's alignment before being written to the channel.
-    fn prove_batch<Ch>(&self, indices: &[usize], channel: &mut Ch)
+    ///
+    /// Leaf openings are written in **sorted tree index order** (ascending, deduplicated).
+    fn prove_batch<Ch>(&self, indices: impl IntoIterator<Item = usize>, channel: &mut Ch)
     where
         Ch: ProverChannel<F = F, Commitment = Commitment>;
 }

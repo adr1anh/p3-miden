@@ -1,5 +1,6 @@
 //! Integration tests for LMCS.
 
+use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -31,7 +32,7 @@ pub use p3_miden_dev_utils::matrix::concatenate_matrices;
 pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 type Commitment = <BaseLmcs as Lmcs>::Commitment;
 type TestTranscriptData = TranscriptData<F, Commitment>;
-type OpenedRows = Vec<Vec<Vec<F>>>;
+type OpenedRows = BTreeMap<usize, Vec<Vec<F>>>;
 
 /// Create a local LMCS config.
 pub fn lmcs() -> BaseLmcs {
@@ -67,7 +68,7 @@ where
         commitment,
         widths,
         log_max_height,
-        indices,
+        indices.iter().copied(),
         &mut verifier_channel,
     );
     if result.is_ok() {
@@ -93,7 +94,7 @@ where
 
     let transcript = {
         let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-        tree.prove_batch(indices, &mut prover_channel);
+        tree.prove_batch(indices.iter().copied(), &mut prover_channel);
         prover_channel.into_data()
     };
     let opened_rows = verify_open_batch(
@@ -143,18 +144,14 @@ fn lmcs_roundtrip() {
         let (_transcript, opened_rows) =
             roundtrip_open_batch(&lmcs, &tree, &indices).expect("batch opening should verify");
 
-        assert_eq!(opened_rows.len(), indices.len());
-        for rows_for_query in &opened_rows {
+        for (&leaf_idx, rows_for_query) in &opened_rows {
             assert_eq!(rows_for_query.len(), widths.len());
-        }
-
-        for (query_idx, &leaf_idx) in indices.iter().enumerate() {
             let expected_rows = tree.rows(leaf_idx);
             for (matrix_idx, expected_row) in expected_rows.iter().enumerate() {
                 assert_eq!(
-                    opened_rows[query_idx][matrix_idx].as_slice(),
+                    rows_for_query[matrix_idx].as_slice(),
                     expected_row.as_slice(),
-                    "mismatch at query {query_idx} (leaf {leaf_idx}), matrix {matrix_idx}"
+                    "mismatch at leaf {leaf_idx}, matrix {matrix_idx}"
                 );
             }
         }
@@ -182,16 +179,12 @@ fn lmcs_duplicate_indices_roundtrip() {
     let (transcript, opened_rows) =
         roundtrip_open_batch(&lmcs, &tree, &indices).expect("batch opening should verify");
 
-    assert_eq!(opened_rows.len(), indices.len());
-    assert_eq!(opened_rows[0], opened_rows[2], "duplicate index 3 mismatch");
-    assert_eq!(opened_rows[1], opened_rows[4], "duplicate index 1 mismatch");
+    // BTreeMap coalesces duplicates: 5 indices → 3 unique keys
+    assert_eq!(opened_rows.len(), 3);
 
-    for (pos, &index) in indices.iter().enumerate() {
+    for (&index, rows) in &opened_rows {
         let expected_rows = tree.rows(index);
-        assert_eq!(
-            opened_rows[pos], expected_rows,
-            "row mismatch at position {pos} (index {index})"
-        );
+        assert_eq!(*rows, expected_rows, "row mismatch for index {index}");
     }
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
@@ -233,15 +226,13 @@ fn hiding_roundtrip() {
         let (_transcript, opened_rows) =
             roundtrip_open_batch(&config, &tree, indices).expect("batch opening should verify");
 
-        assert_eq!(opened_rows.len(), indices.len());
-
-        for (query_idx, &leaf_idx) in indices.iter().enumerate() {
+        for (&leaf_idx, rows) in &opened_rows {
             let expected_rows = tree.rows(leaf_idx);
             for (matrix_idx, expected_row) in expected_rows.iter().enumerate() {
                 assert_eq!(
-                    opened_rows[query_idx][matrix_idx].as_slice(),
+                    rows[matrix_idx].as_slice(),
                     expected_row.as_slice(),
-                    "mismatch at query {query_idx} (leaf {leaf_idx}), matrix {matrix_idx}"
+                    "mismatch at leaf {leaf_idx}, matrix {matrix_idx}"
                 );
             }
         }
@@ -342,8 +333,8 @@ fn build_tree_alignment_modes() {
     let indices = [0usize, 1usize];
     let (_transcript, opened_rows) = roundtrip_open_batch(&lmcs, &tree_aligned, &indices)
         .expect("aligned opening should verify");
-    for (pos, &idx) in indices.iter().enumerate() {
-        assert_eq!(opened_rows[pos], tree_aligned.rows(idx));
+    for (&idx, rows) in &opened_rows {
+        assert_eq!(*rows, tree_aligned.rows(idx));
     }
 }
 
@@ -357,7 +348,7 @@ fn batch_proof_handles_empty_or_oob() {
     let log_max_height = log2_strict_usize(tree.height());
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-    tree.prove_batch(&[0], &mut prover_channel);
+    tree.prove_batch([0], &mut prover_channel);
     let transcript = prover_channel.into_data();
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);

@@ -22,6 +22,7 @@
 //!
 //! After each fold, we shift off `log_arity` bits, moving to the parent coset.
 
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use p3_challenger::CanSample;
@@ -99,12 +100,14 @@ where
     }
 
     /// Test low-degree proximity by reading openings from a verifier channel.
+    ///
+    /// `initial_evals` maps tree indices to DEEP evaluations.
+    /// Tree index = bitrev(exp, log_domain_size) where domain point = `g·ω^{exp}`.
     pub fn test_low_degree<Ch>(
         &self,
         lmcs: &L,
         params: &FriParams,
-        indices: &[usize],
-        initial_evals: &[EF],
+        mut evals: BTreeMap<usize, EF>,
         channel: &mut Ch,
     ) -> Result<(), FriError>
     where
@@ -112,87 +115,63 @@ where
     {
         let log_arity = params.fold.log_arity();
         let arity = params.fold.arity();
+        let base_width = arity * EF::DIMENSION;
+        let widths = [base_width];
+
         let mut log_domain_size = self.log_domain_size;
-
-        if indices.len() != initial_evals.len() {
-            return Err(FriError::InvalidProofStructure);
-        }
-
-        // Track current indices and evals for each query
-        let mut current_indices: Vec<usize> = indices.to_vec();
-        let mut current_evals: Vec<EF> = initial_evals.to_vec();
-
-        // Precompute g_inv once; we'll update it each round by raising to power arity
         let mut g_inv = F::two_adic_generator(log_domain_size).inverse();
 
-        // Verify each round
         for (round_idx, round) in self.rounds.iter().enumerate() {
-            let log_num_rows = log_domain_size.saturating_sub(log_arity);
+            let log_num_rows = log_domain_size - log_arity;
 
-            // Compute row indices for this round
-            let row_indices: Vec<usize> = current_indices
-                .iter()
-                .map(|&idx| idx >> log_arity)
-                .collect();
-
-            // Verify LMCS opening - dimensions are flattened (EF elements stored as F)
-            let base_width = arity * EF::DIMENSION;
-            // FRI round commitments are unaligned, so use the base width directly.
-            let widths = [base_width];
+            // Compute row indices: shift off position-within-coset bits
+            let row_indices = evals.keys().map(|&idx| idx >> log_arity);
 
             let opened_rows = lmcs
                 .open_batch(
                     &round.commitment,
                     &widths,
                     log_num_rows,
-                    &row_indices,
+                    row_indices,
                     channel,
                 )
                 .map_err(|e| FriError::LmcsError(e, round_idx))?;
 
-            for (query_idx, ((&current_idx, &row_idx), current_eval)) in current_indices
-                .iter()
-                .zip(row_indices.iter())
-                .zip(current_evals.iter_mut())
-                .enumerate()
-            {
-                // Get the opened row for this query (first matrix, since FRI only has one)
-                let flat_row = &opened_rows[query_idx][0];
-                let row_slice = &flat_row[..base_width];
+            // Drain, verify, fold, and rebuild with new keys
+            evals = evals
+                .into_iter()
+                .map(|(idx, eval)| {
+                    // Decompose tree index: high bits = row (coset), low bits = position within coset
+                    let row_idx = idx >> log_arity;
+                    let position = idx & (arity - 1);
 
-                // Reconstruct extension field values from flattened base field
-                let row: Vec<EF> = EF::reconstitute_from_base(row_slice.to_vec());
+                    let flat_row = &opened_rows[&row_idx][0];
+                    let row: Vec<EF> = EF::reconstitute_from_base(flat_row[..base_width].to_vec());
 
-                // position_in_coset = current_idx & (arity - 1)
-                let position_in_coset = current_idx & ((1 << log_arity) - 1);
+                    if row[position] != eval {
+                        return Err(FriError::EvaluationMismatch {
+                            row_index: row_idx,
+                            position,
+                        });
+                    }
 
-                // Check that the evaluation matches the opened value
-                if row[position_in_coset] != *current_eval {
-                    return Err(FriError::EvaluationMismatch {
-                        row_index: row_idx,
-                        position: position_in_coset,
-                    });
-                }
+                    // s⁻¹ = (g^{bitrev(row_idx)})⁻¹, needed for iFFT over <s>.
+                    let s_pow = reverse_bits_len(row_idx, log_num_rows);
+                    let s_inv = g_inv.exp_u64(s_pow as u64);
+                    let folded = params.fold.fold_evals(&row, s_inv, round.beta);
+                    Ok((row_idx, folded))
+                })
+                .collect::<Result<_, _>>()?;
 
-                // Compute coset generator inverse s⁻¹
-                let s_inv = g_inv.exp_u64(reverse_bits_len(row_idx, log_num_rows) as u64);
-
-                // Fold: interpolate f on coset and evaluate at β
-                *current_eval = params.fold.fold_evals(&row, s_inv, round.beta);
-            }
-
-            // Update indices and domain size for next round
-            current_indices = row_indices;
-            log_domain_size -= log_arity;
+            log_domain_size = log_num_rows;
             g_inv = g_inv.exp_power_of_2(log_arity);
         }
 
-        // Final polynomial check for each query
-        for (&index, &eval) in current_indices.iter().zip(current_evals.iter()) {
-            let x_power = reverse_bits_len(index, log_domain_size) as u64;
-            let x = F::two_adic_generator(log_domain_size).exp_u64(x_power);
-
-            // Evaluate final polynomial via Horner's method: p(x) = Σᵢ cᵢ·xⁱ
+        // Final polynomial check: p(ω^{bitrev(idx)}) should equal the folded value
+        let generator = F::two_adic_generator(log_domain_size);
+        for (idx, eval) in evals {
+            let exp = reverse_bits_len(idx, log_domain_size);
+            let x = generator.exp_u64(exp as u64);
             let final_eval: EF = horner(x, self.final_poly.iter().rev().copied());
 
             if final_eval != eval {

@@ -1,4 +1,4 @@
-use alloc::vec;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
@@ -104,22 +104,36 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
         Ok((oracle, evals))
     }
 
-    /// Open the oracle at given indices by reading proofs from a verifier channel.
+    /// Open the oracle at given tree indices by reading proofs from a verifier channel.
+    ///
+    /// `tree_indices` are bit-reversed positions (sorted, deduplicated).
+    /// Returns a map from tree index to DEEP evaluation at that point.
     pub fn open_batch<Ch>(
         &self,
         lmcs: &L,
-        indices: &[usize],
+        tree_indices: &BTreeSet<usize>,
         channel: &mut Ch,
-    ) -> Result<Vec<EF>, DeepError>
+    ) -> Result<BTreeMap<usize, EF>, DeepError>
     where
         Ch: VerifierChannel<F = F, Commitment = L::Commitment>,
     {
-        let mut reduced_rows = vec![EF::ZERO; indices.len()];
+        let mut reduced_rows: BTreeMap<usize, EF> = BTreeMap::new();
+
         for (commit, widths) in &self.commitments {
             let opened_rows = lmcs
-                .open_batch(commit, widths, self.log_lde_height, indices, channel)
+                .open_batch(
+                    commit,
+                    widths,
+                    self.log_lde_height,
+                    tree_indices.iter().copied(),
+                    channel,
+                )
                 .map_err(DeepError::LmcsError)?;
-            for (acc, rows_for_query) in reduced_rows.iter_mut().zip(opened_rows) {
+
+            // Accumulate by tree index
+            for &tree_idx in tree_indices {
+                let rows_for_query = &opened_rows[&tree_idx];
+                let acc = reduced_rows.entry(tree_idx).or_insert(EF::ZERO);
                 *acc = horner_acc(
                     *acc,
                     self.challenge_columns,
@@ -132,21 +146,20 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
         let shift = F::GENERATOR;
 
         // Compute DEEP evaluation for each query
-        let evals: Vec<EF> = zip(indices, reduced_rows)
-            .map(|(&index, reduced_row)| {
-                // Reconstruct the domain point X from the query index.
-                // The LDE domain is the coset gK in bit-reversed order where:
-                //   g = F::GENERATOR (coset shift, avoids subgroup)
-                //   K = <ω> with ω = primitive 2^log_n root of unity
-                // In bit-reversed order: X = g · ω^{bit_rev(index)}
-                let index_bit_rev = reverse_bits_len(index, self.log_lde_height);
-                let row_point = shift * generator.exp_u64(index_bit_rev as u64);
+        let evals: BTreeMap<usize, EF> = reduced_rows
+            .into_iter()
+            .map(|(tree_idx, reduced_row)| {
+                // Recover domain point X = g·ω^{exp} from tree index (bit-reversed position)
+                let exp = reverse_bits_len(tree_idx, self.log_lde_height);
+                let row_point = shift * generator.exp_u64(exp as u64);
 
-                zip(&self.reduced_openings, self.challenge_points.powers())
+                // DEEP quotient: Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) / (zⱼ - X)
+                let deep_eval: EF = zip(&self.reduced_openings, self.challenge_points.powers())
                     .map(|((point, reduced_eval), coeff_point)| {
                         coeff_point * (*reduced_eval - reduced_row) / (*point - row_point)
                     })
-                    .sum()
+                    .sum();
+                (tree_idx, deep_eval)
             })
             .collect();
 

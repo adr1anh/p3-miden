@@ -70,9 +70,10 @@ pub struct BatchProof<F, C, const SALT_ELEMS: usize = 0> {
 impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
     /// Read a batch opening from a transcript channel without hashing.
     ///
-    /// Parses rows/salt for each unique queried index in first-occurrence order
-    /// (coalescing duplicates), then consumes exactly the hinted sibling hashes
-    /// implied by the query set and tree depth.
+    /// Parses rows/salt for each unique queried index in sorted (ascending) order,
+    /// matching the order in which [`LmcsTree::prove_batch`](crate::LmcsTree::prove_batch)
+    /// writes them. Consumes exactly the hinted sibling hashes implied by the query
+    /// set and tree depth.
     ///
     /// Assumes all indices are in `0..2^log_max_height`; out-of-range indices
     /// produce an invalid proof that will fail verification.
@@ -87,13 +88,14 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         C: Copy + PartialEq,
         Ch: VerifierChannel<F = F, Commitment = C>,
     {
+        // Collect and sort indices to match prover's write order (BTreeSet iteration).
+        let unique_indices: BTreeSet<usize> = indices.iter().copied().collect();
         let mut openings: BTreeMap<usize, LeafOpening<F, SALT_ELEMS>> = BTreeMap::new();
 
-        // Read openings in first-occurrence order, skipping duplicates.
-        for &index in indices {
-            let entry = match openings.entry(index) {
-                Entry::Occupied(_) => continue,
-                Entry::Vacant(entry) => entry,
+        // Read openings in sorted order, matching prove_batch's write order.
+        for index in unique_indices.iter().copied() {
+            let Entry::Vacant(entry) = openings.entry(index) else {
+                unreachable!("unique_indices is deduplicated");
             };
 
             let mut rows = Vec::with_capacity(widths.len());

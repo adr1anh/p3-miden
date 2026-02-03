@@ -11,7 +11,7 @@ use p3_symmetric::{Hash, PseudoCompressionFunction};
 use rand::Rng;
 use rand::distr::{Distribution, StandardUniform};
 
-use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError};
+use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, OpenedRows};
 
 /// Configuration for hiding LMCS with random salt.
 ///
@@ -157,9 +157,9 @@ where
         commitment: &Self::Commitment,
         widths: &[usize],
         log_max_height: usize,
-        indices: &[usize],
+        indices: impl IntoIterator<Item = usize>,
         channel: &mut Ch,
-    ) -> Result<Vec<Vec<Vec<Self::F>>>, LmcsError>
+    ) -> Result<OpenedRows<Self::F>, LmcsError>
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>,
     {
