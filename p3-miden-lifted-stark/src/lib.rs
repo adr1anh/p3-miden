@@ -1,31 +1,28 @@
 //! Lifted STARK shared scaffolding (LMCS-based).
 //!
-//! This crate contains shared types, layout logic, transcript helpers, periodic
-//! column utilities, and constraint folder machinery used by the lifted STARK
-//! prover and verifier crates.
+//! This crate contains shared types and utilities used by the lifted STARK
+//! prover and verifier crates:
 //!
-//! See `notes.md` for exploration notes and outstanding design questions.
+//! - [`StarkConfig`]: Minimal configuration wrapping PCS params, LMCS, and DFT
+//! - [`commit_traces`]: Helper for committing traces (LDE → bit-reverse → LMCS)
+//! - [`Selectors`] and [`selectors_at`]: Constraint selectors for OOD evaluation
+//! - [`ConstraintFolder`]: Constraint evaluation machinery for MidenAir
+//! - [`Proof`]: Proof container type
 
-#![doc = include_str!("../notes.md")]
 #![no_std]
-#![allow(dead_code, unused_imports)]
 
 extern crate alloc;
 
+mod commit;
 mod config;
+mod constraints;
 mod folder;
-mod layout;
-mod periodic;
 mod proof;
-mod selectors;
-mod transcript;
 mod utils;
 
+pub use commit::*;
 pub use config::*;
+pub use constraints::*;
 pub use folder::*;
-pub use layout::*;
-pub use periodic::*;
 pub use proof::*;
-pub use selectors::*;
-pub use transcript::*;
 pub use utils::*;

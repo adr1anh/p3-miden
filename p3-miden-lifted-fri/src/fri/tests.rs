@@ -97,7 +97,7 @@ fn verify_queries(
     challenger: Option<Challenger>,
 ) -> Result<(), FriError> {
     let mut channel = match challenger {
-        Some(challenger) => VerifierTranscript::new(challenger, transcript),
+        Some(challenger) => VerifierTranscript::from_data(challenger, transcript),
         None => verifier_channel(transcript),
     };
     let log_domain_size = log2_strict_usize(lde_size);

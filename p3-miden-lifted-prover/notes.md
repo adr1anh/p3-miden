@@ -3,35 +3,48 @@
 This crate hosts the end-to-end proving flow for the lifted STARK protocol.
 
 ## Highlights
-- Uses LMCS to commit LDEs over nested cosets ((gK)^r) for each AIR trace.
+- Uses LMCS to commit LDEs over nested cosets for the AIR trace.
 - Aux trace is required; preprocessed trace is ignored in this scaffold.
-- Combines per-AIR constraint numerators on the max domain via upsample + Horner.
+- Computes constraint numerators on the LDE domain and divides by vanishing polynomial.
 - Opens all committed trees via `p3-miden-lifted-fri::prover::open_with_channel`.
-- Channel-first API: `prove_with_channel` accepts a `ProverChannel`; `prove` is a wrapper.
-- Transcript parameters are encoded as checked `u32` values (writes return `Option`).
+- Channel-first API: `prove_single` accepts a `ProverChannel` for transcript operations.
+
+## API
+
+### `prove_single`
+
+```rust
+pub fn prove_single<F, EF, A, L, Dft, Ch>(
+    config: &StarkConfig<L, Dft>,
+    air: &A,
+    trace: &RowMajorMatrix<F>,
+    public_values: &[F],
+    channel: &mut Ch,
+) -> Result<(), ProverError>
+```
+
+**Arguments:**
+- `config`: STARK configuration (PCS params, LMCS, DFT)
+- `air`: The AIR definition implementing `MidenAir<F, EF>`
+- `trace`: Main trace matrix
+- `public_values`: Public values for this AIR
+- `channel`: Prover channel for transcript (implements `ProverChannel`)
+
+The channel should be initialized with domain separator and public values before calling.
+
+## Prover flow
+
+1. Validate trace dimensions against AIR definition.
+2. Commit main trace LDE on nested coset (bit-reversed), observe commitment.
+3. Sample aux randomness, build aux trace (required), commit aux LDE.
+4. Sample constraint folding challenge alpha.
+5. Build periodic LDEs for periodic columns.
+6. Compute folded constraint numerator on natural-order LDE domain.
+7. Convert to bit-reversed order, divide by vanishing polynomial.
+8. Commit quotient polynomial.
+9. Sample OOD point zeta (rejection-sampled outside trace domain), derive zeta_next.
+10. Open via PCS at [zeta, zeta_next] for main, aux, and quotient trees.
 
 ## TODO / follow-ups
 - Move quotient helpers into a shared `quotient.rs` once the API stabilizes.
-- Decide whether to remove `alignment` from config in favor of `Lmcs::alignment()`.
 - Clarify periodic column encoding (currently LDE on nested coset + index mod).
-
-## Prover flow notes (subset from root prover.md)
-
-Prover flow (minimal, current scaffold):
-1. Compute trace degree and LDE domain (blowup from params).
-2. Commit main trace LDE on nested coset (bit-reversed), observe commitment.
-3. Sample aux randomness, build aux trace (required), commit aux LDE.
-4. Sample per-AIR alpha and a shared beta.
-5. Compute folded constraints per AIR on (gK)^r, lift by upsample into gK.
-6. Combine across AIRs via Horner in permutation order; divide by X^N - 1 once.
-7. Commit combined quotient, rejection-sample zeta outside H and gK (loop ~1x), derive zeta_next.
-8. Call lifted FRI `open_with_channel` for [zeta, zeta_next].
-
-### Quotient combination (lifting)
-- C_i evaluated on (gK)^r; bit-reverse then repeat values r times to lift.
-- Combine across AIRs with challenge beta; divide by X^N - 1 once.
-
-### Simplifications enforced in the scaffold
-- No preprocessed trace.
-- Aux trace always present.
-- ZK out of scope.

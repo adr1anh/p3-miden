@@ -45,7 +45,7 @@ pub fn prover_channel_with_commitment(commitment: &TestCommitment) -> TestProver
 }
 
 pub fn verifier_channel(data: &'_ TestTranscriptData) -> TestVerifierChannel<'_> {
-    VerifierTranscript::new(test_challenger(), data)
+    VerifierTranscript::from_data(test_challenger(), data)
 }
 
 pub fn verifier_channel_with_commitment<'a>(
@@ -54,7 +54,7 @@ pub fn verifier_channel_with_commitment<'a>(
 ) -> TestVerifierChannel<'a> {
     let mut challenger = test_challenger();
     challenger.observe(*commitment);
-    VerifierTranscript::new(challenger, data)
+    VerifierTranscript::from_data(challenger, data)
 }
 
 pub fn sample_indices<R: Rng>(rng: &mut R, upper: usize, count: usize) -> Vec<usize> {
@@ -234,7 +234,7 @@ fn test_pcs_open_verify_multi_trace_roundtrip() {
     for (commitment, _) in commitments.iter() {
         challenger.observe(*commitment);
     }
-    let mut verifier_channel = VerifierTranscript::new(challenger, &transcript);
+    let mut verifier_channel = VerifierTranscript::from_data(challenger, &transcript);
 
     let result = verify_with_channel::<F, EF, _, _, 2>(
         &params,

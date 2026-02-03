@@ -180,4 +180,8 @@ where
         self.inner
             .read_batch_proof_from_channel(widths, log_max_height, indices, channel)
     }
+
+    fn alignment(&self) -> usize {
+        self.inner.alignment()
+    }
 }

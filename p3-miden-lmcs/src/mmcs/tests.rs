@@ -88,7 +88,7 @@ fn extract_proofs_roundtrip() {
         tree.prove_batch(indices, &mut prover_channel);
         let transcript = prover_channel.into_data();
 
-        let mut verifier_channel = VerifierTranscript::new(test_challenger(), &transcript);
+        let mut verifier_channel = VerifierTranscript::from_data(test_challenger(), &transcript);
         let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
             &widths,
             log_max_height,

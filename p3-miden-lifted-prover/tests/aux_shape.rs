@@ -1,5 +1,3 @@
-use core::marker::PhantomData;
-
 use p3_dft::Radix2DitParallel;
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
@@ -9,8 +7,9 @@ use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_fri::PcsParams;
 use p3_miden_lifted_fri::deep::DeepParams;
 use p3_miden_lifted_fri::fri::{FriFold, FriParams};
-use p3_miden_lifted_prover::{LiftedStarkConfig, prove};
+use p3_miden_lifted_prover::{StarkConfig, prove_single};
 use p3_miden_lmcs::LmcsConfig;
+use p3_miden_transcript::ProverTranscript;
 
 #[derive(Clone, Copy, Debug)]
 struct BadAuxWidthAir;
@@ -43,8 +42,8 @@ impl MidenAir<bb::F, bb::EF> for BadAuxWidthAir {
 type TestLmcs = LmcsConfig<bb::P, bb::P, bb::Sponge, bb::Compress, { bb::WIDTH }, { bb::DIGEST }>;
 type TestDft = Radix2DitParallel<bb::F>;
 
-fn test_config() -> LiftedStarkConfig<bb::F, TestLmcs, TestDft> {
-    let params = PcsParams {
+fn test_config() -> StarkConfig<TestLmcs, TestDft> {
+    let pcs = PcsParams {
         fri: FriParams {
             log_blowup: 1,
             fold: FriFold::ARITY_2,
@@ -60,16 +59,9 @@ fn test_config() -> LiftedStarkConfig<bb::F, TestLmcs, TestDft> {
 
     let (_, sponge, compress) = bb::test_components();
     let lmcs: TestLmcs = LmcsConfig::new(sponge, compress);
-    let alignment = bb::RATE;
     let dft = TestDft::default();
 
-    LiftedStarkConfig {
-        params,
-        lmcs,
-        dft,
-        alignment,
-        _phantom: PhantomData,
-    }
+    StarkConfig { pcs, lmcs, dft }
 }
 
 #[test]
@@ -79,14 +71,15 @@ fn aux_width_mismatch_panics() {
     let air = BadAuxWidthAir;
 
     let trace = RowMajorMatrix::new(vec![bb::F::ZERO, bb::F::ONE, bb::F::ONE, bb::F::ZERO], 1);
-    let traces = vec![trace];
-    let public_values = vec![vec![]];
+    let public_values = vec![];
 
-    let _proof = prove::<bb::F, bb::EF, _, _, _, _>(
+    let mut channel = ProverTranscript::new(bb::test_challenger());
+
+    let _result = prove_single::<bb::F, bb::EF, _, _, _, _>(
         &config,
-        &[air],
-        &traces,
+        &air,
+        &trace,
         &public_values,
-        bb::test_challenger(),
+        &mut channel,
     );
 }
