@@ -12,7 +12,7 @@ use crate::Lmcs;
 use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
-use p3_miden_transcript::VerifierChannel;
+use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use serde::{Deserialize, Serialize};
 
 /// Single-opening Merkle proof with rows and authentication path.
@@ -70,36 +70,27 @@ pub struct BatchProof<F, C, const SALT_ELEMS: usize = 0> {
 impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
     /// Read a batch opening from a transcript channel without hashing.
     ///
-    /// This parses rows/salt for each unique queried index in first-occurrence order
+    /// Parses rows/salt for each unique queried index in first-occurrence order
     /// (coalescing duplicates), then consumes exactly the hinted sibling hashes
     /// implied by the query set and tree depth.
-    /// Widths must match the committed row lengths (including any alignment padding if used).
+    ///
+    /// Assumes all indices are in `0..2^log_max_height`; out-of-range indices
+    /// produce an invalid proof that will fail verification.
     pub fn read_from_channel<Ch>(
         widths: &[usize],
         log_max_height: usize,
         indices: &[usize],
         channel: &mut Ch,
-    ) -> Option<Self>
+    ) -> Result<Self, TranscriptError>
     where
         F: Copy,
         C: Copy + PartialEq,
         Ch: VerifierChannel<F = F, Commitment = C>,
     {
-        if indices.is_empty() {
-            return Some(Self {
-                openings: BTreeMap::new(),
-                siblings: BTreeMap::new(),
-            });
-        }
-
-        let max_height = 1 << log_max_height;
         let mut openings: BTreeMap<usize, LeafOpening<F, SALT_ELEMS>> = BTreeMap::new();
 
         // Read openings in first-occurrence order, skipping duplicates.
         for &index in indices {
-            if index >= max_height {
-                return None;
-            }
             let entry = match openings.entry(index) {
                 Entry::Occupied(_) => continue,
                 Entry::Vacant(entry) => entry,
@@ -112,33 +103,28 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
             }
 
             let salt_slice = channel.receive_hint_field_slice(SALT_ELEMS)?;
-            let salt: [F; SALT_ELEMS] = salt_slice.try_into().ok()?;
+            let salt: [F; SALT_ELEMS] = salt_slice.try_into().unwrap();
 
             entry.insert(LeafOpening { rows, salt });
         }
 
-        let mut siblings: BTreeMap<(usize, usize), C> = BTreeMap::new();
         // Consume sibling hints in the same canonical order the prover emits them.
-        for (current_depth, missing_pos) in
+        let siblings: BTreeMap<(usize, usize), C> =
             required_siblings(openings.keys().copied(), log_max_height)
-        {
-            let sibling_hash: C = channel.receive_hint_commitment().copied()?;
+                .into_iter()
+                .map(|key| Ok((key, *channel.receive_hint_commitment()?)))
+                .collect::<Result<_, TranscriptError>>()?;
 
-            if siblings
-                .insert((current_depth, missing_pos), sibling_hash)
-                .is_some_and(|existing| existing != sibling_hash)
-            {
-                return None;
-            }
-        }
-
-        Some(Self { openings, siblings })
+        Ok(Self { openings, siblings })
     }
 
     /// Reconstruct per-index proofs by hashing rows/salt and rebuilding paths.
     ///
     /// Returns a map keyed by leaf index; duplicate indices are coalesced.
-    /// This does not verify against a commitment.
+    /// Does not verify against a commitment.
+    ///
+    /// Assumes all indices are in `0..2^log_max_height`; returns `None` if
+    /// widths mismatch or sibling reconstruction fails.
     pub fn single_proofs<L>(
         &self,
         lmcs: &L,
@@ -150,16 +136,11 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         C: Copy + PartialEq,
         L: Lmcs<F = F, Commitment = C>,
     {
-        let max_height = 1 << log_max_height;
         let mut proofs: BTreeMap<usize, Proof<F, C, SALT_ELEMS>> = BTreeMap::new();
         // Track known nodes by (depth, index) to reconstruct sibling paths deterministically.
         let mut tree: BTreeMap<(usize, usize), C> = BTreeMap::new();
 
         for (&index, opening) in self.openings.iter() {
-            if index >= max_height {
-                return None;
-            }
-
             if opening.rows.len() != widths.len() {
                 return None;
             }
@@ -192,16 +173,8 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         }
 
         // Preload hinted siblings so combining pairs can assume adjacency.
-        for (current_depth, missing_pos) in
-            required_siblings(self.openings.keys().copied(), log_max_height)
-        {
-            let sibling_hash = *self.siblings.get(&(current_depth, missing_pos))?;
-            if tree
-                .insert((current_depth, missing_pos), sibling_hash)
-                .is_some_and(|existing| existing != sibling_hash)
-            {
-                return None;
-            }
+        for (depth, index) in required_siblings(self.openings.keys().copied(), log_max_height) {
+            tree.insert((depth, index), *self.siblings.get(&(depth, index))?);
         }
 
         for current_depth in 0..log_max_height {
@@ -249,7 +222,10 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
     }
 }
 
-/// Determine which sibling positions must be supplied, in canonical order.
+/// Sibling positions that must be supplied, in canonical (depth, left-to-right) order.
+///
+/// Returns unique `(depth, index)` pairs where depth 0 is the leaf level.
+/// Callers can insert directly without checking for duplicates.
 fn required_siblings<I>(indices: I, log_max_height: usize) -> Vec<(usize, usize)>
 where
     I: IntoIterator<Item = usize>,

@@ -4,7 +4,7 @@ use p3_field::{ExtensionField, Field, FieldArray, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lmcs::utils::pad_row_to_alignment;
-use p3_miden_transcript::{ProverChannel, VerifierChannel};
+use p3_miden_transcript::{ProverChannel, TranscriptError, VerifierChannel};
 
 use crate::utils::horner;
 
@@ -19,50 +19,11 @@ pub struct DeepEvals<EF: Field> {
 }
 
 impl<EF: Field> DeepEvals<EF> {
-    /// Create `DeepEvals` from grouped row-major matrices.
-    ///
-    /// Returns `None` if groups are empty, the first group is empty, or heights are inconsistent.
-    ///
-    /// # Panics
-    /// Panics if any matrix has an invalid width (e.g., zero), as rejected by
-    /// `RowMajorMatrix::new`.
-    pub fn new(groups: Vec<Vec<RowMajorMatrix<EF>>>) -> Option<Self> {
-        let num_points = groups.first()?.first()?.height();
-        if groups.iter().flatten().any(|m| m.height() != num_points) {
-            return None;
-        }
-        Some(Self { groups, num_points })
-    }
-
-    /// Grouped row-major matrices, one per commitment group.
-    pub fn groups(&self) -> &[Vec<RowMajorMatrix<EF>>] {
-        &self.groups
-    }
-
-    /// Consume and return the grouped row-major matrices.
-    pub fn into_groups(self) -> Vec<Vec<RowMajorMatrix<EF>>> {
-        self.groups
-    }
-
-    /// Number of evaluation points (rows per matrix).
-    pub fn num_points(&self) -> usize {
-        self.num_points
-    }
-
-    pub(crate) fn reduce_point(&self, point_idx: usize, challenge: EF) -> EF {
-        let values = self.groups.iter().flat_map(move |group| {
-            group
-                .iter()
-                .flat_map(move |matrix| matrix.row(point_idx).expect("point index in range"))
-        });
-        horner(challenge, values)
-    }
-
     pub(crate) fn read_from_channel<F, Ch>(
         widths: &[&[usize]],
         num_points: usize,
         channel: &mut Ch,
-    ) -> Option<Self>
+    ) -> Result<Self, TranscriptError>
     where
         F: TwoAdicField,
         EF: ExtensionField<F>,
@@ -102,7 +63,31 @@ impl<EF: Field> DeepEvals<EF> {
             })
             .collect();
 
-        Self::new(groups)
+        Ok(Self { groups, num_points })
+    }
+
+    /// Grouped row-major matrices, one per commitment group.
+    pub fn groups(&self) -> &[Vec<RowMajorMatrix<EF>>] {
+        &self.groups
+    }
+
+    /// Consume and return the grouped row-major matrices.
+    pub fn into_groups(self) -> Vec<Vec<RowMajorMatrix<EF>>> {
+        self.groups
+    }
+
+    /// Number of evaluation points (rows per matrix).
+    pub fn num_points(&self) -> usize {
+        self.num_points
+    }
+
+    pub(crate) fn reduce_point(&self, point_idx: usize, challenge: EF) -> EF {
+        let values = self.groups.iter().flat_map(move |group| {
+            group
+                .iter()
+                .flat_map(move |matrix| matrix.row(point_idx).expect("point index in range"))
+        });
+        horner(challenge, values)
     }
 }
 

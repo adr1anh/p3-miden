@@ -15,4 +15,4 @@ mod verifier;
 // Public API re-exports.
 pub use data::TranscriptData;
 pub use prover::{ProverChannel, ProverTranscript};
-pub use verifier::{VerifierChannel, VerifierTranscript};
+pub use verifier::{TranscriptError, VerifierChannel, VerifierTranscript};

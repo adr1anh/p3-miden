@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_miden_lmcs::Lmcs;
-use p3_miden_transcript::VerifierChannel;
+use p3_miden_transcript::{TranscriptError, VerifierChannel};
 
 /// Structured transcript view for the full PCS interaction.
 ///
@@ -53,14 +53,14 @@ where
         log_lde_height: usize,
         eval_points: [EF; N],
         channel: &mut Ch,
-    ) -> Option<Self>
+    ) -> Result<Self, TranscriptError>
     where
         Ch: VerifierChannel<F = L::F, Commitment = L::Commitment>
             + CanSample<L::F>
             + CanSampleBits<usize>,
     {
         if commitments.is_empty() {
-            return None;
+            return Err(TranscriptError::NoMoreFields);
         }
 
         let deep_transcript = DeepTranscript::from_verifier_channel::<Ch>(
@@ -83,9 +83,12 @@ where
             .iter()
             .map(|(_commitment, widths)| {
                 lmcs.read_batch_proof_from_channel(widths, log_lde_height, &indices, channel)
-                    .ok()
+                    .map_err(|e| match e {
+                        p3_miden_lmcs::LmcsError::TranscriptError(te) => te,
+                        _ => TranscriptError::NoMoreFields,
+                    })
             })
-            .collect::<Option<Vec<_>>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
 
         let log_arity = params.fri.fold.log_arity();
         let arity = params.fri.fold.arity();
@@ -103,11 +106,14 @@ where
             let widths = [base_width];
             let batch = lmcs
                 .read_batch_proof_from_channel(&widths, log_num_rows, &round_indices, channel)
-                .ok()?;
+                .map_err(|e| match e {
+                    p3_miden_lmcs::LmcsError::TranscriptError(te) => te,
+                    _ => TranscriptError::NoMoreFields,
+                })?;
             fri_openings.push(batch);
         }
 
-        Some(Self {
+        Ok(Self {
             deep_transcript,
             fri_transcript,
             query_pow_witness,

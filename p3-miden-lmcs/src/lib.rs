@@ -149,7 +149,7 @@ pub mod utils;
 use alloc::vec::Vec;
 
 use p3_matrix::Matrix;
-use p3_miden_transcript::{ProverChannel, VerifierChannel};
+use p3_miden_transcript::{ProverChannel, TranscriptError, VerifierChannel};
 use thiserror::Error;
 
 // ============================================================================
@@ -279,4 +279,6 @@ pub enum LmcsError {
     InvalidProof,
     #[error("root mismatch")]
     RootMismatch,
+    #[error("transcript error: {0}")]
+    TranscriptError(#[from] TranscriptError),
 }

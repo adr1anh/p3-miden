@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_lmcs::Lmcs;
-use p3_miden_transcript::VerifierChannel;
+use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use thiserror::Error;
 
 use crate::PcsParams;
@@ -74,9 +74,7 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // Check query PoW witness and sample query indices
     // ─────────────────────────────────────────────────────────────────────────
-    if channel.grind(params.query_proof_of_work_bits).is_none() {
-        return Err(PcsError::InvalidQueryPowWitness);
-    }
+    channel.grind(params.query_proof_of_work_bits)?;
 
     let query_indices: Vec<usize> = (0..params.num_queries)
         .map(|_| channel.sample_bits(log_lde_height))
@@ -111,6 +109,6 @@ pub enum PcsError {
     DeepError(#[from] DeepError),
     #[error("FRI error: {0}")]
     FriError(#[from] FriError),
-    #[error("invalid query proof-of-work witness")]
-    InvalidQueryPowWitness,
+    #[error("transcript error: {0}")]
+    TranscriptError(#[from] TranscriptError),
 }

@@ -8,7 +8,7 @@ use crate::utils::horner_acc;
 use p3_challenger::CanSample;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_lmcs::{Lmcs, LmcsError};
-use p3_miden_transcript::VerifierChannel;
+use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
 use thiserror::Error;
 
@@ -76,13 +76,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
             .iter()
             .map(|(_, widths)| widths.as_slice())
             .collect();
-        let evals = DeepEvals::read_from_channel::<F, Ch>(&widths, eval_points.len(), channel)
-            .ok_or(DeepError::StructureMismatch)?;
+        let evals = DeepEvals::read_from_channel::<F, Ch>(&widths, eval_points.len(), channel)?;
 
         // 1. Check grinding witness
-        let _pow_witness = channel
-            .grind(params.proof_of_work_bits)
-            .ok_or(DeepError::InvalidPowWitness)?;
+        channel.grind(params.proof_of_work_bits)?;
 
         // 2. Sample DEEP challenges
         let challenge_columns: EF = channel.sample_algebra_element();
@@ -164,10 +161,8 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
 /// Errors that can occur during DEEP oracle construction or verification.
 #[derive(Debug, Error)]
 pub enum DeepError {
-    #[error("invalid transcript structure")]
-    StructureMismatch,
-    #[error("invalid proof-of-work witness")]
-    InvalidPowWitness,
     #[error("LMCS error: {0}")]
     LmcsError(#[from] LmcsError),
+    #[error("transcript error: {0}")]
+    TranscriptError(#[from] TranscriptError),
 }

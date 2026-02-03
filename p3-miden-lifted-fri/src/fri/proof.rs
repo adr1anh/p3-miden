@@ -4,7 +4,7 @@ use crate::fri::FriParams;
 use alloc::vec::Vec;
 use p3_challenger::CanSample;
 use p3_field::{ExtensionField, TwoAdicField};
-use p3_miden_transcript::VerifierChannel;
+use p3_miden_transcript::{TranscriptError, VerifierChannel};
 
 /// Structured transcript view for a single FRI folding round.
 pub struct FriRoundTranscript<F, EF, Commitment> {
@@ -35,7 +35,7 @@ where
         params: &FriParams,
         log_domain_size: usize,
         channel: &mut Ch,
-    ) -> Option<Self>
+    ) -> Result<Self, TranscriptError>
     where
         Ch: VerifierChannel<F = F, Commitment = Commitment> + CanSample<F>,
     {
@@ -58,6 +58,6 @@ where
         let final_degree = params.final_poly_degree(log_domain_size);
         let final_poly = channel.receive_algebra_slice(final_degree)?;
 
-        Some(Self { rounds, final_poly })
+        Ok(Self { rounds, final_poly })
     }
 }
