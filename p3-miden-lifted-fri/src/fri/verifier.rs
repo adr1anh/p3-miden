@@ -137,7 +137,20 @@ where
                 )
                 .map_err(|e| FriError::LmcsError(e, round_idx))?;
 
-            // Drain, verify, fold, and rebuild with new keys
+            // Drain, verify, fold, and rebuild with new keys.
+            //
+            // SOUNDNESS NOTE: Multiple indices can map to the same row_idx after folding
+            // (they differ only in their low log_arity bits). This is safe because:
+            //
+            // 1. Each closure verifies its specific position: `row[position] == eval`.
+            //    All closures execute (Rust's collect drives the full iterator).
+            //
+            // 2. The folded value depends only on (row, s_inv, beta), not on position.
+            //    Indices in the same coset share the same row and s_inv, so they fold
+            //    to identical values. Keeping any one in the BTreeMap is correct.
+            //
+            // 3. The prover cannot provide different row data for the same row_idx.
+            //    LMCS opens each row exactly once via `opened_rows[&row_idx]`.
             evals = evals
                 .into_iter()
                 .map(|(idx, eval)| {
