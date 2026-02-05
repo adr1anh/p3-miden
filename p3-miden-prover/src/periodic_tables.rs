@@ -70,12 +70,13 @@
 //! - Pad all columns to max_period.
 //! - Run a coset LDE on that period (not the full trace).
 //! - Store only max_period * blowup rows.
+//!   We refer to this row count as table_period = max_period * blowup.
 //!
-//! Then lde_idx % height recovers the value for any evaluation-domain index.
+//! Then lde_idx % table_period recovers the value for any evaluation-domain index.
 //!
 //! # Functions
 //!
-//! - [`compute_periodic_on_quotient_eval_domain`]: Evaluates periodic columns over the
+//! - [`PeriodicLdeTable::from_periodic_table`]: Evaluates periodic columns over the
 //!   evaluation domain into a compact LDE table. Called by the prover during quotient
 //!   polynomial computation.
 //! - [`evaluate_periodic_at_point`]: Evaluates periodic columns at a single challenge point.
@@ -85,7 +86,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_commit::PolynomialSpace;
-use p3_dft::{Radix2DitParallel, TwoAdicSubgroupDft};
+use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::{ExtensionField, TwoAdicField, batch_multiplicative_inverse};
 use p3_interpolation::interpolate_coset_with_precomputation;
 use p3_matrix::dense::RowMajorMatrix;
@@ -97,29 +98,20 @@ use tracing::info_span;
 /// Instead of materializing the full LDE table, stores only `max_period * blowup` rows
 /// and uses modular indexing to access values.
 ///
-/// Rows repeat with period `height` because the LDE depends on
-/// (z / g)^(N / max_period), so `lde_idx % height` is sufficient.
+/// Rows repeat with period `table_period` because the LDE depends on
+/// (z / g)^(N / max_period), so `lde_idx % table_period` is sufficient.
 #[derive(Clone, Debug)]
 pub(crate) struct PeriodicLdeTable<F> {
     values: RowMajorMatrix<F>,
 }
 
 impl<F: Clone + Send + Sync> PeriodicLdeTable<F> {
-    pub const fn new(values: RowMajorMatrix<F>) -> Self {
-        Self { values }
-    }
-
-    pub fn empty() -> Self {
-        Self {
-            values: RowMajorMatrix::new(Vec::new(), 0),
-        }
-    }
-
     pub fn width(&self) -> usize {
         self.values.width
     }
 
-    pub fn height(&self) -> usize {
+    /// Returns the row repetition period of the compact LDE table (`max_period * blowup`).
+    pub fn table_period(&self) -> usize {
         if self.values.width == 0 {
             0
         } else {
@@ -129,39 +121,42 @@ impl<F: Clone + Send + Sync> PeriodicLdeTable<F> {
 
     #[inline]
     pub fn get(&self, lde_idx: usize, col_idx: usize) -> &F {
-        let height = self.height();
+        let table_period = self.table_period();
         // lde_idx is an index into the evaluation (LDE/quotient) domain; rows repeat every
-        // `height`.
-        debug_assert!(height > 0, "cannot index into empty periodic table");
-        let row_idx = lde_idx % height;
+        // `table_period`.
+        debug_assert!(table_period > 0, "cannot index into empty periodic table");
+        let row_idx = lde_idx % table_period;
         &self.values.values[row_idx * self.values.width + col_idx]
     }
 }
 
-/// Computes periodic columns on the evaluation (LDE/quotient) domain into a compact LDE table.
-///
-/// Assumes the evaluation (LDE/quotient) domain is a blowup of the trace domain
-/// (i.e. `quotient_len` is a multiple of `trace_len`) and all column periods are
-/// powers of two dividing `trace_len`.
-///
-/// The LDE is performed on the period domain, using a shift derived from the ratio
-/// `evaluation_shift / trace_shift` (where evaluation_shift is the quotient-domain shift).
-/// Concretely:
-///
-///   periodic_shift = (quotient_shift / trace_shift)^(trace_len / max_period)
-///
-/// This matches the "unshift then fold" mapping above.
-pub(crate) fn compute_periodic_on_quotient_eval_domain<F>(
-    periodic_table: &[Vec<F>],
-    trace_domain: &impl PolynomialSpace<Val = F>,
-    quotient_domain: &impl PolynomialSpace<Val = F>,
-) -> PeriodicLdeTable<F>
-where
-    F: TwoAdicField + Ord,
-{
-    if periodic_table.is_empty() {
-        return PeriodicLdeTable::empty();
-    }
+impl<F: TwoAdicField + Clone + Send + Sync> PeriodicLdeTable<F> {
+    /// Computes periodic columns on the evaluation (LDE/quotient) domain into a compact LDE table.
+    ///
+    /// Assumes the evaluation (LDE/quotient) domain is a blowup of the trace domain
+    /// (i.e. `quotient_len` is a multiple of `trace_len`) and all column periods are
+    /// powers of two dividing `trace_len`.
+    ///
+    /// This assumes the trace domain is canonical (first point is the subgroup generator)
+    /// and the quotient domain is derived from it, which matches the prover's domain setup.
+    ///
+    /// The LDE is performed on the period domain, using a shift derived from the ratio
+    /// `evaluation_shift / trace_shift` (where evaluation_shift is the quotient-domain shift).
+    /// Concretely:
+    ///
+    ///   periodic_shift = (quotient_shift / trace_shift)^(trace_len / max_period)
+    ///
+    /// This matches the "unshift then fold" mapping above.
+    pub(crate) fn from_periodic_table(
+        periodic_table: &[Vec<F>],
+        trace_domain: &impl PolynomialSpace<Val = F>,
+        quotient_domain: &impl PolynomialSpace<Val = F>,
+    ) -> Self {
+        if periodic_table.is_empty() {
+            return Self {
+                values: RowMajorMatrix::new(Vec::new(), 0),
+            };
+        }
 
     let trace_len = trace_domain.size();
     let quotient_len = quotient_domain.size();
@@ -178,7 +173,7 @@ where
         .max()
         .expect("non-empty periodic table");
 
-    let extended_height = max_period * blowup;
+    let lde_period = max_period * blowup;
     let trace_shift = trace_domain.first_point();
     let lde_shift = quotient_domain.first_point() * trace_shift.inverse();
     // Fold the evaluation-domain (quotient) coset shift down to the period coset:
@@ -194,11 +189,11 @@ where
     )
     .entered();
 
-    let dft = Radix2DitParallel::<F>::default();
+    let dft = Radix2DFTSmallBatch::<F>::default();
     let num_cols = periodic_table.len();
 
     // Write column LDEs directly into the row-major buffer to avoid a full extra copy.
-    let mut row_major_values = vec![F::ZERO; extended_height * num_cols];
+    let mut row_major_values = vec![F::ZERO; lde_period * num_cols];
     for (col_idx, col) in periodic_table.iter().enumerate() {
         let period = col.len();
         debug_assert!(period > 0, "periodic column cannot be empty");
@@ -216,7 +211,10 @@ where
         }
     }
 
-    PeriodicLdeTable::new(RowMajorMatrix::new(row_major_values, num_cols))
+        Self {
+            values: RowMajorMatrix::new(row_major_values, num_cols),
+        }
+    }
 }
 
 /// Evaluates periodic columns at an out-of-domain challenge point `zeta`.
@@ -335,11 +333,11 @@ mod tests {
 
     type Val = Goldilocks;
 
-    /// Test that compute_periodic_on_quotient_eval_domain produces the same results as the
+    /// Test that from_periodic_table produces the same results as the
     /// naive method where we unpack the periodic table into a full column and do
     /// interpolation for the whole column
     #[test]
-    fn test_compute_periodic_on_quotient_eval_domain_correctness() {
+    fn test_periodic_lde_table_correctness() {
         // Test parameters
         let trace_height = 16; // Must be a power of 2
         let log_quotient_degree = 2;
@@ -389,12 +387,9 @@ mod tests {
             pts
         };
 
-        // Method 1: Optimized method (compute_periodic_on_quotient_eval_domain)
-        let optimized_table = compute_periodic_on_quotient_eval_domain(
-            &periodic_table,
-            &trace_domain,
-            &quotient_domain,
-        );
+        // Method 1: Optimized method (from_periodic_table)
+        let optimized_table =
+            PeriodicLdeTable::from_periodic_table(&periodic_table, &trace_domain, &quotient_domain);
         let optimized_result: Vec<Vec<Val>> = (0..periodic_table.len())
             .map(|col_idx| {
                 (0..quotient_size)
@@ -437,7 +432,7 @@ mod tests {
 
     /// Test with edge case: single period equals trace height
     #[test]
-    fn test_compute_periodic_on_quotient_eval_domain_full_period() {
+    fn test_periodic_lde_table_full_period() {
         let trace_height = 8;
         let log_quotient_degree = 1;
         let quotient_size = trace_height << log_quotient_degree;
@@ -472,11 +467,8 @@ mod tests {
             pts
         };
 
-        let optimized_table = compute_periodic_on_quotient_eval_domain(
-            &periodic_table,
-            &trace_domain,
-            &quotient_domain,
-        );
+        let optimized_table =
+            PeriodicLdeTable::from_periodic_table(&periodic_table, &trace_domain, &quotient_domain);
         let optimized_result: Vec<Vec<Val>> = (0..periodic_table.len())
             .map(|col_idx| {
                 (0..quotient_size)

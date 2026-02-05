@@ -14,7 +14,7 @@ use p3_miden_air::MidenAir;
 use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
-use crate::periodic_tables::compute_periodic_on_quotient_eval_domain;
+use crate::periodic_tables::PeriodicLdeTable;
 use crate::util::prover_row_to_ext;
 use crate::{
     AirWithBoundaryConstraints, Commitments, Domain, OpenedValues, PackedChallenge, PackedVal,
@@ -51,7 +51,7 @@ pub fn prove<SC, A>(
 where
     SC: StarkGenericConfig + Sync,
     A: MidenAir<Val<SC>, SC::Challenge>,
-    Val<SC>: TwoAdicField + Ord,
+    Val<SC>: TwoAdicField,
 {
     let air = &AirWithBoundaryConstraints {
         inner: air,
@@ -458,7 +458,7 @@ where
     SC: StarkGenericConfig + Sync,
     A: MidenAir<Val<SC>, SC::Challenge>,
     Mat: Matrix<Val<SC>> + Sync,
-    Val<SC>: TwoAdicField + Ord,
+    Val<SC>: TwoAdicField,
 {
     let quotient_size = quotient_domain.size();
     let width = trace_on_quotient_domain.width();
@@ -478,7 +478,7 @@ where
 
     // Compute periodic values
     let periodic_on_quotient =
-        compute_periodic_on_quotient_eval_domain(&periodic_table, &trace_domain, &quotient_domain);
+        PeriodicLdeTable::from_periodic_table(&periodic_table, &trace_domain, &quotient_domain);
 
     // =====================================
     // normal eval section
