@@ -65,10 +65,6 @@ pub fn sample_indices<R: Rng>(rng: &mut R, upper: usize, count: usize) -> Vec<us
     indices
 }
 
-pub fn evals_at<T: Copy>(values: &[T], indices: &[usize]) -> Vec<T> {
-    indices.iter().map(|&idx| values[idx]).collect()
-}
-
 // ============================================================================
 // End-to-end test
 // ============================================================================

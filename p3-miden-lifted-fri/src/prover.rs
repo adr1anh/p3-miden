@@ -2,13 +2,14 @@
 //!
 //! Opens committed matrices at out-of-domain evaluation points.
 
-use alloc::vec::Vec;
+use alloc::collections::BTreeSet;
 
 use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_miden_transcript::ProverChannel;
+use p3_util::reverse_bits_len;
 
 use crate::PcsParams;
 use crate::deep::prover::DeepPoly;
@@ -80,10 +81,16 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     let _query_pow_witness = channel.grind(params.query_proof_of_work_bits);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Sample query indices
+    // Sample query exponents and convert to tree indices
     // ─────────────────────────────────────────────────────────────────────────
-    let query_indices: Vec<usize> = (0..params.num_queries)
-        .map(|_| channel.sample_bits(log_lde_height))
+    // Exponents are domain point indices: domain point = g·ω^{exp}.
+    // Tree indices are bit-reversed exponents (LMCS stores in bit-reversed order).
+    // Collecting into BTreeSet ensures deduplication and sorted order.
+    let tree_indices: BTreeSet<usize> = (0..params.num_queries)
+        .map(|_| {
+            let exp = channel.sample_bits(log_lde_height);
+            reverse_bits_len(exp, log_lde_height)
+        })
         .collect();
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -91,9 +98,9 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     // ─────────────────────────────────────────────────────────────────────────
     // Open input trees at all query indices at once (one proof per tree)
     for tree in trace_trees {
-        tree.prove_batch(&query_indices, channel);
+        tree.prove_batch(tree_indices.iter().copied(), channel);
     }
 
     // Open all FRI rounds at all query indices at once (one proof per round)
-    fri_polys.prove_queries(&params.fri, &query_indices, channel);
+    fri_polys.prove_queries(&params.fri, &tree_indices, channel);
 }

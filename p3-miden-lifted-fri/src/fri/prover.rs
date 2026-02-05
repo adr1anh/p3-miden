@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
 use core::ops::Deref;
 
+use alloc::collections::BTreeSet;
 use p3_challenger::CanSample;
 use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::{ExtensionField, TwoAdicField};
@@ -192,21 +193,28 @@ where
     }
 
     /// Stream all FRI query proofs into a transcript channel.
-    pub fn prove_queries<Ch>(&self, params: &FriParams, indices: &[usize], channel: &mut Ch)
-    where
+    ///
+    /// `tree_indices` are bit-reversed tree positions (sorted, deduplicated).
+    pub fn prove_queries<Ch>(
+        &self,
+        params: &FriParams,
+        tree_indices: &BTreeSet<usize>,
+        channel: &mut Ch,
+    ) where
         Ch: ProverChannel<F = F, Commitment = L::Commitment>,
     {
         let log_arity = params.fold.log_arity();
 
-        // For each round, compute the corresponding indices (shifted from previous round)
+        // For each round, compute row indices from current indices
         for (round, tree) in self.folded_trees.iter().enumerate() {
-            // Compute indices for this round: shift each index by log_arity * (round + 1)
-            // The +1 accounts for the initial fold from evaluation domain to first round
-            let round_indices: Vec<usize> = indices
-                .iter()
-                .map(|&idx| idx >> (log_arity * (round + 1)))
-                .collect();
-            tree.prove_batch(&round_indices, channel);
+            // After (round + 1) folds, indices shift by log_arity * (round + 1)
+            let shift = log_arity * (round + 1);
+
+            // Compute folded row indices. prove_batch skips duplicates.
+            let row_indices = tree_indices.iter().map(|&idx| idx >> shift);
+
+            // Prove in sorted order (BTreeSet iterates in ascending order)
+            tree.prove_batch(row_indices, channel);
         }
     }
 }

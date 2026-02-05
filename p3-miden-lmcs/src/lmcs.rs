@@ -1,7 +1,6 @@
 //! LMCS configuration types.
 
-use alloc::collections::BTreeMap;
-use alloc::collections::btree_map::Entry;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
@@ -11,7 +10,7 @@ use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_miden_transcript::VerifierChannel;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 
-use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsError};
+use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsError, OpenedRows};
 
 type Opening<F, C> = (Vec<Vec<F>>, C);
 
@@ -156,41 +155,38 @@ where
     ///   zero. Verifiers cannot distinguish zero padding from arbitrary values unless
     ///   they check the opened rows or constrain them elsewhere.
     /// - Empty `indices` returns `InvalidProof`.
-    /// - Duplicate indices are coalesced in the transcript (first-occurrence order);
-    ///   openings are returned for each occurrence.
+    /// - Duplicate indices are coalesced in the returned map (unique keys only).
     /// - Out-of-range indices (>= 2^log_max_height) return `InvalidProof`.
     /// - Missing siblings or malformed hints return `InvalidProof`.
     /// - Extra hints are ignored and left unread.
     /// - Returns `RootMismatch` only after a well-formed proof yields a different root.
+    ///
+    /// Leaf openings are read in **sorted tree index order** (ascending, deduplicated).
     fn open_batch<Ch>(
         &self,
         commitment: &Self::Commitment,
         widths: &[usize],
         log_max_height: usize,
-        indices: &[usize],
+        indices: impl IntoIterator<Item = usize>,
         channel: &mut Ch,
-    ) -> Result<Vec<Vec<Vec<Self::F>>>, LmcsError>
+    ) -> Result<OpenedRows<Self::F>, LmcsError>
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>,
     {
-        if indices.is_empty() {
-            return Err(LmcsError::InvalidProof);
-        }
-
         let max_height = 1usize << log_max_height;
-        // Map index -> (rows, leaf_hash), filled in first-occurrence order.
+
+        // Collect and deduplicate indices. BTreeSet iteration yields sorted order.
+        let unique_indices: BTreeSet<usize> = indices.into_iter().collect();
+
+        // Map index -> (rows, leaf_hash), filled in sorted order.
         let mut openings_by_index: BTreeMap<usize, Opening<Self::F, Self::Commitment>> =
             BTreeMap::new();
 
-        // Read openings in first-occurrence order, skipping duplicates.
-        for &index in indices {
+        // Read openings in sorted tree index order.
+        for index in unique_indices {
             if index >= max_height {
                 return Err(LmcsError::InvalidProof);
             }
-            let entry = match openings_by_index.entry(index) {
-                Entry::Occupied(_) => continue,
-                Entry::Vacant(entry) => entry,
-            };
 
             let rows = widths
                 .iter()
@@ -206,7 +202,11 @@ where
                     .chain(core::iter::once(salt.as_slice())),
             );
 
-            entry.insert((rows, leaf_hash));
+            openings_by_index.insert(index, (rows, leaf_hash));
+        }
+
+        if openings_by_index.is_empty() {
+            return Err(LmcsError::InvalidProof);
         }
 
         // Recompute root from known leaves and streamed siblings.
@@ -278,10 +278,10 @@ where
             return Err(LmcsError::RootMismatch);
         }
 
-        // Expand openings back to the caller's index order (including duplicates).
-        Ok(indices
-            .iter()
-            .map(|idx| openings_by_index[idx].0.clone())
+        // Return deduplicated openings keyed by index.
+        Ok(openings_by_index
+            .into_iter()
+            .map(|(idx, (rows, _hash))| (idx, rows))
             .collect())
     }
 
@@ -358,7 +358,7 @@ mod tests {
 
         let make_transcript = |indices: &[usize]| {
             let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-            tree.prove_batch(indices, &mut prover_channel);
+            tree.prove_batch(indices.iter().copied(), &mut prover_channel);
             prover_channel.into_data()
         };
 
@@ -371,13 +371,12 @@ mod tests {
                     &commitment,
                     &widths,
                     log_max_height,
-                    indices,
+                    indices.iter().copied(),
                     &mut verifier_channel,
                 )
                 .unwrap();
-            assert_eq!(opened.len(), indices.len());
-            for (pos, &idx) in indices.iter().enumerate() {
-                assert_eq!(opened[pos], tree.rows(idx));
+            for &idx in indices {
+                assert_eq!(opened[&idx], tree.rows(idx));
             }
             assert!(verifier_channel.is_empty())
         };
@@ -391,9 +390,8 @@ mod tests {
         let tiny_tree = lmcs.build_tree(vec![small_matrix(1, 1, 7)]);
         let widths_tiny = tiny_tree.widths();
         let log_tiny = log2_strict_usize(tiny_tree.height());
-        let indices = [0usize];
         let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-        tiny_tree.prove_batch(&indices, &mut prover_channel);
+        tiny_tree.prove_batch([0], &mut prover_channel);
         let transcript = prover_channel.into_data();
         let mut verifier_channel =
             VerifierTranscript::from_data(bb::test_challenger(), &transcript);
@@ -402,11 +400,11 @@ mod tests {
                 &tiny_tree.root(),
                 &widths_tiny,
                 log_tiny,
-                &indices,
+                [0],
                 &mut verifier_channel,
             )
             .unwrap();
-        assert_eq!(opened[0], tiny_tree.rows(0));
+        assert_eq!(opened[&0], tiny_tree.rows(0));
 
         // oob index
         let transcript = ProverTranscript::new(bb::test_challenger()).into_data();
@@ -417,15 +415,14 @@ mod tests {
                 &commitment,
                 &widths,
                 log_max_height,
-                &[tree.height()],
+                [tree.height()],
                 &mut verifier_channel,
             ),
             Err(LmcsError::InvalidProof)
         );
 
         // wrong tree
-        let indices = [0usize];
-        let transcript = make_transcript(&indices);
+        let transcript = make_transcript(&[0]);
         let mut verifier_channel =
             VerifierTranscript::from_data(bb::test_challenger(), &transcript);
         let wrong_tree = lmcs.build_tree(vec![small_matrix(4, 2, 999)]);
@@ -434,7 +431,7 @@ mod tests {
                 &wrong_tree.root(),
                 &widths,
                 log_max_height,
-                &indices,
+                [0],
                 &mut verifier_channel,
             ),
             Err(LmcsError::RootMismatch)
@@ -452,7 +449,7 @@ mod tests {
                 &commitment,
                 &widths,
                 log_max_height,
-                &indices,
+                indices,
                 &mut verifier_channel,
             ),
             Err(LmcsError::TranscriptError(
@@ -469,7 +466,7 @@ mod tests {
                 &commitment,
                 &widths,
                 log_max_height,
-                &[],
+                [],
                 &mut verifier_channel,
             ),
             Err(LmcsError::InvalidProof)

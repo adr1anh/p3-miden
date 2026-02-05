@@ -85,7 +85,7 @@ fn extract_proofs_roundtrip() {
         let (commitment, dimensions, _) = tree_context(&tree);
 
         let mut prover_channel = ProverTranscript::new(test_challenger());
-        tree.prove_batch(indices, &mut prover_channel);
+        tree.prove_batch(indices.iter().copied(), &mut prover_channel);
         let transcript = prover_channel.into_data();
 
         let mut verifier_channel = VerifierTranscript::from_data(test_challenger(), &transcript);

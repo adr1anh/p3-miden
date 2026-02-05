@@ -2,8 +2,8 @@ use alloc::vec::Vec;
 use core::iter::zip;
 
 use super::DeepParams;
+use super::evals::BatchedEvals;
 use super::interpolate::PointQuotients;
-use crate::deep::BatchedEvals;
 use crate::utils::PackedFieldExtensionExt;
 use p3_challenger::CanSample;
 use p3_field::{
@@ -101,6 +101,10 @@ impl<EF> DeepPoly<EF> {
         M: Matrix<L::F>,
         Ch: ProverChannel<F = L::F, Commitment = L::Commitment> + CanSample<L::F>,
     {
+        // The alignment of the trees defines the number of virtual zero-values columns were
+        // inserted while hashing the rows of the matrices. The prover pads the opened rows of each
+        // matrix with zeros, so that the length of the row is a multiple of the alignment.
+        // The alignment is tied to the underlying cryptographic permutation's rate.
         let alignment = trace_trees
             .first()
             .expect("at least one tree must be provided")
@@ -110,11 +114,18 @@ impl<EF> DeepPoly<EF> {
             "mixed trace tree alignments are not supported"
         );
 
+        // Collect the matrices committed to in each of the provided trees.
         let matrices_groups: Vec<Vec<&M>> = trace_trees
             .iter()
             .map(|tree| tree.leaves().iter().collect())
             .collect();
 
+        // For each matrix, we pad the list of evaluations for each column with zeros, matching
+        // the virtual zero-valued columns inserted by the prover when opening rows.
+        // The verifier must be invoked with the aligned widths, and will read the padded
+        // evaluations from the transcript. It does not check that these are zero. A malicious
+        // prover may pad the matrices with non-zero columns, but these columns must still represent
+        // valid low-degree polynomials.
         let batched_evals = batched_evals.aligned(alignment);
 
         // 1. Observe evaluations into transcript in point-major order.

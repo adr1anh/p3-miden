@@ -19,6 +19,11 @@ pub struct DeepEvals<EF: Field> {
 }
 
 impl<EF: Field> DeepEvals<EF> {
+    /// Parse out-of-domain evaluations from a verifier channel.
+    ///
+    /// Reads in point-major order: for each evaluation point, then for each group,
+    /// then for each matrix, we receive `width` extension field elements (one row).
+    /// Widths should include any alignment padding applied during commitment.
     pub(crate) fn read_from_channel<F, Ch>(
         widths: &[&[usize]],
         num_points: usize,
@@ -29,36 +34,34 @@ impl<EF: Field> DeepEvals<EF> {
         EF: ExtensionField<F>,
         Ch: VerifierChannel<F = F>,
     {
-        // Widths are expected to include any alignment padding.
-        let mut values: Vec<Vec<Vec<EF>>> = widths
+        // Accumulate rows into flat buffers; convert to RowMajorMatrix at the end.
+        let mut buffers: Vec<Vec<Vec<EF>>> = widths
             .iter()
-            .map(|group_widths| {
-                group_widths
+            .map(|group| {
+                group
                     .iter()
-                    .map(|&width| Vec::with_capacity(num_points * width))
+                    .map(|&w| Vec::with_capacity(num_points * w))
                     .collect()
             })
             .collect();
 
+        // Reads point-by-point: each point contributes one row to every matrix.
         for _ in 0..num_points {
-            for (group_idx, group_widths) in widths.iter().enumerate() {
-                let group_values = &mut values[group_idx];
-                for (matrix_idx, &width) in group_widths.iter().enumerate() {
-                    let matrix_values = &mut group_values[matrix_idx];
-                    let point_values = channel.receive_algebra_slice::<EF>(width)?;
-                    matrix_values.extend(point_values);
+            for (group, group_widths) in buffers.iter_mut().zip(widths.iter()) {
+                for (buf, &width) in group.iter_mut().zip(group_widths.iter()) {
+                    buf.extend(channel.receive_algebra_slice::<EF>(width)?);
                 }
             }
         }
 
-        let groups = values
+        let groups = buffers
             .into_iter()
             .zip(widths)
-            .map(|(group_values, group_widths)| {
-                group_values
+            .map(|(group, widths)| {
+                group
                     .into_iter()
-                    .zip(*group_widths)
-                    .map(|(matrix_values, &width)| RowMajorMatrix::new(matrix_values, width))
+                    .zip(*widths)
+                    .map(|(values, &width)| RowMajorMatrix::new(values, width))
                     .collect()
             })
             .collect();
@@ -81,11 +84,16 @@ impl<EF: Field> DeepEvals<EF> {
         self.num_points
     }
 
+    /// Reduce all column evaluations at a single point via Horner.
+    ///
+    /// Computes `f_reduced(zⱼ) = Σᵢ αⁱ · fᵢ(zⱼ)` where `α` is the challenge and
+    /// `fᵢ(zⱼ)` are the column evaluations at point index `j`, flattened across
+    /// all groups and matrices in commitment order.
     pub(crate) fn reduce_point(&self, point_idx: usize, challenge: EF) -> EF {
-        let values = self.groups.iter().flat_map(move |group| {
+        let values = self.groups.iter().flat_map(|group| {
             group
                 .iter()
-                .flat_map(move |matrix| matrix.row(point_idx).expect("point index in range"))
+                .flat_map(|matrix| matrix.row(point_idx).expect("point index in range"))
         });
         horner(challenge, values)
     }
@@ -96,33 +104,7 @@ impl<EF: Field> DeepEvals<EF> {
 /// Structure: `matrices[matrix_idx][col_idx]` is a `FieldArray<EF, N>`.
 #[derive(Clone, Debug)]
 pub struct BatchedGroupEvals<EF: Field, const N: usize> {
-    matrices: Vec<Vec<FieldArray<EF, N>>>,
-}
-
-impl<EF: Field, const N: usize> BatchedGroupEvals<EF, N> {
-    pub const fn new(matrices: Vec<Vec<FieldArray<EF, N>>>) -> Self {
-        Self { matrices }
-    }
-
-    pub fn matrices(&self) -> &[Vec<FieldArray<EF, N>>] {
-        &self.matrices
-    }
-
-    pub fn matrix(&self, idx: usize) -> Option<&[FieldArray<EF, N>]> {
-        self.matrices.get(idx).map(|v| v.as_slice())
-    }
-
-    pub fn num_matrices(&self) -> usize {
-        self.matrices.len()
-    }
-
-    pub fn iter_matrices(&self) -> impl Iterator<Item = &[FieldArray<EF, N>]> {
-        self.matrices.iter().map(|v| v.as_slice())
-    }
-
-    pub fn iter_evals(&self) -> impl Iterator<Item = &FieldArray<EF, N>> {
-        self.matrices.iter().flatten()
-    }
+    pub matrices: Vec<Vec<FieldArray<EF, N>>>,
 }
 
 /// Batched evaluations at N points, grouped by commitment.
@@ -131,14 +113,10 @@ impl<EF: Field, const N: usize> BatchedGroupEvals<EF, N> {
 /// no longer needs an explicit alignment parameter.
 #[derive(Clone, Debug)]
 pub struct BatchedEvals<EF: Field, const N: usize> {
-    groups: Vec<BatchedGroupEvals<EF, N>>,
+    pub groups: Vec<BatchedGroupEvals<EF, N>>,
 }
 
 impl<EF: Field, const N: usize> BatchedEvals<EF, N> {
-    pub const fn new(groups: Vec<BatchedGroupEvals<EF, N>>) -> Self {
-        Self { groups }
-    }
-
     /// Pad each matrix with zero columns so widths are aligned.
     pub fn aligned(mut self, alignment: usize) -> Self {
         for group in &mut self.groups {
@@ -150,15 +128,11 @@ impl<EF: Field, const N: usize> BatchedEvals<EF, N> {
         self
     }
 
-    pub fn groups(&self) -> &[BatchedGroupEvals<EF, N>] {
-        &self.groups
-    }
-
-    pub(crate) fn reduce(&self, challenge: EF) -> FieldArray<EF, N> {
+    pub fn reduce(&self, challenge: EF) -> FieldArray<EF, N> {
         let values = self
             .groups
             .iter()
-            .flat_map(|group| group.iter_evals())
+            .flat_map(|group| group.matrices.iter().flatten())
             .copied();
         horner(challenge, values)
     }
@@ -171,8 +145,8 @@ impl<EF: Field, const N: usize> BatchedEvals<EF, N> {
     {
         for point_idx in 0..N {
             for group in &self.groups {
-                for matrix_evals in group.iter_matrices() {
-                    for eval in matrix_evals {
+                for matrix in &group.matrices {
+                    for eval in matrix {
                         channel.send_algebra_element(eval[point_idx]);
                     }
                 }

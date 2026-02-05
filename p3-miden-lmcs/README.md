@@ -101,7 +101,7 @@ directly from the channel without constructing intermediate `BatchProof` objects
 - `widths` and `log_max_height` are statement data chosen by the protocol.
 - Evaluation rows are in bit-reversed order.
 - Query indices are in range of the max height.
-- Duplicate indices are coalesced in the transcript (first-occurrence order); verifiers
+- Duplicate indices are coalesced in the transcript (sorted tree index order); verifiers
   return the same opening for each occurrence.
 - If `build_aligned_tree` is used, alignment padding (as recorded on the tree) must be
   included in absorbed rows; LMCS does not enforce zero-padding.

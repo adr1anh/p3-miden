@@ -2,12 +2,14 @@
 //!
 //! Verifies polynomial evaluation claims against commitments.
 
+use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 
 use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
+use p3_util::reverse_bits_len;
 use thiserror::Error;
 
 use crate::PcsParams;
@@ -76,19 +78,25 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     channel.grind(params.query_proof_of_work_bits)?;
 
-    let query_indices: Vec<usize> = (0..params.num_queries)
-        .map(|_| channel.sample_bits(log_lde_height))
+    // Sample exponents and convert to tree indices immediately.
+    // Tree indices are bit-reversed exponents (LMCS stores in bit-reversed order).
+    let tree_indices: BTreeSet<usize> = (0..params.num_queries)
+        .map(|_| {
+            let exp = channel.sample_bits(log_lde_height);
+            reverse_bits_len(exp, log_lde_height)
+        })
         .collect();
 
     // ─────────────────────────────────────────────────────────────────────────
     // Verify DEEP openings for all queries at once
     // ─────────────────────────────────────────────────────────────────────────
-    let deep_evals = deep_oracle.open_batch(lmcs, &query_indices, channel)?;
+    // tree_indices are bit-reversed positions; deep_evals is keyed by tree index
+    let deep_evals = deep_oracle.open_batch(lmcs, &tree_indices, channel)?;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Test low-degree proximity for all queries at once
     // ─────────────────────────────────────────────────────────────────────────
-    fri_oracle.test_low_degree(lmcs, &params.fri, &query_indices, &deep_evals, channel)?;
+    fri_oracle.test_low_degree(lmcs, &params.fri, deep_evals, channel)?;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Return verified evaluations
