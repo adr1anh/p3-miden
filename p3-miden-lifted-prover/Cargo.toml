@@ -13,9 +13,11 @@ p3-challenger.workspace = true
 p3-dft.workspace = true
 p3-field.workspace = true
 p3-matrix.workspace = true
+p3-maybe-rayon.workspace = true
 p3-miden-air.workspace = true
 p3-miden-lifted-fri.workspace = true
 p3-miden-lifted-stark.workspace = true
+p3-miden-lifted-verifier.workspace = true
 p3-miden-lmcs.workspace = true
 p3-miden-transcript.workspace = true
 p3-util.workspace = true
@@ -23,5 +25,10 @@ p3-util.workspace = true
 rand.workspace = true
 thiserror.workspace = true
 
+[features]
+default = []
+parallel = ["p3-maybe-rayon/parallel"]
+
 [dev-dependencies]
+p3-baby-bear.workspace = true
 p3-miden-dev-utils.workspace = true

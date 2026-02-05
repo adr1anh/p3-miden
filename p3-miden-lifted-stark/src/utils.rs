@@ -3,7 +3,6 @@
 use alloc::vec::Vec;
 
 use p3_challenger::CanSample;
-use p3_field::coset::TwoAdicMultiplicativeCoset;
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 
@@ -15,18 +14,6 @@ where
     Ch: CanSample<F>,
 {
     EF::from_basis_coefficients_fn(|_| channel.sample())
-}
-
-pub fn lifted_coset<F: TwoAdicField>(
-    log_trace_height: usize,
-    log_lifted_trace_height: usize,
-    log_blowup: usize,
-) -> TwoAdicMultiplicativeCoset<F> {
-    let log_target_coset_size = log_lifted_trace_height + log_blowup;
-    let target_coset =
-        TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_target_coset_size).unwrap();
-    let log_ratio = log_lifted_trace_height - log_trace_height;
-    target_coset.exp_power_of_2(log_ratio).unwrap()
 }
 
 /// Sample an out-of-domain (OOD) evaluation point outside H and gK.

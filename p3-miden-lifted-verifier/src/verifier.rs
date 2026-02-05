@@ -20,11 +20,12 @@ use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use thiserror::Error;
 
-use p3_miden_lifted_stark::{
-    ConstraintFolder, StarkConfig, sample_ext, sample_ood_zeta, selectors_at,
-};
+use p3_miden_lifted_stark::{LiftedCoset, StarkConfig, sample_ext, sample_ood_zeta};
 
-use crate::PeriodicPolys;
+use crate::{
+    CONSTRAINT_DEGREE, ConstraintFolder, PeriodicPolys, align_width, extract_quotient_chunks,
+    reconstruct_quotient, row_to_packed_ext,
+};
 
 /// Errors that can occur during verification.
 #[derive(Debug, Error)]
@@ -110,7 +111,8 @@ where
     // The folder ignores padding columns since the AIR only accesses columns it knows about.
     let trace_width = align_width(air.width(), alignment);
     let aux_width = align_width(air.aux_width() * EF::DIMENSION, alignment);
-    let quotient_width = align_width(EF::DIMENSION, alignment);
+    // Quotient has D chunks, each as EF element (D * EF::DIMENSION base field elements)
+    let quotient_width = align_width(CONSTRAINT_DEGREE * EF::DIMENSION, alignment);
 
     let commitments = vec![
         (main_commit, vec![trace_width]),
@@ -146,19 +148,10 @@ where
     let aux_local = row_to_packed_ext::<F, EF, _>(aux_matrix.row(0).unwrap())?;
     let aux_next = row_to_packed_ext::<F, EF, _>(aux_matrix.row(1).unwrap())?;
 
-    // Quotient: extract first EF::DIMENSION base coefficients and reconstitute
+    // Quotient: extract D quotient chunk evaluations and reconstruct Q(ζ)
     let quotient_row: Vec<EF> = quotient_matrix.row(0).unwrap().into_iter().collect();
-    let quotient_coeffs: Vec<F> = quotient_row
-        .iter()
-        .take(EF::DIMENSION)
-        .map(|ef| ef.as_basis_coefficients_slice()[0])
-        .collect();
-    let quotient_zeta = EF::from_basis_coefficients_slice(&quotient_coeffs).ok_or(
-        VerifierError::InvalidAuxShape {
-            expected_divisor: EF::DIMENSION,
-            actual_len: quotient_coeffs.len(),
-        },
-    )?;
+    let quotient_chunks = extract_quotient_chunks::<F, EF>(&quotient_row);
+    let quotient_zeta = reconstruct_quotient::<F, EF>(zeta, trace_height, &quotient_chunks);
 
     // 9. Evaluate periodic values at zeta
     let periodic_polys =
@@ -166,7 +159,8 @@ where
     let periodic_values = periodic_polys.eval_at::<EF>(trace_height, zeta);
 
     // 10. Evaluate constraints at zeta
-    let selectors = selectors_at::<F, EF>(zeta, trace_height);
+    let coset = LiftedCoset::new(log_trace_height, log_lde_height, log_lde_height);
+    let selectors = coset.selectors_at::<F, _>(zeta);
     let public_values_ef: Vec<EF> = public_values.iter().copied().map(EF::from).collect();
 
     // Build 2-row matrices for the folder (row 0 = local, row 1 = next)
@@ -203,29 +197,4 @@ where
     }
 
     Ok(())
-}
-
-/// Align width to the given alignment.
-fn align_width(width: usize, alignment: usize) -> usize {
-    width.div_ceil(alignment) * alignment
-}
-
-/// Extract base field coefficients from EF row and reconstitute as packed EF elements.
-fn row_to_packed_ext<F, EF, I>(row: I) -> Result<Vec<EF>, VerifierError>
-where
-    F: TwoAdicField,
-    EF: ExtensionField<F>,
-    I: IntoIterator<Item = EF>,
-{
-    let base_coeffs: Vec<F> = row
-        .into_iter()
-        .map(|ef| ef.as_basis_coefficients_slice()[0])
-        .collect();
-    if !base_coeffs.len().is_multiple_of(EF::DIMENSION) {
-        return Err(VerifierError::InvalidAuxShape {
-            expected_divisor: EF::DIMENSION,
-            actual_len: base_coeffs.len(),
-        });
-    }
-    Ok(EF::reconstitute_from_base(base_coeffs))
 }

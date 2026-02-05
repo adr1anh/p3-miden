@@ -45,7 +45,8 @@ type TestDft = Radix2DitParallel<bb::F>;
 fn test_config() -> StarkConfig<TestLmcs, TestDft> {
     let pcs = PcsParams {
         fri: FriParams {
-            log_blowup: 1,
+            // log_blowup must be >= LOG_CONSTRAINT_DEGREE (2) for quotient domain
+            log_blowup: 3,
             fold: FriFold::ARITY_2,
             log_final_degree: 2,
             proof_of_work_bits: 0,
