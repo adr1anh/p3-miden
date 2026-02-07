@@ -24,6 +24,4 @@ rand.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-p3-dft.workspace = true
 p3-miden-dev-utils.workspace = true
-p3-miden-lifted-prover.workspace = true

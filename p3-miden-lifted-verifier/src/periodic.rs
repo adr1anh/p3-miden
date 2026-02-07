@@ -65,16 +65,6 @@ impl<F: TwoAdicField> PeriodicPolys<F> {
 
         result
     }
-
-    /// Number of periodic columns.
-    pub fn num_columns(&self) -> usize {
-        self.polys.len()
-    }
-
-    /// Check if the table is empty.
-    pub fn is_empty(&self) -> bool {
-        self.polys.is_empty()
-    }
 }
 
 /// Evaluate a polynomial at a point using Horner's method.
@@ -85,7 +75,7 @@ where
 {
     let mut acc = EF::ZERO;
     for coeff in coeffs.iter().rev() {
-        acc = acc * x + EF::from(*coeff);
+        acc = acc * x + *coeff;
     }
     acc
 }

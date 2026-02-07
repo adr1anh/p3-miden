@@ -9,13 +9,22 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use p3_dft::TwoAdicSubgroupDft;
-use p3_field::{Algebra, BasedVectorSpace, ExtensionField, Field, PackedField, TwoAdicField};
+use p3_field::{
+    Algebra, BasedVectorSpace, ExtensionField, Field, PackedField, PackedValue,
+    PrimeCharacteristicRing, TwoAdicField,
+};
+use p3_matrix::Matrix;
+use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
-use p3_miden_air::MidenAirBuilder;
+use p3_maybe_rayon::prelude::*;
+use p3_miden_air::{MidenAir, MidenAirBuilder};
+use p3_miden_lifted_stark::{LiftedCoset, Selectors};
 use p3_miden_lmcs::Lmcs;
 use p3_util::log2_strict_usize;
 
-use crate::{Committed, StarkConfig};
+use crate::StarkConfig;
+use crate::commit::Committed;
+use crate::periodic::PeriodicLde;
 
 // ============================================================================
 // Quotient Commitment
@@ -26,20 +35,26 @@ use crate::{Committed, StarkConfig};
 /// Takes Q(gJ) evaluations in natural order, decomposes into D quotient
 /// components, and commits their LDE evaluations on gK.
 ///
+/// `q_evals` is consumed, flattened to base field, and zero-padded to
+/// `N * B * D * EF::DIMENSION` base elements for the LDE. Callers that
+/// pre-allocate `q_evals` with capacity `N * B` (in EF elements) allow the
+/// flatten + resize to reuse the same allocation.
+///
 /// # Pipeline
 ///
 /// 1. Reshape Q(gJ) as N×D matrix (column t = coset g·ω_J^t·H)
 /// 2. Batch iDFT over H
 /// 3. Fused scaling: multiply by (ω_J^t)^{-k} to bake g^k into coefficients
-/// 4. Zero-pad to N·B rows
-/// 5. Batch plain DFT → evaluations on gK
-/// 6. Bit-reverse, flatten to base field, and commit via LMCS
+/// 4. Flatten to base field (width D → D·`EF::DIMENSION`)
+/// 5. Zero-pad to N·B rows
+/// 6. Batch plain DFT on base field → evaluations on gK
+/// 7. Bit-reverse rows and commit via LMCS
 ///
 /// # Arguments
 ///
 /// - `config`: STARK configuration (provides DFT, LMCS, blowup)
 /// - `q_evals`: Q(gJ) evaluations in natural order, length N·D
-/// - `log_trace_height`: Log₂ of trace height N
+/// - `coset`: The [`LiftedCoset`] for the trace (provides trace height and blowup)
 ///
 /// # Returns
 ///
@@ -47,12 +62,12 @@ use crate::{Committed, StarkConfig};
 ///
 /// # Panics
 ///
-/// - If `q_evals.len()` is not divisible by `(1 << log_trace_height)`
+/// - If `q_evals.len()` is not divisible by the trace height
 /// - If blowup B < constraint degree D
 pub fn commit_quotient<F, EF, L, Dft>(
     config: &StarkConfig<L, Dft>,
     q_evals: Vec<EF>,
-    log_trace_height: usize,
+    coset: &LiftedCoset,
 ) -> Committed<F, RowMajorMatrix<F>, L>
 where
     F: TwoAdicField,
@@ -60,7 +75,7 @@ where
     L: Lmcs<F = F>,
     Dft: TwoAdicSubgroupDft<F>,
 {
-    let n = 1usize << log_trace_height;
+    let n = coset.trace_height();
     let d = q_evals.len() / n;
     let log_d = log2_strict_usize(d);
     let log_blowup = config.pcs.fri.log_blowup;
@@ -92,47 +107,183 @@ where
     // ═══════════════════════════════════════════════════════════════════════
     // Multiply by (ω_J^t)^{-k} to get a_{t,k} · g^k
     // This bakes the coset shift g^k into the coefficients
-    let omega_j_inv = EF::from(F::two_adic_generator(log_trace_height + log_d).inverse());
+    let omega_j_inv = F::two_adic_generator(coset.log_trace_height + log_d).inverse();
 
-    for t in 0..d {
-        let base = omega_j_inv.exp_u64(t as u64); // ω_J^{-t}
-        let mut scale = EF::ONE;
-        for k in 0..n {
-            coeffs.values[k * d + t] *= scale;
-            scale *= base;
-        }
-    }
+    // Precompute ω_J^{-k} for k = 0..n with sequential multiplications
+    // (N base-field muls vs N exponentiations)
+    let row_bases: Vec<F> = omega_j_inv.powers().take(n).collect();
+
+    // Parallel row-first scaling: row k has d entries, column t gets scale (ω_J^{-k})^t
+    coeffs
+        .par_rows_mut()
+        .zip(row_bases.par_iter())
+        .for_each(|(row, &row_base)| {
+            for (val, scale) in row.iter_mut().zip(row_base.powers()) {
+                *val *= scale;
+            }
+        });
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Step 3: Zero-pad to height N·B
+    // Step 3: Flatten to base field, zero-pad, and DFT
     // ═══════════════════════════════════════════════════════════════════════
-    coeffs.values.resize(n * b * d, EF::ZERO);
-    let coeffs_padded = RowMajorMatrix::new(coeffs.values, d);
+    // Flatten EF → F before the DFT rather than after: dft_algebra_batch
+    // internally does flatten → dft_batch → reconstitute, but we need base
+    // field for commitment anyway, so flattening first skips the reconstitute.
+    let base_width = d * EF::DIMENSION;
+    let mut base_coeffs = <EF as BasedVectorSpace<F>>::flatten_to_base(coeffs.values);
+    base_coeffs.resize(n * b * base_width, F::ZERO);
+    let coeffs_padded = RowMajorMatrix::new(base_coeffs, base_width);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Step 4: Batched forward DFT (PLAIN, not coset)
+    // Step 4: Batched forward DFT (PLAIN, not coset) on base field
     // ═══════════════════════════════════════════════════════════════════════
     // Because g^k is baked into coefficients, plain DFT gives evaluations on gK
     // Result: E[i, t] = q_t(g·ω_K^i)
-    let lde = config.dft.dft_algebra_batch(coeffs_padded);
+    let lde = config.dft.dft_batch(coeffs_padded);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Step 5: Bit-reverse for commitment
+    // Step 5: Bit-reverse rows for commitment
     // ═══════════════════════════════════════════════════════════════════════
-    let mut lde_br = lde;
-    p3_util::reverse_slice_index_bits(&mut lde_br.values);
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Step 6: Flatten to base field and commit via LMCS
-    // ═══════════════════════════════════════════════════════════════════════
-    // Flatten EF values to base field for compatibility with trace commitments
-    let base_values = <EF as BasedVectorSpace<F>>::flatten_to_base(lde_br.values);
-    // Width = D * EF::DIMENSION (D quotient chunks, each as EF elements flattened)
-    let quotient_matrix = RowMajorMatrix::new(base_values, d * EF::DIMENSION);
+    let quotient_matrix = lde.bit_reverse_rows().to_row_major_matrix();
 
     let tree = config.lmcs.build_aligned_tree(vec![quotient_matrix]);
 
     Committed::new(tree, log_blowup)
+}
+
+// ============================================================================
+// Constraint Evaluation
+// ============================================================================
+
+/// Type alias for packed base field from F.
+type PackedVal<F> = <F as Field>::Packing;
+
+/// Type alias for packed extension field from EF.
+type PackedExt<F, EF> = <EF as ExtensionField<F>>::ExtensionPacking;
+
+/// Evaluate constraints on the quotient domain (natural order).
+///
+/// Evaluates constraints at each point of gJ and folds them with alpha.
+/// Input matrices must be in natural order on gJ.
+///
+/// Uses SIMD-packed parallel iteration via rayon for optimal performance:
+/// - Processes `WIDTH` points simultaneously using packed field types
+/// - Main trace stays in base field, only aux trace uses extension field
+/// - Selectors are packed base field values
+///
+/// # Arguments
+/// - `air`: The AIR definition
+/// - `main_on_gj`: Main trace matrix on quotient domain (natural order)
+/// - `aux_on_gj`: Aux trace matrix on quotient domain (natural order)
+/// - `coset`: Quotient domain coset information
+/// - `alpha`: Challenge for constraint folding
+/// - `randomness`: Randomness for aux trace
+/// - `public_values`: Public values for constraint evaluation
+/// - `periodic_lde`: Periodic column LDE values
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_constraints<F, EF, A, M>(
+    air: &A,
+    main_on_gj: &M,
+    aux_on_gj: &M,
+    coset: &LiftedCoset,
+    alpha: EF,
+    randomness: &[EF],
+    public_values: &[F],
+    periodic_lde: &PeriodicLde<F>,
+) -> Vec<EF>
+where
+    F: TwoAdicField + PrimeCharacteristicRing,
+    EF: ExtensionField<F>,
+    PackedExt<F, EF>: Algebra<EF> + Algebra<PackedVal<F>> + BasedVectorSpace<PackedVal<F>>,
+    A: MidenAir<F, EF>,
+    M: Matrix<F> + Sync,
+{
+    type P<F> = PackedVal<F>;
+    type PE<F, EF> = PackedExt<F, EF>;
+
+    let gj_height = coset.lde_height();
+    let constraint_degree = coset.blowup();
+    let width = P::<F>::WIDTH;
+
+    // Precompute selectors via coset method
+    let mut sels = coset.selectors::<F>();
+
+    // Pad selectors to WIDTH alignment for safe packed access
+    for _ in gj_height..gj_height.next_multiple_of(width) {
+        sels.is_first_row.push(F::ZERO);
+        sels.is_last_row.push(F::ZERO);
+        sels.is_transition.push(F::ZERO);
+    }
+
+    // Pack alpha for constraint folding
+    let alpha_packed: PE<F, EF> = alpha.into();
+
+    // Main trace width
+    let main_width = main_on_gj.width();
+
+    // Aux trace width in EF elements (each EF = EF::DIMENSION base elements)
+    let aux_ef_width = aux_on_gj.width() / EF::DIMENSION;
+
+    // Pack randomness for aux trace
+    let packed_randomness: Vec<PE<F, EF>> = randomness.iter().copied().map(Into::into).collect();
+
+    // Parallel iteration over quotient domain points, step by WIDTH
+    (0..gj_height)
+        .into_par_iter()
+        .step_by(width)
+        .flat_map_iter(|i_start| {
+            // Extract packed selectors from precomputed vectors
+            let selectors = sels.packed_at::<P<F>>(i_start);
+
+            // Get main trace as packed row pair (stays in base field)
+            let main_packed: Vec<P<F>> =
+                main_on_gj.vertically_packed_row_pair(i_start, constraint_degree);
+            let main = RowMajorMatrix::new(main_packed, main_width);
+
+            // Get aux trace as packed row pair and convert to packed extension field
+            let aux_base_packed: Vec<P<F>> =
+                aux_on_gj.vertically_packed_row_pair(i_start, constraint_degree);
+
+            // Convert from packed base field to packed extension field
+            // Each EF element is formed from DIMENSION consecutive base field elements
+            let aux_packed: Vec<PE<F, EF>> = (0..aux_ef_width * 2)
+                .map(|i| {
+                    PE::<F, EF>::from_basis_coefficients_fn(|j| {
+                        aux_base_packed[i * EF::DIMENSION + j]
+                    })
+                })
+                .collect();
+            let aux = RowMajorMatrix::new(aux_packed, aux_ef_width);
+
+            // Get packed periodic values
+            let periodic_values: Vec<P<F>> = periodic_lde.packed_values_at(i_start).collect();
+
+            // Build packed folder and evaluate constraints
+            let mut folder: ProverConstraintFolder<'_, F, EF, P<F>, PE<F, EF>> =
+                ProverConstraintFolder {
+                    main: main.as_view(),
+                    aux: aux.as_view(),
+                    packed_randomness: &packed_randomness,
+                    public_values,
+                    periodic_values: &periodic_values,
+                    selectors,
+                    alpha: alpha_packed,
+                    accumulator: PE::<F, EF>::ZERO,
+                    _phantom: PhantomData,
+                };
+
+            air.eval(&mut folder);
+
+            // Unpack WIDTH results into scalar extension field values
+            // PE stores DIMENSION components, each as a packed base field
+            let num_results = core::cmp::min(gj_height.saturating_sub(i_start), width);
+            (0..num_results).map(move |idx| {
+                EF::from_basis_coefficients_fn(|coeff_idx| {
+                    folder.accumulator.as_basis_coefficients_slice()[coeff_idx].as_slice()[idx]
+                })
+            })
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -145,8 +296,8 @@ where
 /// - `P`: Packed base field (e.g., `PackedBabyBear`)
 /// - `PE`: Packed extension field - must be `Algebra<EF> + Algebra<P> + BasedVectorSpace<P>`
 ///
-/// Unlike [`ConstraintFolder`](p3_miden_lifted_verifier::ConstraintFolder), this folder
-/// uses pre-computed alpha powers with constraint indexing for efficient accumulation.
+/// Uses Horner folding (accumulator = accumulator * alpha + x) like the verifier's
+/// `ConstraintFolder`, which doesn't require knowing the constraint count ahead of time.
 ///
 /// # Type Parameters
 /// - `F`: Base field scalar
@@ -166,25 +317,17 @@ where
     /// Aux/permutation trace matrix view (packed extension field)
     pub aux: RowMajorMatrixView<'a, PE>,
     /// Randomness for aux trace (packed extension field)
-    pub packed_randomness: Vec<PE>,
+    pub packed_randomness: &'a [PE],
     /// Public values (base field scalars)
     pub public_values: &'a [F],
     /// Periodic column values (packed base field - F polynomials evaluated at F coset points)
     pub periodic_values: &'a [P],
-    /// Selector for first row (packed base field)
-    pub is_first_row: P,
-    /// Selector for last row (packed base field)
-    pub is_last_row: P,
-    /// Selector for transition rows (packed base field)
-    pub is_transition: P,
-    /// Pre-computed alpha powers in reverse order: [α^{n-1}, ..., α^1, α^0]
-    pub alpha_powers: &'a [EF],
-    /// Alpha powers decomposed into base field coefficients (transposed for SIMD)
-    pub decomposed_alpha_powers: &'a [Vec<F>],
+    /// Constraint selectors (packed base field)
+    pub selectors: Selectors<P>,
+    /// Challenge for Horner folding
+    pub alpha: PE,
     /// Running accumulator (packed extension field)
     pub accumulator: PE,
-    /// Current constraint index being processed
-    pub constraint_index: usize,
     /// Phantom marker for EF
     pub _phantom: PhantomData<EF>,
 }
@@ -215,18 +358,18 @@ where
 
     #[inline]
     fn is_first_row(&self) -> Self::Expr {
-        self.is_first_row
+        self.selectors.is_first_row
     }
 
     #[inline]
     fn is_last_row(&self) -> Self::Expr {
-        self.is_last_row
+        self.selectors.is_last_row
     }
 
     #[inline]
     fn is_transition_window(&self, size: usize) -> Self::Expr {
         if size == 2 {
-            self.is_transition
+            self.selectors.is_transition
         } else {
             panic!("only window size 2 supported in this prototype")
         }
@@ -234,9 +377,7 @@ where
 
     #[inline]
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
-        let alpha_power = self.alpha_powers[self.constraint_index];
-        self.accumulator += PE::from(alpha_power) * x.into();
-        self.constraint_index += 1;
+        self.accumulator = self.accumulator * self.alpha + x.into();
     }
 
     #[inline]
@@ -258,9 +399,7 @@ where
     where
         I: Into<Self::ExprEF>,
     {
-        let alpha_power = self.alpha_powers[self.constraint_index];
-        self.accumulator += PE::from(alpha_power) * x.into();
-        self.constraint_index += 1;
+        self.accumulator = self.accumulator * self.alpha + x.into();
     }
 
     #[inline]
@@ -270,43 +409,10 @@ where
 
     #[inline]
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
-        &self.packed_randomness
+        self.packed_randomness
     }
 
     fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
         &[]
-    }
-}
-
-impl<'a, F, EF, P, PE> ProverConstraintFolder<'a, F, EF, P, PE>
-where
-    F: Field,
-    EF: ExtensionField<F>,
-    P: PackedField<Scalar = F>,
-    PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
-{
-    /// Create pre-reversed alpha powers for efficient constraint accumulation.
-    ///
-    /// The alpha powers are stored in reverse order so that `alpha_powers[i]`
-    /// gives the correct power for constraint `i` (which gets α^{n-1-i}).
-    pub fn prepare_alpha_powers(alpha: EF, constraint_count: usize) -> Vec<EF> {
-        let mut powers: Vec<EF> = alpha.powers().take(constraint_count).collect();
-        powers.reverse();
-        powers
-    }
-
-    /// Decompose alpha powers into base field coefficients for SIMD operations.
-    ///
-    /// Returns a vector of length `EF::DIMENSION`, where each element is a
-    /// vector of base field coefficients for that component.
-    pub fn decompose_alpha_powers(alpha_powers: &[EF]) -> Vec<Vec<F>> {
-        (0..EF::DIMENSION)
-            .map(|i| {
-                alpha_powers
-                    .iter()
-                    .map(|x| x.as_basis_coefficients_slice()[i])
-                    .collect()
-            })
-            .collect()
     }
 }

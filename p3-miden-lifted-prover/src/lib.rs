@@ -12,8 +12,9 @@ mod constraints;
 mod periodic;
 mod prover;
 
-pub use commit::{Committed, CommittedMatrixView, commit_traces};
-pub use constraints::{ProverConstraintFolder, commit_quotient};
-pub use p3_miden_lifted_stark::{Proof, StarkConfig};
-pub use periodic::*;
-pub use prover::*;
+// Re-exports from dependencies
+pub use p3_miden_lifted_stark::StarkConfig;
+pub use p3_miden_lifted_verifier::Proof;
+
+// Public API
+pub use prover::{AirWithTrace, ProverError, prove_multi, prove_single};

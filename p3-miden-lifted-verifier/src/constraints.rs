@@ -11,6 +11,8 @@ use core::marker::PhantomData;
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_air::MidenAirBuilder;
+use p3_miden_lifted_stark::{LiftedCoset, Selectors};
+use p3_util::log2_strict_usize;
 
 use crate::VerifierError;
 
@@ -34,9 +36,7 @@ where
     pub randomness: &'a [EF],
     pub public_values: &'a [EF],
     pub periodic_values: &'a [EF],
-    pub is_first_row: EF,
-    pub is_last_row: EF,
-    pub is_transition: EF,
+    pub selectors: Selectors<EF>,
     pub alpha: EF,
     pub accumulator: EF,
     pub _phantom: PhantomData<F>,
@@ -64,16 +64,16 @@ where
     }
 
     fn is_first_row(&self) -> Self::Expr {
-        self.is_first_row
+        self.selectors.is_first_row
     }
 
     fn is_last_row(&self) -> Self::Expr {
-        self.is_last_row
+        self.selectors.is_last_row
     }
 
     fn is_transition_window(&self, size: usize) -> Self::Expr {
         if size == 2 {
-            self.is_transition
+            self.selectors.is_transition
         } else {
             panic!("only window size 2 supported in this prototype")
         }
@@ -121,7 +121,6 @@ where
 
 /// Constraint degree for quotient decomposition (must match prover).
 pub const CONSTRAINT_DEGREE: usize = 4;
-pub const LOG_CONSTRAINT_DEGREE: usize = 2;
 
 // ============================================================================
 // Quotient Reconstruction
@@ -132,40 +131,33 @@ pub const LOG_CONSTRAINT_DEGREE: usize = 2;
 /// The quotient Q is decomposed into D chunks q_0, ..., q_{D-1} where each q_t
 /// interpolates Q on the coset g·ω_J^t·H.
 ///
-/// Let ω_S = ω_J^N (the D-th root of unity) and u = ζ^N / g^N.
+/// Let ω_S = ω_J^N (the D-th root of unity) and u = (ζ/g)^N.
 /// For t = 0..D−1 define:
 ///   a_t = u − ω_S^t
 ///   w_t = ω_S^t / a_t
 ///
 /// The reconstruction formula is:
 ///   Q(ζ) = (Σ_t w_t · q_t(ζ)) / (Σ_t w_t)
-pub fn reconstruct_quotient<F, EF>(zeta: EF, trace_height: usize, chunks: &[EF]) -> EF
+pub fn reconstruct_quotient<F, EF>(zeta: EF, coset: &LiftedCoset, chunks: &[EF]) -> EF
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
 {
-    let d = CONSTRAINT_DEGREE;
-    debug_assert_eq!(chunks.len(), d);
+    let log_d = log2_strict_usize(chunks.len());
+    let shift: F = coset.lde_shift();
+    let omega_s = F::two_adic_generator(log_d);
 
-    let g = EF::from(F::GENERATOR);
-    // ω_S = ω_J^N where J has size N*D, so ω_S has order D
-    let omega_s = EF::from(F::two_adic_generator(LOG_CONSTRAINT_DEGREE));
-
-    // u = ζ^N / g^N
-    let zeta_n = zeta.exp_u64(trace_height as u64);
-    let g_n = g.exp_u64(trace_height as u64);
-    let u = zeta_n * g_n.inverse();
+    // u = (ζ/g)^N — single EF exponentiation
+    let u = (zeta * shift.inverse()).exp_power_of_2(coset.log_trace_height);
 
     // Compute weighted sum: Σ_t w_t · q_t(ζ) and Σ_t w_t
     let mut numerator = EF::ZERO;
     let mut denominator = EF::ZERO;
-    let mut omega_s_t = EF::ONE; // ω_S^t
+    let mut omega_s_t = F::ONE;
 
     for &q_t in chunks.iter() {
-        // a_t = u - ω_S^t
         let a_t = u - omega_s_t;
-        // w_t = ω_S^t / a_t
-        let w_t = omega_s_t * a_t.inverse();
+        let w_t = a_t.inverse() * omega_s_t;
 
         numerator += w_t * q_t;
         denominator += w_t;
@@ -175,30 +167,6 @@ where
 
     numerator * denominator.inverse()
 }
-
-/// Extract quotient chunk evaluations from opened values.
-///
-/// The quotient has D chunks, each as an EF element. When committed, each EF element
-/// becomes `EF::DIMENSION` base field polynomials. Opening at EF point ζ gives
-/// `D * EF::DIMENSION` EF values which we recombine into D quotient evaluations.
-pub fn extract_quotient_chunks<F, EF>(quotient_row: &[EF]) -> Vec<EF>
-where
-    F: Field,
-    EF: ExtensionField<F>,
-{
-    (0..CONSTRAINT_DEGREE)
-        .map(|t| {
-            let start = t * EF::DIMENSION;
-            (0..EF::DIMENSION)
-                .map(|j| EF::ith_basis_element(j).unwrap() * quotient_row[start + j])
-                .sum()
-        })
-        .collect()
-}
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
 
 /// Reconstitute EF elements from opened base field polynomial evaluations.
 ///

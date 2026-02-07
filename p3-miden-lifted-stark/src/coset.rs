@@ -6,6 +6,7 @@
 use alloc::vec::Vec;
 
 use p3_field::{ExtensionField, TwoAdicField, batch_multiplicative_inverse};
+use p3_maybe_rayon::prelude::*;
 
 use crate::selectors::Selectors;
 
@@ -41,26 +42,38 @@ pub struct LiftedCoset {
 }
 
 impl LiftedCoset {
-    /// Create a new `LiftedCoset` from the given parameters.
+    /// Create a new `LiftedCoset`.
+    ///
+    /// Both `log_lde_height` and `log_max_lde_height` are derived by adding
+    /// `log_blowup` to the respective trace heights.
     ///
     /// # Panics
     ///
-    /// Panics if `log_lde_height > log_max_lde_height` or if
-    /// `log_trace_height > log_lde_height`.
+    /// Panics if `log_trace_height > log_max_trace_height`.
     #[inline]
-    pub fn new(log_trace_height: usize, log_lde_height: usize, log_max_lde_height: usize) -> Self {
+    pub fn new(log_trace_height: usize, log_blowup: usize, log_max_trace_height: usize) -> Self {
         debug_assert!(
-            log_trace_height <= log_lde_height,
-            "trace height cannot exceed LDE height"
-        );
-        debug_assert!(
-            log_lde_height <= log_max_lde_height,
-            "LDE height cannot exceed max LDE height"
+            log_trace_height <= log_max_trace_height,
+            "trace height cannot exceed max trace height"
         );
         Self {
             log_trace_height,
+            log_lde_height: log_trace_height + log_blowup,
+            log_max_lde_height: log_max_trace_height + log_blowup,
+        }
+    }
+
+    /// Create a `LiftedCoset` at max height (no lifting).
+    ///
+    /// Convenience for the common single-trace case where the LDE height
+    /// equals the max LDE height.
+    #[inline]
+    pub fn unlifted(log_trace_height: usize, log_blowup: usize) -> Self {
+        let log_lde_height = log_trace_height + log_blowup;
+        Self {
+            log_trace_height,
             log_lde_height,
-            log_max_lde_height,
+            log_max_lde_height: log_lde_height,
         }
     }
 
@@ -165,40 +178,36 @@ impl LiftedCoset {
         let rate_bits = self.log_blowup();
 
         // Z_H(x) = x^n - 1 evaluated at coset points.
-        // Due to periodicity, only need 2^rate_bits distinct values.
+        // Periodic with 2^rate_bits distinct values; expand to full coset size for zip.
         let s_pow_n = shift.exp_power_of_2(self.log_trace_height);
-        let z_h_evals: Vec<F> = F::two_adic_generator(rate_bits)
-            .powers()
+        let z_h_periodic: Vec<F> = F::two_adic_generator(rate_bits)
+            .shifted_powers(s_pow_n)
             .take(1 << rate_bits)
-            .map(|x| s_pow_n * x - F::ONE)
+            .map(|x| x - F::ONE)
             .collect();
+        let period = z_h_periodic.len();
 
         // Coset points in natural order: shift · ω_J^i
         let omega_j = F::two_adic_generator(self.log_lde_height);
-        let xs: Vec<F> = omega_j
-            .powers()
-            .take(coset_size)
-            .map(|w| shift * w)
-            .collect();
+        let xs: Vec<F> = omega_j.shifted_powers(shift).collect_n(coset_size);
 
         let omega_h_inv = F::two_adic_generator(self.log_trace_height).inverse();
 
-        // Helper: compute selector for a single Lagrange basis point
+        // Unnormalized Lagrange selector: sel_i = Z_H(x_i) / (x_i - basis_point)
+        // Uses modular indexing into z_h_periodic to avoid a full-size allocation.
         let single_point_selector = |basis_point: F| -> Vec<F> {
-            let denoms: Vec<F> = xs.iter().map(|&x| x - basis_point).collect();
+            let denoms: Vec<F> = xs.par_iter().map(|&x| x - basis_point).collect();
             let invs = batch_multiplicative_inverse(&denoms);
-            z_h_evals
-                .iter()
-                .cycle()
-                .zip(invs)
-                .map(|(&z_h, inv)| z_h * inv)
+            (0..coset_size)
+                .into_par_iter()
+                .map(|i| z_h_periodic[i % period] * invs[i])
                 .collect()
         };
 
         Selectors {
             is_first_row: single_point_selector(F::ONE),
             is_last_row: single_point_selector(omega_h_inv),
-            is_transition: xs.iter().map(|&x| x - omega_h_inv).collect(),
+            is_transition: xs.into_par_iter().map(|x| x - omega_h_inv).collect(),
         }
     }
 
@@ -216,45 +225,17 @@ impl LiftedCoset {
         EF: ExtensionField<F>,
     {
         let z_n = zeta.exp_power_of_2(self.log_trace_height);
-        let vanishing = z_n - EF::ONE;
-        let omega_inv = EF::from(F::two_adic_generator(self.log_trace_height).inverse());
+        let vanishing = z_n - F::ONE;
+        let omega_inv = F::two_adic_generator(self.log_trace_height).inverse();
 
         Selectors {
-            is_first_row: vanishing / (zeta - EF::ONE),
+            is_first_row: vanishing / (zeta - F::ONE),
             is_last_row: vanishing / (zeta - omega_inv),
             is_transition: zeta - omega_inv,
         }
     }
 
     // ============ Vanishing polynomial ============
-
-    /// Compute inverse vanishing polynomial over this coset (prover).
-    ///
-    /// The vanishing polynomial for the trace domain H at point x is:
-    ///   Z_H(x) = x^n - 1
-    /// where n = 2^log_trace_height is the trace height.
-    ///
-    /// Returns a `Vec<F>` of inverse vanishing values for each point in the coset.
-    pub fn inv_vanishing<F: TwoAdicField>(&self) -> Vec<F> {
-        let shift: F = self.lde_shift();
-        let coset_size = self.lde_height();
-        let rate_bits = self.log_blowup();
-
-        // Z_H(x) = x^n - 1 evaluated at coset points.
-        // Due to periodicity, only need 2^rate_bits distinct values.
-        let s_pow_n = shift.exp_power_of_2(self.log_trace_height);
-        let z_h_evals: Vec<F> = F::two_adic_generator(rate_bits)
-            .powers()
-            .take(1 << rate_bits)
-            .map(|x| s_pow_n * x - F::ONE)
-            .collect();
-
-        batch_multiplicative_inverse(&z_h_evals)
-            .into_iter()
-            .cycle()
-            .take(coset_size)
-            .collect()
-    }
 
     /// Compute inverse vanishing at an out-of-domain point (verifier).
     ///
@@ -266,6 +247,36 @@ impl LiftedCoset {
     {
         let z_n = zeta.exp_power_of_2(self.log_trace_height);
         (z_n - EF::ONE).inverse()
+    }
+
+    // ============ Domain membership ============
+
+    /// Check if a point is in the trace domain H.
+    ///
+    /// Returns true if `zeta^N == 1` where N is the trace height.
+    /// Points in H cause division by zero in vanishing polynomial inversion.
+    #[inline]
+    pub fn is_in_trace_domain<F, EF>(&self, zeta: EF) -> bool
+    where
+        F: TwoAdicField,
+        EF: ExtensionField<F>,
+    {
+        zeta.exp_power_of_2(self.log_trace_height) == EF::ONE
+    }
+
+    /// Check if a point is in the LDE coset gK.
+    ///
+    /// Returns true if `(zeta/g)^|K| == 1` where g is the generator shift
+    /// and K is the LDE domain. Points in gK cause division by zero in DEEP quotients.
+    #[inline]
+    pub fn is_in_lde_coset<F, EF>(&self, zeta: EF) -> bool
+    where
+        F: TwoAdicField,
+        EF: ExtensionField<F>,
+    {
+        let shift: F = self.lde_shift();
+        let zeta_over_shift = zeta * shift.inverse();
+        zeta_over_shift.exp_power_of_2(self.log_lde_height) == EF::ONE
     }
 }
 
@@ -283,8 +294,8 @@ mod tests {
 
     #[test]
     fn domain_info_basic() {
-        // Trace height 2^10, blowup 2^3, max LDE 2^15
-        let info = LiftedCoset::new(10, 13, 15);
+        // Trace height 2^10, blowup 2^3, max trace 2^12
+        let info = LiftedCoset::new(10, 3, 12);
 
         assert_eq!(info.log_trace_height, 10);
         assert_eq!(info.log_lde_height, 13);
@@ -303,7 +314,7 @@ mod tests {
     #[test]
     fn domain_info_no_lift() {
         // Matrix at max height (no lifting needed)
-        let info = LiftedCoset::new(10, 13, 13);
+        let info = LiftedCoset::unlifted(10, 3);
 
         assert_eq!(info.log_lift_ratio(), 0);
         assert!(!info.is_lifted());
@@ -311,8 +322,8 @@ mod tests {
 
     #[test]
     fn domain_info_lde_shift() {
-        // Test that lde_shift computes correctly
-        let info = LiftedCoset::new(10, 13, 15);
+        // Trace height 2^10, blowup 2^3, max trace 2^12
+        let info = LiftedCoset::new(10, 3, 12);
         let shift: F = info.lde_shift();
 
         // shift = g^(2^2) = g^4
@@ -323,7 +334,7 @@ mod tests {
     #[test]
     fn domain_info_no_lift_shift() {
         // When not lifted, shift should be g^1 = g
-        let info = LiftedCoset::new(10, 13, 13);
+        let info = LiftedCoset::unlifted(10, 3);
         let shift: F = info.lde_shift();
 
         // shift = g^(2^0) = g

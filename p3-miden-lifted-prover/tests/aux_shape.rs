@@ -1,15 +1,14 @@
-use p3_dft::Radix2DitParallel;
+mod common;
+
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_air::{MidenAir, MidenAirBuilder};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_fri::PcsParams;
-use p3_miden_lifted_fri::deep::DeepParams;
-use p3_miden_lifted_fri::fri::{FriFold, FriParams};
-use p3_miden_lifted_prover::{StarkConfig, prove_single};
-use p3_miden_lmcs::LmcsConfig;
+use p3_miden_lifted_prover::prove_single;
 use p3_miden_transcript::ProverTranscript;
+
+use common::test_config;
 
 #[derive(Clone, Copy, Debug)]
 struct BadAuxWidthAir;
@@ -37,32 +36,6 @@ impl MidenAir<bb::F, bb::EF> for BadAuxWidthAir {
     }
 
     fn eval<AB: MidenAirBuilder<F = bb::F>>(&self, _builder: &mut AB) {}
-}
-
-type TestLmcs = LmcsConfig<bb::P, bb::P, bb::Sponge, bb::Compress, { bb::WIDTH }, { bb::DIGEST }>;
-type TestDft = Radix2DitParallel<bb::F>;
-
-fn test_config() -> StarkConfig<TestLmcs, TestDft> {
-    let pcs = PcsParams {
-        fri: FriParams {
-            // log_blowup must be >= LOG_CONSTRAINT_DEGREE (2) for quotient domain
-            log_blowup: 3,
-            fold: FriFold::ARITY_2,
-            log_final_degree: 2,
-            proof_of_work_bits: 0,
-        },
-        deep: DeepParams {
-            proof_of_work_bits: 0,
-        },
-        num_queries: 2,
-        query_proof_of_work_bits: 0,
-    };
-
-    let (_, sponge, compress) = bb::test_components();
-    let lmcs: TestLmcs = LmcsConfig::new(sponge, compress);
-    let dft = TestDft::default();
-
-    StarkConfig { pcs, lmcs, dft }
 }
 
 #[test]

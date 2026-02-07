@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn test_selectors_at_point() {
         let log_n = 4;
-        let coset = LiftedCoset::new(log_n, log_n, log_n);
+        let coset = LiftedCoset::unlifted(log_n, 0);
 
         // Sample a point outside the domain
         let zeta = EF::from(F::from_u32(12345));
@@ -76,17 +76,15 @@ mod tests {
     #[test]
     fn test_selectors_on_coset() {
         let log_trace = 3;
-        let log_coset = 5; // 4x blowup
-        let coset = LiftedCoset::new(log_trace, log_coset, log_coset);
+        let log_blowup = 2; // 4x blowup
+        let coset = LiftedCoset::unlifted(log_trace, log_blowup);
 
         let sels: Selectors<Vec<F>> = coset.selectors();
-        let inv_van: Vec<F> = coset.inv_vanishing();
 
         // Check lengths
-        let coset_size = 1 << log_coset;
+        let coset_size = 1 << (log_trace + log_blowup);
         assert_eq!(sels.is_first_row.len(), coset_size);
         assert_eq!(sels.is_last_row.len(), coset_size);
         assert_eq!(sels.is_transition.len(), coset_size);
-        assert_eq!(inv_van.len(), coset_size);
     }
 }
