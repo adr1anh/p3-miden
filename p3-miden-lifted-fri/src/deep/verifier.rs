@@ -109,15 +109,8 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
     /// `tree_indices` are bit-reversed positions (sorted, deduplicated).
     /// Returns a map from tree index to DEEP evaluation at that point.
     ///
-    /// **Lifted trace semantics.** For each tree index `i`, LMCS returns one row per
-    /// committed matrix. A matrix of height `n = N/r` (where `N = 2^log_lde_height`)
-    /// stores evaluations of a polynomial `f` on a coset of order `n`. After
-    /// nearest-neighbor upsampling to height `N`, the value at index `i` is
-    /// `f((g·ω_N^{bitrev_N(i)})^r)` — the original polynomial evaluated at the
-    /// *r*-th power of the large-domain point `X = g·ω_N^{bitrev_N(i)}`.
-    /// This is equivalent to evaluating the lifted polynomial `f'(X) = f(X^r)` at `X`,
-    /// so all columns (regardless of original height) are combined into
-    /// `f_reduced(X) = Σᵢ αⁱ·fᵢ'(X)` at a single uniform domain point.
+    /// Lifting is transparent here: LMCS returns one row per matrix at each tree index,
+    /// all at the same uniform height. See the module-level docs for why this works.
     pub fn open_batch<Ch>(
         &self,
         lmcs: &L,

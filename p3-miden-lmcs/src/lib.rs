@@ -100,38 +100,38 @@
 //!
 //! # Why Upsampling for Bit-Reversed Data
 //!
-//! Given bit-reversed evaluations of `f(X)` over a coset `gK` where `|K| = n`, upsampling to
-//! height `N = n · r` (where `r = 2^k`) produces the bit-reversed evaluations of `f'(X) = f(X^r)`
-//! over the coset `gK'` where `|K'| = N`.
+//! Let `g` denote the LDE coset shift and `K'` the subgroup of order `N` (the full LDE domain).
+//! The prover evaluates polynomial `f(X)` on the **powered coset** `g^r · K` where `|K| = n`
+//! and `r = N/n`. This coset is exactly the set of r-th powers of the LDE coset points:
+//! `{(g·ω_N^j)^r : j ∈ [N]} = {g^r · ω_n^j : j ∈ [n]}` (each repeated r times).
 //!
-//! Mathematically, if the input contains `f(g·(ω_n)^{bitrev_n(j)})` at index `j`, then after
+//! Given these evaluations in bit-reversed order, upsampling to height `N = n · r` (where
+//! `r = 2^k`) produces the bit-reversed evaluations of `f'(X) = f(X^r)` over the full LDE
+//! coset `g · K'`.
+//!
+//! Mathematically, if the input contains `f(g^r·(ω_n)^{bitrev_n(j)})` at index `j`, then after
 //! upsampling, each index `i` in `[0, N)` maps to the original index `j = i >> k`, giving:
 //!
 //! ```text
-//! upsampled[i] = f(g·(ω_n)^{bitrev_n(i >> k)}) = f'(g·(ω_N)^{bitrev_N(i)})
+//! upsampled[i] = f(g^r·(ω_n)^{bitrev_n(i >> k)}) = f'(g·(ω_N)^{bitrev_N(i)})
 //! ```
 //!
-//! where `f'(X) = f(X^r)`. This is exactly the bit-reversed evaluation of `f'` over `gK'`.
+//! where `f'(X) = f(X^r)`. The equality holds because
+//! `(g·(ω_N)^{bitrev_N(i)})^r = g^r·(ω_n)^{bitrev_n(i >> k)}`.
 //!
 //! # Opening Semantics
 //!
-//! When opening at index `i`, we retrieve the value at position `i` in the bit-reversed list.
-//! For the lifted polynomial `f'(X) = f(X^r)`, this gives `f'(g·(ω_N)^{bitrev_N(i)})`.
-//!
-//! Expanding the lifted polynomial: since `f'(X) = f(X^r)`, the opened value is
+//! When opening at index `i`, the verifier retrieves the value at position `i` in the
+//! bit-reversed list. For a matrix of height `n` in a tree of height `N`, this is:
 //!
 //! ```text
 //! f'(g·(ω_N)^{bitrev_N(i)}) = f( (g·(ω_N)^{bitrev_N(i)})^r )
 //! ```
 //!
-//! The argument `(g·(ω_N)^{bitrev_N(i)})^r` is a point in the smaller coset `g^r · K^r` of
-//! order `n = N/r`. Concretely, it equals `g^r · (ω_n)^{bitrev_n(i >> k)}` — the
-//! nearest-neighbor point in the smaller domain's bit-reversed ordering. In other words,
-//! opening tree index `i` in the large domain yields the evaluation of the **original** (unlifted)
-//! polynomial `f` at the `(i >> k)`-th point of its own bit-reversed coset.
-//!
-//! Equivalently, `f'(g·ξ^i)` where `ξ = (ω_N)^{bitrev_N(i)}` is the `i`-th element
-//! when iterating over `K'` in the order induced by bit-reversed indices.
+//! The verifier interprets this as `f'` evaluated at the LDE domain point
+//! `g·(ω_N)^{bitrev_N(i)}` — the same point used for every matrix, regardless of height.
+//! The lifting is transparent: higher up in the stack, all polynomials appear to live on
+//! the same domain.
 //!
 //! # Equivalence to Cyclic Lifting
 //!

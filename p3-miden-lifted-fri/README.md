@@ -33,23 +33,20 @@ f_i(X^r) on the LDE domain (r = lde_height / height_i), achieved via
 **upsampling** (row repetition in bit-reversed order). FRI then repeatedly
 folds evaluations by the chosen arity to test low degree.
 
-### What a query opening means for lifted traces
+### What the commitments look like
 
-When the verifier opens tree index `i` from a commitment of height `N`, the
-LMCS returns one value per committed matrix. For a matrix of height `n = N/r`:
+The prover evaluates each polynomial `f` on the **r-th power of the LDE coset**.
+Let `g` be the LDE coset shift and `K_N` the order-N subgroup. A polynomial `f`
+of degree `< N/r` is evaluated on the coset `g^r · K_n` (where `n = N/r`), which
+is exactly the set `{(g · ω_N^j)^r : j}` — the r-th powers of the LDE domain
+points. A full-height matrix (r = 1) uses the LDE coset `g · K_N` directly.
 
-- The commitment stores `f(g^r · (ω_n)^{bitrev_n(j)})` at original index `j`.
-- After nearest-neighbor upsampling to height `N`, index `i` maps to original
-  index `j = i >> log₂(r)`.
-- So the opened value is `f( (g · (ω_N)^{bitrev_N(i)})^r )`: the original
-  polynomial `f` evaluated at the *r*-th power of the large-domain point.
-
-Equivalently, defining the lifted polynomial `f'(X) = f(X^r)`, the opened
-value is `f'(g · (ω_N)^{bitrev_N(i)})` — the same domain point used for
-full-height matrices. This is what makes the DEEP quotient uniform: both the
-out-of-domain evaluations (`f(z^r)`) and the query openings (`f(X^r)`) use
-the lifted polynomial, so all columns appear to live on the same domain
-regardless of their original height.
+LMCS upsamples smaller matrices to height N by nearest-neighbor repetition in
+bit-reversed order. Because the prover works over the powered coset, this
+produces evaluations of the lifted polynomial `f'(X) = f(X^r)` on the full LDE
+coset `g · K_N`. The verifier just sees every matrix at height N on the same
+coset — lifting is transparent from that point on, whether in the DEEP quotient,
+FRI folding, or query verification.
 
 ## Optimizations
 

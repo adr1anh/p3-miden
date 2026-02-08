@@ -19,22 +19,17 @@
 //! single challenge, a cheating prover must avoid collisions among k·m terms; with two,
 //! only k+m terms matter. This costs one extra field element in the transcript.
 //!
-//! **Lifting.** Polynomials of degree d on domain D embed into a larger domain D* via
-//! `f(X) ↦ f(Xʳ)` where r = |D*|/|D|. In bit-reversed order, this means each evaluation
-//! repeats r times consecutively—implemented by virtual upsampling without data movement.
+//! **Lifting.** The prover evaluates shorter polynomials on the r-th power of the LDE
+//! coset: `f` on `g^r·K_n` where `r = N/n`. This coset is exactly `{(g·ω_N^j)^r : j}`,
+//! so after LMCS upsampling the committed values are evaluations of `f'(X) = f(Xʳ)` on
+//! the full LDE coset `g·K_N`. In bit-reversed order, this means each evaluation repeats
+//! r times consecutively — implemented by virtual upsampling without data movement.
 //!
-//! **Verifier's view of lifting.** From the verifier's perspective, all polynomials
-//! appear to be evaluated at the same point z on the same domain. The prover computes
-//! `fᵢ(zʳ)` for degree-d polynomials, but this equals `fᵢ'(z)` where `fᵢ'(X) = fᵢ(Xʳ)`
-//! is the lifted polynomial. This uniformity enables the `f_reduced` factorization.
-//!
-//! The same lifting applies at query time: when the verifier opens tree index `i`, the
-//! LMCS returns the committed value for each matrix. A matrix of height `n = N/r` stores
-//! evaluations of `fᵢ` on a coset of order `n`; after nearest-neighbor upsampling to `N`,
-//! the value at index `i` is `fᵢ((g·ω_N^{bitrev_N(i)})^r) = fᵢ'(g·ω_N^{bitrev_N(i)})`.
-//! So both the out-of-domain claims (`fᵢ(zʳ) = fᵢ'(z)`) and the in-domain query openings
-//! (`fᵢ(Xʳ) = fᵢ'(X)`) use the same lifted polynomial `fᵢ'`, making the DEEP quotient
-//! well-defined across matrices of different heights.
+//! **Why lifting is transparent.** Because the prover works over the powered coset, the
+//! verifier sees all polynomials on the same domain. The prover provides `fᵢ(zʳ)` as the
+//! out-of-domain evaluation (= `fᵢ'(z)`), and LMCS query openings return `fᵢ(Xʳ)` at
+//! domain points (= `fᵢ'(X)`). Both use the same lifted polynomial `fᵢ'`, so the DEEP
+//! quotient works uniformly and enables the `f_reduced` factorization.
 //!
 //! ## Preconditions (caller responsibility)
 //!
