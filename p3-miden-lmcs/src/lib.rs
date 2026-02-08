@@ -117,7 +117,33 @@
 //! ```
 //!
 //! where `f'(X) = f(X^r)`. The equality holds because
-//! `(g·(ω_N)^{bitrev_N(i)})^r = g^r·(ω_n)^{bitrev_n(i >> k)}`.
+//! `(g·(ω_N)^{bitrev_N(i)})^r = g^r·(ω_n)^{bitrev_n(i >> k)}`, which we derive next.
+//!
+//! ## Bit-Reversal Identity
+//!
+//! Write `i` in `log₂(N) = log₂(n) + k` bits as `(a | b)` where `a = i >> k` has `log₂(n)`
+//! high bits and `b` has `k` low bits. Reversing all `log₂(N)` bits gives:
+//!
+//! ```text
+//! bitrev_N(i) = bitrev_k(b) · n + bitrev_n(a)
+//! ```
+//!
+//! Multiplying by `r = 2^k`:
+//!
+//! ```text
+//! r · bitrev_N(i) = bitrev_k(b) · N + r · bitrev_n(i >> k)
+//! ```
+//!
+//! The first term vanishes mod `N`, so `ω_N^{r · bitrev_N(i)} = ω_N^{r · bitrev_n(i >> k)}
+//! = ω_n^{bitrev_n(i >> k)}` (using `ω_N^r = ω_n`). Therefore:
+//!
+//! ```text
+//! (g · ω_N^{bitrev_N(i)})^r = g^r · ω_n^{bitrev_n(i >> k)}
+//! ```
+//!
+//! Note that the low bits `b` of `i` drop out entirely — all `r` indices that share the
+//! same `i >> k` map to the same point on the small coset. This is exactly why
+//! nearest-neighbor upsampling (repeating each row `r` times) produces the correct values.
 //!
 //! # Opening Semantics
 //!
@@ -143,8 +169,7 @@
 //!
 //! where cyclic repetition tiles the original `n` rows periodically: `[row0, row1, ..., row_{n-1}, row0, ...]`.
 //!
-//! This equivalence follows from the bit-reversal identity: for `r = N/n = 2^k`,
-//! `bitrev_N(i) mod n = bitrev_n(i >> k)`.
+//! This follows from the bit-reversal decomposition above: `bitrev_N(i) mod n = bitrev_n(i >> k)`.
 
 #![no_std]
 
