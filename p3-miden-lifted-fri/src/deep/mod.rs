@@ -28,6 +28,14 @@
 //! `fᵢ(zʳ)` for degree-d polynomials, but this equals `fᵢ'(z)` where `fᵢ'(X) = fᵢ(Xʳ)`
 //! is the lifted polynomial. This uniformity enables the `f_reduced` factorization.
 //!
+//! The same lifting applies at query time: when the verifier opens tree index `i`, the
+//! LMCS returns the committed value for each matrix. A matrix of height `n = N/r` stores
+//! evaluations of `fᵢ` on a coset of order `n`; after nearest-neighbor upsampling to `N`,
+//! the value at index `i` is `fᵢ((g·ω_N^{bitrev_N(i)})^r) = fᵢ'(g·ω_N^{bitrev_N(i)})`.
+//! So both the out-of-domain claims (`fᵢ(zʳ) = fᵢ'(z)`) and the in-domain query openings
+//! (`fᵢ(Xʳ) = fᵢ'(X)`) use the same lifted polynomial `fᵢ'`, making the DEEP quotient
+//! well-defined across matrices of different heights.
+//!
 //! ## Preconditions (caller responsibility)
 //!
 //! The DEEP constructors assume all opening points are valid: distinct and outside the

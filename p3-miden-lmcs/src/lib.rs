@@ -118,7 +118,19 @@
 //! When opening at index `i`, we retrieve the value at position `i` in the bit-reversed list.
 //! For the lifted polynomial `f'(X) = f(X^r)`, this gives `f'(g·(ω_N)^{bitrev_N(i)})`.
 //!
-//! Equivalently, this is `f'(g·ξ^i)` where `ξ = (ω_N)^{bitrev_N(i)}` is the `i`-th element
+//! Expanding the lifted polynomial: since `f'(X) = f(X^r)`, the opened value is
+//!
+//! ```text
+//! f'(g·(ω_N)^{bitrev_N(i)}) = f( (g·(ω_N)^{bitrev_N(i)})^r )
+//! ```
+//!
+//! The argument `(g·(ω_N)^{bitrev_N(i)})^r` is a point in the smaller coset `g^r · K^r` of
+//! order `n = N/r`. Concretely, it equals `g^r · (ω_n)^{bitrev_n(i >> k)}` — the
+//! nearest-neighbor point in the smaller domain's bit-reversed ordering. In other words,
+//! opening tree index `i` in the large domain yields the evaluation of the **original** (unlifted)
+//! polynomial `f` at the `(i >> k)`-th point of its own bit-reversed coset.
+//!
+//! Equivalently, `f'(g·ξ^i)` where `ξ = (ω_N)^{bitrev_N(i)}` is the `i`-th element
 //! when iterating over `K'` in the order induced by bit-reversed indices.
 //!
 //! # Equivalence to Cyclic Lifting

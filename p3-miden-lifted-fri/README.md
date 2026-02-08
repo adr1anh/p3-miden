@@ -33,6 +33,24 @@ f_i(X^r) on the LDE domain (r = lde_height / height_i), achieved via
 **upsampling** (row repetition in bit-reversed order). FRI then repeatedly
 folds evaluations by the chosen arity to test low degree.
 
+### What a query opening means for lifted traces
+
+When the verifier opens tree index `i` from a commitment of height `N`, the
+LMCS returns one value per committed matrix. For a matrix of height `n = N/r`:
+
+- The commitment stores `f(g^r · (ω_n)^{bitrev_n(j)})` at original index `j`.
+- After nearest-neighbor upsampling to height `N`, index `i` maps to original
+  index `j = i >> log₂(r)`.
+- So the opened value is `f( (g · (ω_N)^{bitrev_N(i)})^r )`: the original
+  polynomial `f` evaluated at the *r*-th power of the large-domain point.
+
+Equivalently, defining the lifted polynomial `f'(X) = f(X^r)`, the opened
+value is `f'(g · (ω_N)^{bitrev_N(i)})` — the same domain point used for
+full-height matrices. This is what makes the DEEP quotient uniform: both the
+out-of-domain evaluations (`f(z^r)`) and the query openings (`f(X^r)`) use
+the lifted polynomial, so all columns appear to live on the same domain
+regardless of their original height.
+
 ## Optimizations
 
 - **Aligned openings**: Rows are padded to a multiple of the sponge rate,
