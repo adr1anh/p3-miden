@@ -19,9 +19,9 @@ use serde::{Deserialize, Serialize};
 /// # Type Parameters
 ///
 /// * `F` – scalar field element type used in both matrices and hash words.
-/// * `D` – hash word element type.
+/// * `D` – digest element type.
 /// * `M` – matrix type. Must implement [`Matrix<F>`].
-/// * `DIGEST_ELEMS` – number of elements in one hash.
+/// * `DIGEST_ELEMS` – number of elements in one digest.
 /// * `SALT_ELEMS` – number of salt elements per leaf (0 = non-hiding, >0 = hiding).
 ///
 /// Unlike the standard `MerkleTree`, this uniform variant requires:
@@ -45,7 +45,7 @@ use serde::{Deserialize, Serialize};
 /// matrix horizontally with zero columns to reflect the sponge's absorption alignment (if any),
 /// and (c) concatenating the results side-by-side. The leaf hash at index `j` is then the
 /// sponge of that single concatenated matrix's row `j`. This is a conceptual view: LMCS does
-/// not enforce that those padded columns are zero unless the caller checks them.
+/// not enforce that those padded columns are zero.
 ///
 /// Since [`StatefulHasher`] operates on a single field type, this tree uses the same type `F`
 /// for both matrix elements and hash words, unlike `MerkleTree` which can hash `F → W`.

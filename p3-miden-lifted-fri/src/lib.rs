@@ -7,7 +7,7 @@
 //!
 //! This crate provides:
 //!
-//! - **[`deep`]**: DEEP (Dimension Extension of Evaluation Protocol) quotient construction
+//! - **[`deep`]**: DEEP (Domain Extension for Eliminating Pretenders) quotient construction
 //!   for batching polynomial evaluation claims into a single low-degree polynomial.
 //!
 //! - **[`fri`]**: FRI (Fast Reed-Solomon IOP) protocol for low-degree testing, with

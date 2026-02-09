@@ -132,7 +132,7 @@ impl<EF> DeepPoly<EF> {
         batched_evals.write_to_channel(channel);
 
         // 2. Grind for proof-of-work witness
-        let _pow_witness = channel.grind(params.proof_of_work_bits);
+        let _pow_witness = channel.grind(params.deep_pow_bits);
 
         // 3. Sample DEEP challenges
         let challenge_columns: EF = channel.sample_algebra_element();

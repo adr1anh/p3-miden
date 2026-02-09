@@ -40,8 +40,8 @@ pub struct FriParams {
     /// Final polynomial is sent in clear (coefficients, not evaluations).
     pub log_final_degree: usize,
 
-    /// Grinding bits per folding round.
-    pub proof_of_work_bits: usize,
+    /// Grinding bits before each folding challenge.
+    pub folding_pow_bits: usize,
 }
 
 impl FriParams {

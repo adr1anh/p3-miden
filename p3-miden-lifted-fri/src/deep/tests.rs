@@ -29,9 +29,7 @@ fn deep_quotient_end_to_end() {
     let log_lde_height = 10;
     let lde_height = 1 << log_lde_height;
 
-    let params = DeepParams {
-        proof_of_work_bits: 1, // Low for fast tests
-    };
+    let params = DeepParams { deep_pow_bits: 1 };
     // Two random opening points
     let z1: EF = rng.sample(StandardUniform);
     let z2: EF = rng.sample(StandardUniform);

@@ -45,7 +45,7 @@ where
             .collect();
         let evals = DeepEvals::read_from_channel(&widths, num_eval_points, channel)?;
 
-        let pow_witness = channel.grind(params.proof_of_work_bits)?;
+        let pow_witness = channel.grind(params.deep_pow_bits)?;
         let challenge_columns: EF = channel.sample_algebra_element();
         let challenge_points: EF = channel.sample_algebra_element();
 

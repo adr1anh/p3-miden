@@ -28,8 +28,8 @@ type Opening<F, C> = (Vec<Vec<F>>, C);
 /// `open_batch` expects `widths` and `log_max_height` to match the committed tree,
 /// rejects empty `indices`, and ignores extra hint data. Widths must match the
 /// committed row lengths (including any alignment padding if `build_aligned_tree`
-/// was used). Duplicate indices are coalesced and expanded in the returned openings.
-/// is returned. [`BatchProof::read_from_channel`](crate::BatchProof::read_from_channel) parses
+/// was used). Duplicate indices are coalesced in the returned openings.
+/// [`BatchProof::read_from_channel`](crate::BatchProof::read_from_channel) parses
 /// the same hint stream without hashing, and [`BatchProof::single_proofs`](crate::BatchProof::single_proofs)
 /// can reconstruct per-index proofs (keyed by index) without verifying against a commitment. Empty indices
 /// yield an empty `BatchProof`, and out-of-range indices return `InvalidProof`.

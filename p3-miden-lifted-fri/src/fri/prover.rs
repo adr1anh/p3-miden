@@ -55,12 +55,13 @@ where
 //
 // 1. Reshape evaluations into matrix M with `arity` columns
 //    - Row i contains the coset {f(s·ωʲ) : j ∈ [0, arity)} where s = g^{bitrev(i)}
+//      and ω is a primitive `arity`-th root of unity
 //
 // 2. Commit to M via Merkle tree
 //
 // 3. Sample folding challenge β from verifier
 //
-// 4. Fold each row: for coset evaluations [y₀, y₁, ...], compute f(β)
+// 4. Fold each row: for coset evaluations [y₀, ..., y_{arity-1}], compute f(β)
 //    - This reduces degree by factor of `arity`
 //    - New evaluations live on domain D' of size n/arity
 //
@@ -72,6 +73,7 @@ where
 //
 // For domain D = g·H where H = ⟨ω⟩ has order n:
 //   - Row i contains evaluations at s·⟨ω_arity⟩ where s = g·ω^{bitrev(i)}
+//     and ω_arity is a primitive `arity`-th root of unity (ω_arity = ω^{n/arity})
 //   - Adjacent rows have s values that are negatives (for arity=2)
 //   - After folding, row i maps to row i in the halved domain
 
@@ -93,7 +95,7 @@ where
         let mut folded_trees = Vec::new();
 
         let mut domain_size = evals.len();
-        let log_domain_size = log2_strict_usize(domain_size); // needed for two_adic_generator
+        let log_domain_size = log2_strict_usize(domain_size);
         let final_poly_degree = params.final_poly_degree(log_domain_size);
         let final_domain_size = final_poly_degree << params.log_blowup;
 
@@ -103,20 +105,19 @@ where
         // Evaluations are in bit-reversed order: evals[i] = f(g^{bitrev(i)})
         // Row k contains [evals[k*arity], evals[k*arity+1], ...] which correspond
         // to evaluations at points forming a coset s·⟨ω⟩ where:
-        //   - s = g^{bitrev(k*arity, log_domain_size)} = g^{bitrev(k, log_num_rows)}
-        //     (because bitrev(k*arity, log_domain_size) = bitrev(k, log_num_rows)
+        //   - s = g^{bitrev(k*arity, log_domain_size)} = g^{bitrev(k, log_folded_domain_size)}
+        //     where log_folded_domain_size = log_domain_size - log_arity
+        //     (because bitrev(k*arity, log_domain_size) = bitrev(k, log_folded_domain_size)
         //      when arity = 2^log_arity)
         //   - ω is a primitive arity-th root of unity
         //
-        // We compute s_inv for each row k, where s = g^{bitrev(k, log_num_rows)}
+        // We compute s_inv for each row k, where s = g^{bitrev(k, log_folded_domain_size)}
         // and g has order 2^log_domain_size.
         //
         // We generate sequential powers of g_inv and bit-reverse to get s_inv values
         // in the correct order for each row.
-        let mut num_rows = domain_size >> log_arity;
-
         let g_inv = F::two_adic_generator(log_domain_size).inverse();
-        let mut s_invs: Vec<F> = g_inv.powers().take(num_rows).collect();
+        let mut s_invs: Vec<F> = g_inv.powers().take(domain_size >> log_arity).collect();
         reverse_slice_index_bits(&mut s_invs);
 
         let mut folded_evals = evals;
@@ -124,10 +125,15 @@ where
             // ─────────────────────────────────────────────────────────────────────
             // Reshape into matrix and wrap with FlatMatrixView for commitment
             // ─────────────────────────────────────────────────────────────────────
-            // FlatMatrixView presents EF matrix as F matrix without copying.
+            // domain_size evaluations → matrix with folded_domain_size rows × arity columns.
+            // FlatMatrixView presents the EF matrix as F matrix without copying.
+            let folded_domain_size = domain_size >> log_arity;
             let matrix = RowMajorMatrix::new(folded_evals, arity);
             let flat_view = FlatMatrixView::new(matrix);
-            // FRI round commitments are unaligned (no transcript padding).
+            // FRI round commitments use `build_tree` (unaligned) rather than
+            // `build_aligned_tree` because each round commits a single matrix, so there
+            // is no multi-matrix row interleaving that would require padding to the hash
+            // rate boundary.
             let tree = lmcs.build_tree(alloc::vec![flat_view]);
             let commitment = tree.root();
             channel.send_commitment(commitment.clone());
@@ -135,38 +141,39 @@ where
             // ─────────────────────────────────────────────────────────────────────
             // Grind and sample folding challenge β
             // ─────────────────────────────────────────────────────────────────────
-            let _pow_witness = channel.grind(params.proof_of_work_bits);
+            let _pow_witness = channel.grind(params.folding_pow_bits);
             let beta: EF = channel.sample_algebra_element();
 
             // ─────────────────────────────────────────────────────────────────────
-            // Fold all rows: f(β) = interpolate coset evaluations at β
+            // Fold all rows: interpolate coset evaluations and evaluate at β
             // ─────────────────────────────────────────────────────────────────────
             // Get the underlying EF matrix from the FlatMatrixView via Deref for folding.
             let flat_view_ref = &tree.leaves()[0];
             let ef_matrix: &RowMajorMatrix<EF> = flat_view_ref.deref();
             folded_evals = params.fold.fold_matrix(ef_matrix.as_view(), &s_invs, beta);
             // No bit-reversal needed: folded evals maintain bit-reversed order
-            // because s_invs are already bit-reversed to match
+            // because s_invs are already bit-reversed to match.
 
             folded_trees.push(tree);
 
-            domain_size /= arity;
+            // Output of folding becomes the input domain for the next round.
+            domain_size = folded_domain_size;
 
             // ─────────────────────────────────────────────────────────────────────
             // Update s⁻¹ for next round
             // ─────────────────────────────────────────────────────────────────────
             // After folding, domain shrinks by `arity`. The new generator g' = g^arity.
-            // We need: s'_inv[k] = g'^{-bitrev(k, L')} = g^{-arity * bitrev(k, L')}
+            // Let L = log(folded_domain_size) and L' = L - log_arity (next folded size).
+            // We need: s'_inv[k] = g'^{-bitrev(k, L')} = g^{-arity · bitrev(k, L')}
             //
-            // Using the identity bitrev(k, L-log_arity) = bitrev(k*arity, L):
-            //   s'_inv[k] = g^{-arity * bitrev(k*arity, L)}
-            //             = (g^{-bitrev(k*arity, L)})^arity
-            //             = s_inv[k*arity]^arity
+            // Using the identity bitrev(k, L-log_arity) = bitrev(k·arity, L):
+            //   s'_inv[k] = g^{-arity · bitrev(k·arity, L)}
+            //             = (g^{-bitrev(k·arity, L)})^arity
+            //             = s_inv[k·arity]^arity
             //
             // So we select every `arity`-th element and raise to power `arity`.
-            // After domain_size update, new num_rows = domain_size / arity.
-            num_rows = domain_size >> log_arity;
-            s_invs = (0..num_rows)
+            let next_folded_size = domain_size >> log_arity;
+            s_invs = (0..next_folded_size)
                 .into_par_iter()
                 .map(|k| s_invs[k * arity].exp_power_of_2(log_arity))
                 .collect();
@@ -176,8 +183,8 @@ where
         // Extract final polynomial coefficients
         // ─────────────────────────────────────────────────────────────────────────
         // The remaining evaluations are on a domain of size `final_domain_size`.
-        // The polynomial degree is `final_poly_degree = final_domain_size / blowup`.
-        // We need coefficients of degree < final_poly_degree, so we:
+        // The polynomial has degree < `final_poly_degree` where
+        // `final_poly_degree = final_domain_size / blowup`. We extract its coefficients:
         // 1. Take the first `final_poly_degree` evaluations (others are redundant due to blowup)
         // 2. Convert from bit-reversed to standard order
         // 3. Apply inverse DFT to get coefficients

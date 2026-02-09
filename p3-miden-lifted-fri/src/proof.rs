@@ -73,7 +73,7 @@ where
         let fri_transcript =
             FriTranscript::from_verifier_channel(&params.fri, log_lde_height, channel)?;
 
-        let query_pow_witness = channel.grind(params.query_proof_of_work_bits)?;
+        let query_pow_witness = channel.grind(params.query_pow_bits)?;
 
         let indices: Vec<usize> = (0..params.num_queries)
             .map(|_| channel.sample_bits(log_lde_height))

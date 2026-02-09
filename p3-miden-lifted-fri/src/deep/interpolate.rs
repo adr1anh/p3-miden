@@ -37,7 +37,9 @@
 //! ### Bit-Reversed Domain Structure
 //!
 //! In bit-reversed order, the coset `gH` satisfies:
-//! - **Adjacent negation**: `gH[2i+1] = -gH[2i]`
+//! - **Adjacent negation**: `gH[2i+1] = -gH[2i]` — in bit-reversed order,
+//!   `bitrev(2i+1)` differs from `bitrev(2i)` only in the MSB, adding `n/2`
+//!   to the exponent, which maps `ω^k → ω^{k+n/2} = -ω^k`.
 //! - **Squaring gives prefix**: `(gH[2i])² = (gH)²[i]`
 //!
 //! This means lifted polynomial `f(X²)` has the same value at indices `2i` and `2i+1`.

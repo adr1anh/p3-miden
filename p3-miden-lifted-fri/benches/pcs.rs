@@ -210,16 +210,16 @@ macro_rules! bench_scenario {
                     ] {
                         let params = PcsParams {
                             deep: DeepParams {
-                                proof_of_work_bits: 0,
+                                deep_pow_bits: 0,
                             },
                             fri: FriParams {
                                 log_blowup: LOG_BLOWUP,
                                 fold,
                                 log_final_degree: LOG_FINAL_DEGREE,
-                                proof_of_work_bits: 0,
+                                folding_pow_bits: 0,
                             },
                             num_queries: NUM_QUERIES,
-                            query_proof_of_work_bits: 0,
+                            query_pow_bits: 0,
                         };
 
                         group.bench_function(BenchmarkId::from_parameter(name), |b| {

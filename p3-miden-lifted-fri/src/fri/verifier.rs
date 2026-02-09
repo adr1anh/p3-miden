@@ -83,7 +83,7 @@ where
         for _ in 0..num_rounds {
             let commitment = channel.receive_commitment()?.clone();
 
-            channel.grind(params.proof_of_work_bits)?;
+            channel.grind(params.folding_pow_bits)?;
 
             let beta: EF = channel.sample_algebra_element();
             rounds.push(FriRoundOracle { commitment, beta });
@@ -101,7 +101,7 @@ where
 
     /// Test low-degree proximity by reading openings from a verifier channel.
     ///
-    /// `initial_evals` maps tree indices to DEEP evaluations.
+    /// `evals` maps tree indices to DEEP evaluations.
     /// Tree index = bitrev(exp, log_domain_size) where domain point = `g·ω^{exp}`.
     pub fn test_low_degree<Ch>(
         &self,
@@ -122,7 +122,7 @@ where
         let mut g_inv = F::two_adic_generator(log_domain_size).inverse();
 
         for (round_idx, round) in self.rounds.iter().enumerate() {
-            let log_num_rows = log_domain_size - log_arity;
+            let log_folded_domain_size = log_domain_size - log_arity;
 
             // Compute row indices: shift off position-within-coset bits
             let row_indices = evals.keys().map(|&idx| idx >> log_arity);
@@ -131,7 +131,7 @@ where
                 .open_batch(
                     &round.commitment,
                     &widths,
-                    log_num_rows,
+                    log_folded_domain_size,
                     row_indices,
                     channel,
                 )
@@ -158,7 +158,10 @@ where
                     let row_idx = idx >> log_arity;
                     let position = idx & (arity - 1);
 
-                    let flat_row = &opened_rows[&row_idx][0];
+                    // LMCS should only return entries for requested indices.
+                    let flat_row = &opened_rows
+                        .get(&row_idx)
+                        .ok_or(FriError::MissingRow(row_idx))?[0];
                     let row: Vec<EF> = EF::reconstitute_from_base(flat_row[..base_width].to_vec());
 
                     if row[position] != eval {
@@ -169,14 +172,14 @@ where
                     }
 
                     // s⁻¹ = (g^{bitrev(row_idx)})⁻¹, needed for iFFT over <s>.
-                    let s_pow = reverse_bits_len(row_idx, log_num_rows);
+                    let s_pow = reverse_bits_len(row_idx, log_folded_domain_size);
                     let s_inv = g_inv.exp_u64(s_pow as u64);
                     let folded = params.fold.fold_evals(&row, s_inv, round.beta);
                     Ok((row_idx, folded))
                 })
                 .collect::<Result<_, _>>()?;
 
-            log_domain_size = log_num_rows;
+            log_domain_size = log_folded_domain_size;
             g_inv = g_inv.exp_power_of_2(log_arity);
         }
 
@@ -207,6 +210,8 @@ pub enum FriError {
     LmcsError(LmcsError, usize),
     #[error("invalid proof structure")]
     InvalidProofStructure,
+    #[error("LMCS did not return opened row {0}")]
+    MissingRow(usize),
     #[error("evaluation mismatch at row {row_index}, position {position}")]
     EvaluationMismatch { row_index: usize, position: usize },
     #[error("final polynomial mismatch")]

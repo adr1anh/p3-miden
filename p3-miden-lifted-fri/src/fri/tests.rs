@@ -33,7 +33,7 @@ struct FriRoundtripCase {
     log_blowup: usize,
     log_final_degree: usize,
     fold: FriFold,
-    proof_of_work_bits: usize,
+    folding_pow_bits: usize,
     num_queries: usize,
 }
 
@@ -44,7 +44,7 @@ const FRI_ROUNDTRIP_CASES: &[FriRoundtripCase] = &[
         log_blowup: 2,
         log_final_degree: 2,
         fold: FriFold::ARITY_2,
-        proof_of_work_bits: 1,
+        folding_pow_bits: 1,
         num_queries: 3,
     },
     FriRoundtripCase {
@@ -53,7 +53,7 @@ const FRI_ROUNDTRIP_CASES: &[FriRoundtripCase] = &[
         log_blowup: 2,
         log_final_degree: 2,
         fold: FriFold::ARITY_4,
-        proof_of_work_bits: 1,
+        folding_pow_bits: 1,
         num_queries: 3,
     },
     FriRoundtripCase {
@@ -62,7 +62,7 @@ const FRI_ROUNDTRIP_CASES: &[FriRoundtripCase] = &[
         log_blowup: 2,
         log_final_degree: 2,
         fold: FriFold::ARITY_8,
-        proof_of_work_bits: 1,
+        folding_pow_bits: 1,
         num_queries: 3,
     },
     FriRoundtripCase {
@@ -71,7 +71,7 @@ const FRI_ROUNDTRIP_CASES: &[FriRoundtripCase] = &[
         log_blowup: 0,
         log_final_degree: 3,
         fold: FriFold::ARITY_2,
-        proof_of_work_bits: 0,
+        folding_pow_bits: 0,
         num_queries: 2,
     },
 ];
@@ -129,7 +129,7 @@ fn run_roundtrip_case(case: &FriRoundtripCase, seed: u64) -> Result<(), FriError
         log_blowup: case.log_blowup,
         fold: case.fold,
         log_final_degree: case.log_final_degree,
-        proof_of_work_bits: case.proof_of_work_bits,
+        folding_pow_bits: case.folding_pow_bits,
     };
 
     let evals =
@@ -177,7 +177,7 @@ fn test_fri_verify_wrong_eval() {
         log_blowup,
         fold: FriFold::ARITY_2,
         log_final_degree,
-        proof_of_work_bits: 1,
+        folding_pow_bits: 1,
     };
 
     let evals = random_lde_matrix::<F, EF>(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
@@ -226,7 +226,7 @@ fn test_fri_verify_wrong_beta() {
         log_blowup,
         fold: FriFold::ARITY_2,
         log_final_degree,
-        proof_of_work_bits: 0, // No grinding to simplify test
+        folding_pow_bits: 0, // No grinding to simplify test
     };
 
     // Create two independent provers with different evaluations.
@@ -292,7 +292,7 @@ fn test_fri_zero_rounds_final_poly_only() {
         log_blowup,
         fold: FriFold::ARITY_2,
         log_final_degree,
-        proof_of_work_bits: 0,
+        folding_pow_bits: 0,
     };
 
     let evals = random_lde_matrix::<F, EF>(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
@@ -339,7 +339,7 @@ fn test_final_polynomial_correctness() {
         log_blowup,
         fold: FriFold::ARITY_2,
         log_final_degree,
-        proof_of_work_bits: 0, // No grinding for this test
+        folding_pow_bits: 0, // No grinding for this test
     };
 
     let poly_degree = 1 << log_poly_degree;

@@ -82,16 +82,14 @@ fn test_pcs_open_verify_roundtrip() {
         log_blowup,
         fold: FriFold::ARITY_2,
         log_final_degree,
-        proof_of_work_bits: 1, // Low for fast tests (per-round)
+        folding_pow_bits: 1,
     };
-    let deep = DeepParams {
-        proof_of_work_bits: 1, // Low for fast tests
-    };
+    let deep = DeepParams { deep_pow_bits: 1 };
     let params = PcsParams {
         deep,
         fri,
         num_queries: 5,
-        query_proof_of_work_bits: 1,
+        query_pow_bits: 1,
     };
 
     // Create a matrix of LDE evaluations.
@@ -173,16 +171,14 @@ fn test_pcs_open_verify_multi_trace_roundtrip() {
         log_blowup,
         fold: FriFold::ARITY_2,
         log_final_degree,
-        proof_of_work_bits: 1, // Low for fast tests (per-round)
+        folding_pow_bits: 1,
     };
-    let deep = DeepParams {
-        proof_of_work_bits: 1, // Low for fast tests
-    };
+    let deep = DeepParams { deep_pow_bits: 1 };
     let params = PcsParams {
         deep,
         fri,
         num_queries: 5,
-        query_proof_of_work_bits: 1,
+        query_pow_bits: 1,
     };
 
     // Build two trace trees with the same LDE height but different widths.

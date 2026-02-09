@@ -79,7 +79,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
         let evals = DeepEvals::read_from_channel::<F, Ch>(&widths, eval_points.len(), channel)?;
 
         // 1. Check grinding witness
-        channel.grind(params.proof_of_work_bits)?;
+        channel.grind(params.deep_pow_bits)?;
 
         // 2. Sample DEEP challenges
         let challenge_columns: EF = channel.sample_algebra_element();

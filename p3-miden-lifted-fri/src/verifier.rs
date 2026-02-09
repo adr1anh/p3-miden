@@ -76,7 +76,7 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // Check query PoW witness and sample query indices
     // ─────────────────────────────────────────────────────────────────────────
-    channel.grind(params.query_proof_of_work_bits)?;
+    channel.grind(params.query_pow_bits)?;
 
     // Sample exponents and convert to tree indices immediately.
     // Tree indices are bit-reversed exponents (LMCS stores in bit-reversed order).

@@ -52,8 +52,8 @@ pub use verifier::DeepError;
 /// Column alignment is handled at the LMCS layer and by padding evaluations.
 #[derive(Clone, Copy, Debug)]
 pub struct DeepParams {
-    /// Proof-of-work grinding bits before DEEP challenge sampling.
-    pub proof_of_work_bits: usize,
+    /// Grinding bits before DEEP challenge sampling.
+    pub deep_pow_bits: usize,
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 # p3-miden-lifted-fri
 
-Lifted Polynomial Commitment Scheme (PCS) built from a DEEP quotient and FRI,
+Lifted Polynomial Commitment Scheme (PCS) built from the FRI LDT on the DEEP quotient polynomial,
 using LMCS for commitments over evaluation matrices.
 
 ## Protocol Summary
@@ -8,9 +8,8 @@ using LMCS for commitments over evaluation matrices.
 This is a polynomial commitment scheme where the verifier requests evaluations
 of all committed matrices at the same two points (derived via Fiat-Shamir).
 All matrices appear at a uniform height via LMCS upsampling, which:
-- Eliminates height-dependent code paths in the verifier.
+- Eliminates height-dependent code paths, enabling uniform recursive verifier implementations.
 - Simplifies DEEP quotient construction (same domain points for all matrices).
-- Enables uniform recursive verifier implementations.
 
 **Protocol flow**:
 1. **Commit**: LMCS commits to (possibly upsampled) evaluation matrices.

@@ -18,6 +18,6 @@ pub struct PcsParams {
     /// Number of query repetitions.
     pub num_queries: usize,
 
-    /// Proof-of-work grinding bits for query sampling.
-    pub query_proof_of_work_bits: usize,
+    /// Grinding bits before query index sampling.
+    pub query_pow_bits: usize,
 }
