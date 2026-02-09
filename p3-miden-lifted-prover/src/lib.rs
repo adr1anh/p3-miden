@@ -1,8 +1,4 @@
-//! Lifted STARK prover scaffold.
-//!
-//! This crate provides the prover for the lifted STARK protocol using LMCS
-//! commitments and the lifted FRI PCS.
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 
 extern crate alloc;
