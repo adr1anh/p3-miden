@@ -16,6 +16,13 @@ use p3_util::reverse_slice_index_bits;
 // ============================================================================
 
 /// Horner fold with an explicit accumulator.
+///
+/// Computes `Σᵢ αⁿ⁻¹⁻ⁱ · vals[i]` — the first element gets the highest power of `x`.
+/// Equivalently: `((acc·x + v₀)·x + v₁)·x + ... + vₙ₋₁`.
+///
+/// This convention is used throughout the DEEP module for the random linear combination
+/// `f_reduced = Σᵢ αⁱ · fᵢ`, where columns are iterated in commitment order and the
+/// first column receives `α^(W-1)` (W = total column count).
 #[inline]
 pub(crate) fn horner_acc<Acc, Val, X, I>(acc: Acc, x: X, vals: I) -> Acc
 where
@@ -26,7 +33,9 @@ where
     vals.into_iter().fold(acc, |acc, val| acc * x.clone() + val)
 }
 
-/// Horner fold starting from `Acc::default()`.
+/// Horner fold starting from zero.
+///
+/// See [`horner_acc`] for the evaluation convention.
 #[inline]
 pub(crate) fn horner<Acc, Val, X, I>(x: X, vals: I) -> Acc
 where

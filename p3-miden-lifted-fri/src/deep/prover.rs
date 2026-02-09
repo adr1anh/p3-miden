@@ -155,8 +155,21 @@ impl<EF> DeepPoly<EF> {
         // Align each matrix width so padding is explicit in the transcript.
         let aligned_widths = aligned_widths(widths.iter().copied(), alignment);
 
-        // Derive reversed column coefficients for Horner, shifted by -1 so we accumulate
-        // -f_reduced(X) directly (avoids a separate negation pass).
+        // Compute explicit coefficients for -f_reduced(X) = -Σᵢ αⁱ · fᵢ(X).
+        //
+        // The verifier computes f_reduced via `horner(α, columns)`, which assigns
+        // the highest power to the first column: column 0 gets α^(W-1), column W-1
+        // gets α⁰. To match this with an explicit dot-product (needed for the LDE
+        // evaluation), we need coefficient[i] = -α^(W-1-i).
+        //
+        // Construction:
+        //   shifted_powers(NEG_ONE) produces [-1, -α, -α², ..., -α^(W-1)]
+        //   .rev() reverses to [-α^(W-1), ..., -α, -1]
+        //   Split into per-matrix chunks in commitment order.
+        //
+        // The negation is folded into the coefficients so the DEEP quotient loop can
+        // compute f_reduced(zⱼ) + neg_f_reduced(X) = f_reduced(zⱼ) - f_reduced(X)
+        // without a separate negation pass.
         let total_width: usize = aligned_widths.iter().sum();
         let mut neg_powers_iter = challenge_columns
             .shifted_powers(EF::NEG_ONE)

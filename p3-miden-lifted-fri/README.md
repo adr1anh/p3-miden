@@ -6,7 +6,9 @@ using LMCS for commitments over evaluation matrices.
 ## Protocol Summary
 
 This is a polynomial commitment scheme where the verifier requests evaluations
-of all committed matrices at the same two points (derived via Fiat-Shamir).
+of all committed matrices at the same N points (derived via Fiat-Shamir).
+Typically N = 2 (e.g., z and gz for next-row constraints), but the
+implementation is generic over N.
 All matrices appear at a uniform height via LMCS upsampling, which:
 - Eliminates height-dependent code paths, enabling uniform recursive verifier implementations.
 - Simplifies DEEP quotient construction (same domain points for all matrices).

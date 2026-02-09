@@ -130,7 +130,12 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
                 )
                 .map_err(DeepError::LmcsError)?;
 
-            // Accumulate by tree index
+            // Reduce opened rows via Horner: f_reduced(X) = Σᵢ αⁱ · fᵢ(X).
+            //
+            // `horner_acc` continues the running accumulation across commitment groups:
+            // group 0's columns get the highest powers, group 1's continue from where
+            // group 0 left off. This matches the prover's coefficient ordering and
+            // `reduce_point`'s iteration order in `evals.rs`.
             for &tree_idx in tree_indices {
                 let rows_for_query = &opened_rows[&tree_idx];
                 let acc = reduced_rows.entry(tree_idx).or_insert(EF::ZERO);

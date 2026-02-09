@@ -34,6 +34,20 @@
 //! trace subgroup `H` and the LDE evaluation coset `gK`. Invalid points can trigger
 //! division by zero in the barycentric weights. In practice, the outer STARK protocol
 //! is expected to enforce this before invoking DEEP.
+//!
+//! ## Random Linear Combination Convention
+//!
+//! The batching challenge `α` reduces all columns via Horner evaluation:
+//! `f_reduced = horner(α, [f₀, f₁, ..., fₙ₋₁])`, where columns are flattened
+//! across groups and matrices in commitment order. The `horner` function assigns
+//! the highest power to the first element: `f₀·αⁿ⁻¹ + f₁·αⁿ⁻² + ... + fₙ₋₁·α⁰`.
+//!
+//! This convention is shared by:
+//! - Prover OOD reduction ([`evals::BatchedEvals::reduce`])
+//! - Verifier OOD reduction ([`evals::DeepEvals::reduce_point`])
+//! - Verifier query-time row reduction ([`verifier::DeepOracle::open_batch`] via `horner_acc`)
+//! - Prover LDE evaluation ([`prover::DeepPoly::from_evals`] via explicit dot-product
+//!   with reversed negated coefficients — see comments there)
 
 mod evals;
 mod interpolate;

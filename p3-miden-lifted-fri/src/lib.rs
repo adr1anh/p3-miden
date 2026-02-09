@@ -22,8 +22,10 @@
 //!
 //! Alignment padding is a transcript formatting convention. For trace commitments, the
 //! padded columns are treated as extra polynomials and are checked for low degree by the PCS;
-//! they need not be zero unless the caller enforces that. (FRI openings still ignore the
-//! padded tail because FRI expects a fixed single-column width.)
+//! they need not be zero unless the caller enforces that. The PCS is deliberately agnostic
+//! about which columns are "real" vs "padding" — enforcing zero-valued padding is the
+//! caller's (or AIR's) responsibility. (FRI openings still ignore the padded tail because
+//! FRI expects a fixed single-column width.)
 
 #![no_std]
 

@@ -38,6 +38,12 @@ use crate::fri::verifier::FriOracle;
 /// (i.e., trees built with `build_aligned_tree`).
 ///
 /// Returns `Ok(evals)` where each group/matrix is a row-major matrix with one row per point.
+///
+/// **Transcript consumption**: This function does not check that the channel is fully
+/// consumed after verification. Callers that use `verify_with_channel` as a standalone
+/// verifier should check `channel.is_empty()` afterwards to reject proofs with trailing
+/// data (proof malleability). When used as a component of a larger protocol, the caller
+/// manages transcript boundaries.
 pub fn verify_with_channel<F, EF, L, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,

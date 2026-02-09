@@ -6,15 +6,16 @@ order.
 
 ## Overview
 
-- Commit to matrices of different heights via virtual upsampling to a shared max.
+- Commit to matrices of different heights via virtual upsampling to a shared maximal height.
 - Hash rows with a configurable stateful hasher; internal nodes use a 2-to-1
   compression function.
-- Support batch openings with canonical sibling emission.
+- Support batch openings with canonical sibling ordering in proofs.
 
 ## Motivation
 
-Standard STARK proofs involve multiple evaluation matrices (e.g., main trace, auxiliary
-trace, constraint evaluations) with different heights. This heterogeneity complicates
+Standard STARK proofs involve multiple evaluation matrices with different heights,
+particularly in multi-AIR designs where each AIR may have a different trace length.
+This heterogeneity complicates
 PCS integration: the verifier must track per-matrix heights, the DEEP quotient must
 handle different lifting factors, and recursive verifiers need height-dependent code paths.
 
@@ -28,7 +29,7 @@ the maximum height. This simplifies downstream logic:
 ## Upsampling & Commitment Sketch
 
 Let a polynomial f be evaluated over a coset gK with |K| = n, stored in
-bit-reversed order. Let N = r · n be the max height. **Upsampling** repeats each
+bit-reversed order. Let N = r · n be the max height over all matrices in the same commitment group. **Upsampling** repeats each
 row r times in the bit-reversed layout, which corresponds to evaluating the
 **lifted** polynomial f'(X) = f(X^r) over a larger coset of size N. The
 commitment is the Merkle root of leaf hashes computed by absorbing upsampled
@@ -40,7 +41,8 @@ leaf(i) = squeeze(absorb(row_0(i) || row_1(i) || ... || row_{t-1}(i) || salt?))
 ```
 
 where row_j(i) is the upsampled row for matrix j at index i. Matrix order is
-binding.
+binding. Matrices are absorbed in their declared order (shortest to tallest), and each
+row is absorbed left-to-right. Reordering matrices produces a different commitment.
 
 ## Alignment
 
