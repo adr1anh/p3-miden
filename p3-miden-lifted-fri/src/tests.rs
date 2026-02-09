@@ -105,7 +105,7 @@ fn test_pcs_open_verify_roundtrip() {
     let matrices: Vec<RowMajorMatrix<F>> = vec![matrix];
 
     // Commit matrices via LMCS (aligned for trace commitments)
-    let tree = lmcs.build_aligned_tree(matrices);
+    let tree = lmcs.build_aligned_tree(matrices, None);
     let commitment = tree.root();
     let widths = tree.widths();
     let lde_height = tree.leaves().last().map(|m| m.height()).unwrap_or(0);
@@ -189,8 +189,8 @@ fn test_pcs_open_verify_multi_trace_roundtrip() {
     let matrix_a = random_lde_matrix(rng, log_poly_degree, log_blowup, 2, F::GENERATOR);
     let matrix_b = random_lde_matrix(rng, log_poly_degree, log_blowup, 4, F::GENERATOR);
 
-    let tree_a = lmcs.build_aligned_tree(vec![matrix_a]);
-    let tree_b = lmcs.build_aligned_tree(vec![matrix_b]);
+    let tree_a = lmcs.build_aligned_tree(vec![matrix_a], None);
+    let tree_b = lmcs.build_aligned_tree(vec![matrix_b], None);
 
     let lde_height_a = tree_a.leaves().last().map(|m| m.height()).unwrap_or(0);
     let lde_height_b = tree_b.leaves().last().map(|m| m.height()).unwrap_or(0);

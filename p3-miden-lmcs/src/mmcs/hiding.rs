@@ -52,7 +52,7 @@ where
         &self,
         inputs: Vec<M>,
     ) -> (Self::Commitment, Self::ProverData<M>) {
-        let tree = self.build_tree(inputs);
+        let tree = self.build_tree(inputs, None);
         (tree.root(), tree)
     }
 

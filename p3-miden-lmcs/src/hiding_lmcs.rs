@@ -50,7 +50,7 @@ use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, OpenedRow
 /// let config =
 ///     HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new(sponge, compress, rng);
 ///
-/// let tree = config.build_aligned_tree(matrices);
+/// let tree = config.build_aligned_tree(matrices, None);
 /// let root = tree.root();
 /// ```
 #[derive(Clone, Debug)]
@@ -110,10 +110,21 @@ where
 
     /// Build a tree with per-leaf salt sampled from the RNG.
     ///
+    /// When `log_target_height` is `Some(h)`, the salt matrix has `1 << h` rows and the
+    /// leaf sponge states are upsampled to the target height before absorbing salt.
+    /// See [`LiftedMerkleTree::build_with_alignment`] for details.
+    ///
     /// Preconditions match `LmcsConfig::build_tree`; panics if `leaves` is empty.
-    fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
-        let tree_height = leaves.last().map(|m| m.height()).unwrap_or(0);
-        let salt = RowMajorMatrix::rand(&mut *self.rng.borrow_mut(), tree_height, SALT);
+    fn build_tree<M: Matrix<Self::F>>(
+        &self,
+        leaves: Vec<M>,
+        log_target_height: Option<usize>,
+    ) -> Self::Tree<M> {
+        let natural_height = leaves.last().map(|m| m.height()).unwrap_or(0);
+        let salt_height = log_target_height
+            .map(|lth| 1usize << lth)
+            .unwrap_or(natural_height);
+        let salt = RowMajorMatrix::rand(&mut *self.rng.borrow_mut(), salt_height, SALT);
 
         LiftedMerkleTree::build_with_alignment::<PF, PD, H, C, WIDTH>(
             &self.inner.sponge,
@@ -121,15 +132,27 @@ where
             leaves,
             Some(salt),
             1,
+            log_target_height,
         )
     }
 
     /// Build a tree with per-leaf salt sampled from the RNG and hasher alignment padding.
     ///
+    /// When `log_target_height` is `Some(h)`, the salt matrix has `1 << h` rows and the
+    /// leaf sponge states are upsampled to the target height before absorbing salt.
+    /// See [`LiftedMerkleTree::build_with_alignment`] for details.
+    ///
     /// Preconditions match `LmcsConfig::build_tree`; panics if `leaves` is empty.
-    fn build_aligned_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
-        let tree_height = leaves.last().map(|m| m.height()).unwrap_or(0);
-        let salt = RowMajorMatrix::rand(&mut *self.rng.borrow_mut(), tree_height, SALT);
+    fn build_aligned_tree<M: Matrix<Self::F>>(
+        &self,
+        leaves: Vec<M>,
+        log_target_height: Option<usize>,
+    ) -> Self::Tree<M> {
+        let natural_height = leaves.last().map(|m| m.height()).unwrap_or(0);
+        let salt_height = log_target_height
+            .map(|lth| 1usize << lth)
+            .unwrap_or(natural_height);
+        let salt = RowMajorMatrix::rand(&mut *self.rng.borrow_mut(), salt_height, SALT);
 
         LiftedMerkleTree::build_with_alignment::<PF, PD, H, C, WIDTH>(
             &self.inner.sponge,
@@ -137,6 +160,7 @@ where
             leaves,
             Some(salt),
             <H as Alignable<PF::Value, PD::Value>>::ALIGNMENT,
+            log_target_height,
         )
     }
 

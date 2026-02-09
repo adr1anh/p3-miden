@@ -69,7 +69,7 @@ where
             |b, groups| {
                 b.iter(|| {
                     for matrices in groups {
-                        let tree = lmcs.build_tree(matrices.clone());
+                        let tree = lmcs.build_tree(matrices.clone(), None);
                         black_box(tree.root());
                     }
                 });

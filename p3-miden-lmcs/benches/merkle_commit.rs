@@ -68,7 +68,7 @@ where
                 |b, groups| {
                     b.iter(|| {
                         for matrices in groups {
-                            let tree = lmcs.build_tree(matrices.clone());
+                            let tree = lmcs.build_tree(matrices.clone(), None);
                             black_box(tree.root());
                         }
                     });
@@ -90,7 +90,7 @@ where
                 |b, matrix| {
                     b.iter(|| {
                         let flat = FlatMatrixView::new(matrix.clone());
-                        let tree = lmcs.build_tree(vec![flat]);
+                        let tree = lmcs.build_tree(vec![flat], None);
                         black_box(tree.root())
                     });
                 },
@@ -110,7 +110,7 @@ where
                 |b, matrix| {
                     b.iter(|| {
                         let flat = FlatMatrixView::new(matrix.clone());
-                        let tree = lmcs.build_tree(vec![flat]);
+                        let tree = lmcs.build_tree(vec![flat], None);
                         black_box(tree.root())
                     });
                 },

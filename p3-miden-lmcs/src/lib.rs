@@ -27,7 +27,7 @@
 //! let challenger = /* ... */;
 //!
 //! // Build tree - no turbofish needed, packed types are known from config
-//! let tree = config.build_aligned_tree(matrices);
+//! let tree = config.build_aligned_tree(matrices, None);
 //! let root = tree.root();
 //! let mut prover_channel = ProverTranscript::new(challenger);
 //! tree.prove_batch(&indices, &mut prover_channel);
@@ -39,7 +39,7 @@
 //! // For hiding commitment with salt, use HidingLmcsConfig with RNG
 //! let hiding_config =
 //!     HidingLmcsConfig::<PF, PD, _, _, _, WIDTH, DIGEST, 4>::new(sponge, compress, rng);
-//! let tree = hiding_config.build_aligned_tree(matrices);
+//! let tree = hiding_config.build_aligned_tree(matrices, None);
 //! ```
 //!
 //! ## Trait-Based Usage (for generic code like FRI)
@@ -49,7 +49,7 @@
 //! use p3_miden_transcript::ProverTranscript;
 //!
 //! fn commit_and_open<L: Lmcs>(lmcs: &L, matrices: Vec<impl Matrix<L::F>>) {
-//!     let tree = lmcs.build_aligned_tree(matrices);
+//!     let tree = lmcs.build_aligned_tree(matrices, None);
 //!     let commitment = tree.root();
 //!     let challenger = /* ... */;
 //!     let mut channel = ProverTranscript::new(challenger);
@@ -189,14 +189,33 @@ pub trait Lmcs: Clone {
 
     /// Build a tree from matrices with no transcript padding (alignment = 1).
     ///
+    /// When `log_target_height` is `Some(h)`, the resulting Merkle tree has `1 << h` leaves,
+    /// which may be larger than the tallest matrix. This lifts to a domain larger than the
+    /// natural matrix height. See [`LiftedMerkleTree::build_with_alignment`] for details on
+    /// how upsampling is handled with and without salt.
+    ///
+    /// When `log_target_height` is `None`, the tree height equals the tallest matrix height
+    /// (existing behavior).
+    ///
     /// This affects only transcript hint formatting; the commitment root is unchanged.
-    fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M>;
+    fn build_tree<M: Matrix<Self::F>>(
+        &self,
+        leaves: Vec<M>,
+        log_target_height: Option<usize>,
+    ) -> Self::Tree<M>;
 
     /// Build a tree from matrices using the hasher alignment for transcript padding.
     ///
+    /// When `log_target_height` is `Some(h)`, the resulting Merkle tree has `1 << h` leaves.
+    /// See [`Self::build_tree`] for details.
+    ///
     /// Rows are padded to the hasher's alignment when streaming hints.
     /// When the alignment is 1, this is identical to [`Self::build_tree`].
-    fn build_aligned_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M>;
+    fn build_aligned_tree<M: Matrix<Self::F>>(
+        &self,
+        leaves: Vec<M>,
+        log_target_height: Option<usize>,
+    ) -> Self::Tree<M>;
 
     /// Hash a sequence of field slices into a leaf hash.
     ///

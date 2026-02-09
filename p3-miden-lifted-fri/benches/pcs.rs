@@ -198,7 +198,7 @@ macro_rules! bench_scenario {
                     all_lde_matrices.sort_by_key(|m| m.height());
 
                     // Build a single LMCS tree with all matrices
-                    let tree = lmcs.build_aligned_tree(all_lde_matrices);
+                    let tree = lmcs.build_aligned_tree(all_lde_matrices, None);
                     let commitment = tree.root();
                     let log_lde_height = log2_strict_usize(tree.height());
 

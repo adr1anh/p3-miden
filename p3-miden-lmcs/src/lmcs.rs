@@ -94,10 +94,15 @@ where
     /// Preconditions:
     /// - `leaves` is non-empty.
     /// - Matrix heights are powers of two and sorted by height (shortest to tallest).
+    /// - If `log_target_height` is `Some(h)`, then `1 << h >= max_matrix_height`.
     ///
     /// Panics if `leaves` is empty. Incorrect height order commits to a different
     /// lifted matrix than intended.
-    fn build_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
+    fn build_tree<M: Matrix<Self::F>>(
+        &self,
+        leaves: Vec<M>,
+        log_target_height: Option<usize>,
+    ) -> Self::Tree<M> {
         const { assert!(SALT_ELEMS == 0) }
         LiftedMerkleTree::build_with_alignment::<PF, PD, H, C, WIDTH>(
             &self.sponge,
@@ -105,6 +110,7 @@ where
             leaves,
             None,
             1,
+            log_target_height,
         )
     }
 
@@ -113,10 +119,15 @@ where
     /// Preconditions:
     /// - `leaves` is non-empty.
     /// - Matrix heights are powers of two and sorted by height (shortest to tallest).
+    /// - If `log_target_height` is `Some(h)`, then `1 << h >= max_matrix_height`.
     ///
     /// Panics if `leaves` is empty. Incorrect height order commits to a different
     /// lifted matrix than intended.
-    fn build_aligned_tree<M: Matrix<Self::F>>(&self, leaves: Vec<M>) -> Self::Tree<M> {
+    fn build_aligned_tree<M: Matrix<Self::F>>(
+        &self,
+        leaves: Vec<M>,
+        log_target_height: Option<usize>,
+    ) -> Self::Tree<M> {
         const { assert!(SALT_ELEMS == 0) }
         LiftedMerkleTree::build_with_alignment::<PF, PD, H, C, WIDTH>(
             &self.sponge,
@@ -124,6 +135,7 @@ where
             leaves,
             None,
             <H as Alignable<PF::Value, PD::Value>>::ALIGNMENT,
+            log_target_height,
         )
     }
 
@@ -347,7 +359,7 @@ mod tests {
         let (_, sponge, compress) = bb::test_components();
         let lmcs: TestLmcs = LmcsConfig::new(sponge, compress);
         let matrices = vec![small_matrix(4, 2, 0), small_matrix(4, 3, 100)];
-        let tree = lmcs.build_tree(matrices);
+        let tree = lmcs.build_tree(matrices, None);
         let widths = tree.widths();
         let log_max_height = log2_strict_usize(tree.height());
         let commitment = tree.root();
@@ -383,7 +395,7 @@ mod tests {
         assert_open(&[0, 1, 2, 3]);
         assert_open(&[2, 2]);
 
-        let tiny_tree = lmcs.build_tree(vec![small_matrix(1, 1, 7)]);
+        let tiny_tree = lmcs.build_tree(vec![small_matrix(1, 1, 7)], None);
         let widths_tiny = tiny_tree.widths();
         let log_tiny = log2_strict_usize(tiny_tree.height());
         let mut prover_channel = ProverTranscript::new(bb::test_challenger());
@@ -421,7 +433,7 @@ mod tests {
         let transcript = make_transcript(&[0]);
         let mut verifier_channel =
             VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-        let wrong_tree = lmcs.build_tree(vec![small_matrix(4, 2, 999)]);
+        let wrong_tree = lmcs.build_tree(vec![small_matrix(4, 2, 999)], None);
         assert_eq!(
             lmcs.open_batch(
                 &wrong_tree.root(),

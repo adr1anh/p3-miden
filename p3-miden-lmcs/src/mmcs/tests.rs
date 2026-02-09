@@ -68,9 +68,9 @@ where
         .map(|&(h, w)| RowMajorMatrix::rand(&mut rng, h, w))
         .collect();
     if aligned {
-        mmcs.build_aligned_tree(matrices)
+        mmcs.build_aligned_tree(matrices, None)
     } else {
-        mmcs.build_tree(matrices)
+        mmcs.build_tree(matrices, None)
     }
 }
 

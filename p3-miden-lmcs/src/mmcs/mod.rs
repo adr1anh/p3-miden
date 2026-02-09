@@ -30,7 +30,6 @@ use p3_field::PackedValue;
 use p3_matrix::{Dimensions, Matrix};
 use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_symmetric::{Hash, PseudoCompressionFunction};
-use p3_util::log2_ceil_usize;
 use serde::{Deserialize, Serialize};
 
 use crate::LmcsTree;
@@ -67,7 +66,7 @@ where
         &self,
         inputs: Vec<M>,
     ) -> (Self::Commitment, Self::ProverData<M>) {
-        let tree = self.build_tree(inputs);
+        let tree = self.build_tree(inputs, None);
         (tree.root(), tree)
     }
 
@@ -131,13 +130,18 @@ where
                 .chain(core::iter::once(salt.as_slice())),
         );
 
-        let max_height = dimensions
+        // Derive tree depth from the authentication path length. This handles trees
+        // built with a target height larger than the tallest matrix.
+        let log_max_height = siblings.len();
+        let max_height = 1usize << log_max_height;
+
+        // Validate that all matrix heights fit within the tree.
+        let max_matrix_height = dimensions
             .iter()
             .map(|d| d.height)
             .max()
             .ok_or(LmcsError::InvalidProof)?;
-        let log_max_height = log2_ceil_usize(max_height);
-        if siblings.len() != log_max_height {
+        if max_matrix_height > max_height {
             return Err(LmcsError::InvalidProof);
         }
 

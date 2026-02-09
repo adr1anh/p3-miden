@@ -109,7 +109,7 @@ where
     }
 
     fn height(&self) -> usize {
-        self.leaves.last().unwrap().height()
+        self.digest_layers[0].len()
     }
 
     fn leaves(&self) -> &[M] {
@@ -155,8 +155,8 @@ where
     {
         use alloc::collections::BTreeSet;
 
-        let final_height = self.leaves.last().unwrap().height();
-        let depth = log2_strict_usize(final_height);
+        let tree_height = self.height();
+        let depth = log2_strict_usize(tree_height);
         let alignment = self.alignment;
 
         // Collect and deduplicate indices. BTreeSet iteration yields sorted order,
@@ -167,12 +167,12 @@ where
         // Stream leaf openings in sorted tree index order.
         for &index in &unique_indices {
             assert!(
-                index < final_height,
-                "index {index} out of range {final_height}"
+                index < tree_height,
+                "index {index} out of range {tree_height}"
             );
             for m in self.leaves.iter() {
                 let height = m.height();
-                let log_scaling_factor = log2_strict_usize(final_height / height);
+                let log_scaling_factor = log2_strict_usize(tree_height / height);
                 let row_index = index >> log_scaling_factor;
                 let row = m
                     .row_slice(row_index)
@@ -235,22 +235,42 @@ where
     D: Copy + Default + PartialEq + Send + Sync,
     M: Matrix<F>,
 {
-    /// Builder for creating trees with optional salt and explicit alignment.
+    /// Builder for creating trees with optional salt, explicit alignment, and optional target
+    /// height.
     ///
     /// Preconditions:
     /// - `leaves` is non-empty and heights are powers of two.
     /// - Matrices are sorted by height (shortest to tallest).
+    /// - If `log_target_height` is `Some(h)`, then `1 << h >= max_matrix_height`.
+    ///
+    /// When `log_target_height` is `Some(h)`, the resulting Merkle tree has `1 << h` leaves,
+    /// which may be larger than the tallest matrix. The upsampling strategy depends on whether
+    /// salt is present:
+    ///
+    /// - **With salt**: leaf sponge states are upsampled (nearest-neighbor) from the natural
+    ///   height to the target height *before* absorbing salt. The salt matrix must have
+    ///   `target_height` rows. This ensures that duplicated states receive independent salt,
+    ///   producing unique leaf hashes.
+    ///
+    /// - **Without salt**: leaf states are squeezed at the natural height, producing digests.
+    ///   The digest array is then upsampled (nearest-neighbor) to the target height. Pairs of
+    ///   identical sibling digests naturally produce self-compressions (`compress(d, d)`) in the
+    ///   layers above.
+    ///
+    /// When `log_target_height` is `None`, the tree height equals the tallest matrix height
+    /// (existing behavior).
     ///
     /// `alignment` controls transcript padding only; it does not affect the commitment.
     /// LMCS does not enforce that padded columns are zero.
     ///
-    /// Panics if `leaves` is empty.
+    /// Panics if `leaves` is empty or if the target height is smaller than the max matrix height.
     pub(crate) fn build_with_alignment<PF, PD, H, C, const WIDTH: usize>(
         h: &H,
         c: &C,
         leaves: Vec<M>,
         salt: Option<RowMajorMatrix<F>>,
         alignment: usize,
+        log_target_height: Option<usize>,
     ) -> Self
     where
         PF: PackedValue<Value = F>,
@@ -266,22 +286,57 @@ where
         assert!(!leaves.is_empty(), "cannot commit empty batch");
         debug_assert!(alignment > 0, "alignment must be non-zero");
 
+        let natural_height = leaves.last().unwrap().height();
+        let target_height = log_target_height
+            .map(|lth| {
+                let th = 1usize << lth;
+                assert!(
+                    th >= natural_height,
+                    "target height {th} must be >= max matrix height {natural_height}"
+                );
+                th
+            })
+            .unwrap_or(natural_height);
+
         // Build leaf states from matrices using the sponge
         let mut leaf_states: Vec<[PD::Value; WIDTH]> =
             build_leaf_states_upsampled::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h);
 
-        // Absorb salt into states using SIMD-parallelized path (no-op when salt is None)
-        if let Some(ref salt_matrix) = salt {
-            debug_assert_eq!(salt_matrix.height(), leaf_states.len());
-            debug_assert_eq!(salt_matrix.width(), SALT_ELEMS);
-            absorb_matrix::<PF, PD, _, _, WIDTH, DIGEST_ELEMS>(&mut leaf_states, salt_matrix, h);
-        }
-
-        // Squeeze the final hashes from the states
-        let leaf_digests: Vec<[PD::Value; DIGEST_ELEMS]> = leaf_states
-            .into_par_iter()
-            .map(|state| h.squeeze(&state))
-            .collect();
+        let leaf_digests = if salt.is_some() {
+            // Salt path: upsample states to target height, then absorb salt, then squeeze.
+            // Upsampling before salt ensures that duplicated states receive independent salt
+            // values, producing unique leaf hashes.
+            if target_height > natural_height {
+                leaf_states = upsample_vec(leaf_states, target_height);
+            }
+            if let Some(ref salt_matrix) = salt {
+                debug_assert_eq!(salt_matrix.height(), leaf_states.len());
+                debug_assert_eq!(salt_matrix.width(), SALT_ELEMS);
+                absorb_matrix::<PF, PD, _, _, WIDTH, DIGEST_ELEMS>(
+                    &mut leaf_states,
+                    salt_matrix,
+                    h,
+                );
+            }
+            leaf_states
+                .into_par_iter()
+                .map(|state| h.squeeze(&state))
+                .collect()
+        } else {
+            // No-salt path: squeeze first, then upsample digests.
+            // Since there is no salt to differentiate duplicated states, squeezing first
+            // avoids redundant work. The upsampled digests produce self-compressions
+            // (compress(d, d)) in the Merkle tree layers above.
+            let leaf_digests: Vec<[PD::Value; DIGEST_ELEMS]> = leaf_states
+                .into_par_iter()
+                .map(|state| h.squeeze(&state))
+                .collect();
+            if target_height > natural_height {
+                upsample_vec(leaf_digests, target_height)
+            } else {
+                leaf_digests
+            }
+        };
 
         // Build digest layers by repeatedly compressing until we reach the root
         let mut digest_layers = vec![leaf_digests];
@@ -531,6 +586,32 @@ fn compress_uniform<
             });
     }
     next_digests
+}
+
+/// Upsample a vector to `target_len` via nearest-neighbor repetition.
+///
+/// Each element is repeated `target_len / vec.len()` times contiguously.
+/// Requires `target_len >= vec.len()` and `target_len` to be a multiple of `vec.len()`.
+fn upsample_vec<T: Copy>(vec: Vec<T>, target_len: usize) -> Vec<T> {
+    let natural_len = vec.len();
+    debug_assert!(target_len >= natural_len);
+    debug_assert!(
+        target_len % natural_len == 0,
+        "target_len must be a multiple of natural_len"
+    );
+
+    if target_len == natural_len {
+        return vec;
+    }
+
+    let factor = target_len / natural_len;
+    let mut result = Vec::with_capacity(target_len);
+    for item in vec {
+        for _ in 0..factor {
+            result.push(item);
+        }
+    }
+    result
 }
 
 /// Validate a sequence of matrix heights for LMCS.

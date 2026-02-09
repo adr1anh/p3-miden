@@ -48,7 +48,7 @@ fn deep_quotient_end_to_end() {
         .collect();
 
     // Step 1: Commit matrices via LMCS (aligned for trace commitments)
-    let tree = lmcs.build_aligned_tree(matrices);
+    let tree = lmcs.build_aligned_tree(matrices, None);
     let commitment = tree.root();
     let widths = tree.widths();
 
