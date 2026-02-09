@@ -48,6 +48,7 @@ p3-fri = { default-features = false, version = "0.4.2" }
 p3-goldilocks = { default-features = false, version = "0.4.2" }
 p3-interpolation = { default-features = false, version = "0.4.2" }
 p3-keccak = { default-features = false, version = "0.4.2" }
+p3-keccak-air = { default-features = false, version = "0.4.2" }
 p3-koala-bear = { default-features = false, version = "0.4.2" }
 p3-matrix = { default-features = false, version = "0.4.2" }
 p3-maybe-rayon = { default-features = false, version = "0.4.2" }

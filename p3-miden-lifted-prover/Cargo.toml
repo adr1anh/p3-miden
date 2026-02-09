@@ -30,5 +30,7 @@ default = []
 parallel = ["p3-maybe-rayon/parallel"]
 
 [dev-dependencies]
+p3-air.workspace = true
 p3-baby-bear.workspace = true
+p3-keccak-air.workspace = true
 p3-miden-dev-utils.workspace = true
