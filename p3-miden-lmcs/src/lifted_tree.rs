@@ -84,11 +84,35 @@ pub struct LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS
     ///
     /// Every inner vector holds contiguous hashes. Higher layers are built by
     /// compressing pairs from the previous layer.
+    ///
+    /// When `log_extension > 0` (non-salted target height), `digest_layers[0]` contains
+    /// `N_nat` entries (self-compressed digests), not `N` entries. The conceptual tree
+    /// height is `digest_layers[0].len() << log_extension`.
     #[serde(bound(
         serialize = "[D; DIGEST_ELEMS]: Serialize",
         deserialize = "[D; DIGEST_ELEMS]: Deserialize<'de>"
     ))]
     pub(crate) digest_layers: Vec<Vec<[D; DIGEST_ELEMS]>>,
+
+    /// Virtual self-compression layers below the stored tree.
+    ///
+    /// When `log_extension > 0`, this contains `log_extension` layers, each with `N_nat`
+    /// entries. `virtual_layers[0]` holds the original squeezed digests, and
+    /// `virtual_layers[λ]` holds `compress_self^λ(d_j)`. These are used to compute
+    /// sibling hashes during `prove_batch` for the virtual levels.
+    ///
+    /// Empty when `log_extension == 0`.
+    #[serde(bound(
+        serialize = "[D; DIGEST_ELEMS]: Serialize",
+        deserialize = "[D; DIGEST_ELEMS]: Deserialize<'de>"
+    ))]
+    pub(crate) virtual_layers: Vec<Vec<[D; DIGEST_ELEMS]>>,
+
+    /// Number of virtual self-compression levels below the stored tree.
+    ///
+    /// The conceptual tree height is `digest_layers[0].len() << log_extension`.
+    /// When 0, the tree is standard with no virtual extension.
+    pub(crate) log_extension: usize,
 
     /// Salt matrix for hiding commitment. Each row contains `SALT_ELEMS` random field elements.
     /// `None` when `SALT_ELEMS = 0` (non-hiding mode).
@@ -109,7 +133,7 @@ where
     }
 
     fn height(&self) -> usize {
-        self.digest_layers[0].len()
+        self.digest_layers[0].len() << self.log_extension
     }
 
     fn leaves(&self) -> &[M] {
@@ -156,7 +180,6 @@ where
         use alloc::collections::BTreeSet;
 
         let tree_height = self.height();
-        let depth = log2_strict_usize(tree_height);
         let alignment = self.alignment;
 
         // Collect and deduplicate indices. BTreeSet iteration yields sorted order,
@@ -189,9 +212,12 @@ where
 
         // Use the same sorted set for sibling traversal
         let mut known = unique_indices;
+        let total_depth = log2_strict_usize(tree_height);
 
         // Walk up the tree level by level using the deduplicated set.
-        for layer_idx in 0..depth {
+        // Virtual levels (0..log_extension) use self-compression layers;
+        // stored levels (log_extension..total_depth) use digest_layers.
+        for level in 0..total_depth {
             let mut parents = BTreeSet::new();
 
             // BTreeSet iterates in sorted order (left-to-right)
@@ -207,10 +233,25 @@ where
                 let have_right = known.contains(&right_pos);
 
                 // Add sibling hash if exactly one child is known
-                if have_left && !have_right {
-                    channel.hint_commitment(Hash::from(self.digest_layers[layer_idx][right_pos]));
+                let sibling_pos = if have_left && !have_right {
+                    Some(right_pos)
                 } else if !have_left && have_right {
-                    channel.hint_commitment(Hash::from(self.digest_layers[layer_idx][left_pos]));
+                    Some(left_pos)
+                } else {
+                    None
+                };
+
+                if let Some(sib) = sibling_pos {
+                    let hash = if level < self.log_extension {
+                        // Virtual level: positions in groups of 2^(k-level) share the
+                        // same compress_self^level hash from the original digest.
+                        let j = sib >> (self.log_extension - level);
+                        self.virtual_layers[level][j]
+                    } else {
+                        let stored_level = level - self.log_extension;
+                        self.digest_layers[stored_level][sib]
+                    };
+                    channel.hint_commitment(Hash::from(hash));
                 }
             }
 
@@ -252,10 +293,12 @@ where
     ///   `target_height` rows. This ensures that duplicated states receive independent salt,
     ///   producing unique leaf hashes.
     ///
-    /// - **Without salt**: leaf states are squeezed at the natural height, producing digests.
-    ///   The digest array is then upsampled (nearest-neighbor) to the target height. Pairs of
-    ///   identical sibling digests naturally produce self-compressions (`compress(d, d)`) in the
-    ///   layers above.
+    /// - **Without salt**: leaf states are squeezed at the natural height, producing `N_nat`
+    ///   digests. Each digest undergoes `k = log2(target_height / N_nat)` rounds of
+    ///   self-compression (`compress(d, d)`), yielding the base of a stored tree with `N_nat`
+    ///   nodes. The bottom `k` levels of the conceptual `target_height`-leaf tree are virtual:
+    ///   every sibling equals its partner, so they need not be materialized. This avoids the
+    ///   cost of building a full `target_height`-leaf Merkle tree.
     ///
     /// When `log_target_height` is `None`, the tree height equals the tallest matrix height
     /// (existing behavior).
@@ -302,10 +345,10 @@ where
         let mut leaf_states: Vec<[PD::Value; WIDTH]> =
             build_leaf_states_upsampled::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h);
 
-        let leaf_digests = if salt.is_some() {
+        let (leaf_digests, log_extension, virtual_layers) = if salt.is_some() {
             // Salt path: upsample states to target height, then absorb salt, then squeeze.
             // Upsampling before salt ensures that duplicated states receive independent salt
-            // values, producing unique leaf hashes.
+            // values, producing unique leaf hashes. No virtual layers needed.
             if target_height > natural_height {
                 leaf_states = upsample_vec(leaf_states, target_height);
             }
@@ -318,23 +361,57 @@ where
                     h,
                 );
             }
-            leaf_states
-                .into_par_iter()
-                .map(|state| h.squeeze(&state))
-                .collect()
-        } else {
-            // No-salt path: squeeze first, then upsample digests.
-            // Since there is no salt to differentiate duplicated states, squeezing first
-            // avoids redundant work. The upsampled digests produce self-compressions
-            // (compress(d, d)) in the Merkle tree layers above.
-            let leaf_digests: Vec<[PD::Value; DIGEST_ELEMS]> = leaf_states
+            let digests = leaf_states
                 .into_par_iter()
                 .map(|state| h.squeeze(&state))
                 .collect();
-            if target_height > natural_height {
-                upsample_vec(leaf_digests, target_height)
+            (digests, 0, vec![])
+        } else {
+            // No-salt path: squeeze at the natural height, then use iterated
+            // self-compression to virtually extend to the target height.
+            //
+            // Given k = log2(target_height / natural_height) extension levels:
+            //   virtual_layers[λ][j] = compress_self^λ(d_j)  for λ in 0..k
+            //   digest_layers[0][j]  = compress_self^k(d_j)
+            //
+            // The stored tree has N_nat = natural_height nodes. The bottom k levels
+            // are virtual: every sibling equals its partner (self-compression property),
+            // so they need not be materialized as a full N-leaf tree.
+            let original_digests: Vec<[PD::Value; DIGEST_ELEMS]> = leaf_states
+                .into_par_iter()
+                .map(|state| h.squeeze(&state))
+                .collect();
+
+            let k = if target_height > natural_height {
+                log2_strict_usize(target_height / natural_height)
             } else {
-                leaf_digests
+                0
+            };
+
+            if k > 0 {
+                // Build virtual layers: virtual_layers[λ][j] = compress_self^λ(d_j)
+                let mut vl = Vec::with_capacity(k);
+                vl.push(original_digests);
+                for _ in 1..k {
+                    let prev = vl.last().unwrap();
+                    let next: Vec<_> = prev
+                        .par_iter()
+                        .map(|d| c.compress([*d, *d]))
+                        .collect();
+                    vl.push(next);
+                }
+
+                // digest_layers[0] = compress_self^k(d_j) for each j
+                let base: Vec<_> = vl
+                    .last()
+                    .unwrap()
+                    .par_iter()
+                    .map(|d| c.compress([*d, *d]))
+                    .collect();
+
+                (base, k, vl)
+            } else {
+                (original_digests, 0, vec![])
             }
         };
 
@@ -354,6 +431,8 @@ where
         Self {
             leaves,
             digest_layers,
+            virtual_layers,
+            log_extension,
             salt,
             alignment: alignment.max(1),
         }
@@ -364,15 +443,26 @@ where
     /// Rows are padded to `alignment` and LMCS does not enforce that padding is zero.
     /// Panics if `index` is out of range for the tree height.
     pub fn single_proof(&self, index: usize) -> Proof<F, Hash<F, D, DIGEST_ELEMS>, SALT_ELEMS> {
-        let mut siblings = Vec::with_capacity(self.digest_layers.len().saturating_sub(1));
-        let mut layer_index = index;
+        let total_depth = log2_strict_usize(self.height());
+        let mut siblings = Vec::with_capacity(total_depth);
+        let mut pos = index;
+
+        // Virtual levels: sibling = compress_self^level(d_j)
+        for level in 0..self.log_extension {
+            let sibling_pos = pos ^ 1;
+            let j = sibling_pos >> (self.log_extension - level);
+            siblings.push(Hash::from(self.virtual_layers[level][j]));
+            pos >>= 1;
+        }
+
+        // Stored levels
         for layer in &self.digest_layers {
             if layer.len() == 1 {
                 break;
             }
-            let sibling = layer[layer_index ^ 1];
+            let sibling = layer[pos ^ 1];
             siblings.push(Hash::from(sibling));
-            layer_index >>= 1;
+            pos >>= 1;
         }
 
         Proof {

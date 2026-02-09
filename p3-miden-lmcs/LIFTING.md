@@ -62,65 +62,91 @@ Since $s_k$ is independent for each $k$, duplicated states produce **distinct** 
 5. Build Merkle tree from [d_0, d_1, ..., d_{N-1}].
 ```
 
-### Case 2: Without Salt (Non-Hiding)
+### Case 2: Without Salt (Non-Hiding) — Optimized Self-Compression
 
-Squeeze **before** upsampling:
+Squeeze **before** extending:
 
 $$d_j = \text{Squeeze}(\sigma_j), \quad j \in [0, N_{\text{nat}})$$
 
-Then upsample the digest vector:
+This is valid because without salt, squeezing duplicated states would yield identical digests anyway: $\text{Squeeze}(\hat{\sigma}_k) = \text{Squeeze}(\sigma_{\lfloor k/r \rfloor}) = d_{\lfloor k/r \rfloor}$. Squeezing first avoids redundant operations.
 
-$$\hat{d}_k = d_{\lfloor k / r \rfloor}, \quad k \in [0, N)$$
+Rather than materializing all $N$ upsampled leaf digests and building a full $N$-leaf Merkle tree (which would require $N - 1$ compression calls), we exploit the self-compression structure. Define the iterated self-compression:
 
-This is valid because without salt, squeezing duplicated states would yield identical digests anyway: $\text{Squeeze}(\hat{\sigma}_k) = \text{Squeeze}(\sigma_{\lfloor k/r \rfloor}) = d_{\lfloor k/r \rfloor}$. Upsampling post-squeeze avoids redundant squeeze operations.
+$$C^{(0)}(d) = d, \quad C^{(\lambda+1)}(d) = \text{Compress}(C^{(\lambda)}(d),\; C^{(\lambda)}(d))$$
+
+Let $k = \log_2(N / N_{\text{nat}})$. The key observation is that in a conceptual $N$-leaf tree built from upsampled digests, the bottom $k$ levels are entirely determined by self-compressions. Level $\lambda$ (for $0 \leq \lambda < k$) has $N / 2^\lambda$ nodes, but only $N_{\text{nat}}$ distinct values — each is $C^{(\lambda)}(d_j)$ for some $j$. At level $k$, we reach $N_{\text{nat}}$ distinct nodes: $C^{(k)}(d_j)$ for $j \in [0, N_{\text{nat}})$.
+
+The optimization: instead of building a tree with $N$ leaves, we:
+1. Compute $C^{(k)}(d_j)$ for each of the $N_{\text{nat}}$ original digests.
+2. Build a standard Merkle tree from these $N_{\text{nat}}$ nodes.
+3. Store the intermediate self-compression layers ($C^{(\lambda)}(d_j)$ for $\lambda \in [0, k)$) as **virtual layers** for proof generation.
+
+This reduces the tree construction cost from $O(N)$ to $O(N_{\text{nat}})$ compressions.
 
 **Algorithm (no-salt path):**
 
 ```
 1. Build N_nat sponge states by absorbing all matrices (with internal upsampling).
 2. Squeeze each state to get N_nat digests: [d_0, d_1, ..., d_{N_nat-1}].
-3. Upsample: repeat each digest r = N / N_nat times contiguously.
-      digests = [d_0, ..., d_0, d_1, ..., d_1, ..., d_{N_nat-1}, ..., d_{N_nat-1}]
-                  \___ r ___/    \___ r ___/         \__________ r __________/
-4. Build Merkle tree from the N upsampled digests.
+3. Let k = log2(N / N_nat).
+4. Build k virtual layers:
+      virtual[0] = [d_0, d_1, ..., d_{N_nat-1}]            (original digests)
+      virtual[λ] = [C(v, v) for v in virtual[λ-1]]         for λ = 1, ..., k-1
+5. Compute the stored tree base:
+      base[j] = C(virtual[k-1][j], virtual[k-1][j])        for j = 0, ..., N_nat-1
+             = C^(k)(d_j)
+6. Build Merkle tree from base[0..N_nat] (standard tree construction).
+7. Store virtual layers for proving.
 ```
+
+**Example** ($N_{\text{nat}} = 4$, $N = 16$, $k = 2$):
+
+```
+Squeeze: [d0, d1, d2, d3]
+
+virtual[0] = [d0, d1, d2, d3]                                 (original digests)
+virtual[1] = [C(d0,d0), C(d1,d1), C(d2,d2), C(d3,d3)]        (one self-compression)
+
+Stored tree base (= C^2):
+  [C(C(d0,d0),C(d0,d0)), C(C(d1,d1),C(d1,d1)), C(C(d2,d2),C(d2,d2)), C(C(d3,d3),C(d3,d3))]
+
+Stored tree levels 1+: standard Merkle compression of 4 nodes up to root.
+```
+
+This produces the **same root** as a full 16-leaf tree built from the upsampled digests, but only computes $4 + 4 + 3 = 11$ compressions instead of $15$.
 
 ### Why the Two Cases Differ
 
-The ordering (upsample-then-squeeze vs. squeeze-then-upsample) matters because:
+The ordering (upsample-then-squeeze vs. squeeze-then-self-compress) matters because:
 
 - **With salt**, upsampling states first and *then* absorbing independent salt per leaf ensures each duplicate gets a unique hash. If we squeezed first, the salt would never enter the sponge.
-- **Without salt**, there is nothing to differentiate duplicated states, so squeezing them would produce identical digests regardless of order. Squeezing first is strictly more efficient since we only squeeze $N_{\text{nat}}$ states instead of $N$.
+- **Without salt**, there is nothing to differentiate duplicated states, so squeezing them would produce identical digests regardless of order. Self-compression avoids materializing the full $N$-leaf tree while producing an identical root.
 
-## Merkle Tree Structure with Self-Compression
+## Virtual Levels and Proof Generation
 
-The $N$ leaf digests $\hat{d}_0, \hat{d}_1, \ldots, \hat{d}_{N-1}$ form the bottom layer of a binary Merkle tree. In the non-salted case, consecutive blocks of $r$ leaves are identical:
+The conceptual $N$-leaf tree has $\log_2 N$ levels. The bottom $k$ levels are **virtual** — their structure is fully determined by the self-compression property. During proof generation for query index $i$:
 
-$$\hat{d}_{k} = \hat{d}_{k'} \quad \text{whenever} \quad \lfloor k/r \rfloor = \lfloor k'/r \rfloor$$
+**At virtual level $\lambda$ (for $0 \leq \lambda < k$):**
+- The node at position $p$ has hash $C^{(\lambda)}(d_j)$ where $j = p \gg (k - \lambda)$.
+- The sibling at position $p \oplus 1$ maps to the same original index $j$ (since flipping bit 0 does not affect bits $\geq 1$, and at level $\lambda$ positions within groups of $2^{k-\lambda}$ share the same value).
+- Therefore, the **sibling hash equals the node hash**: both are $C^{(\lambda)}(d_j)$.
+- The sibling hash is read from $\text{virtual}[\lambda][j]$.
 
-This creates a characteristic pattern in the lower $\log_2 r$ levels of the tree. At the leaf level, sibling pairs are identical, producing **self-compressions**:
+**At stored level $r$ (for $r \geq 0$, corresponding to conceptual level $k + r$):**
+- Standard Merkle sibling lookup from `digest_layers[r]`.
 
-$$\text{Compress}(\hat{d}_{2i}, \hat{d}_{2i+1}) = \text{Compress}(d_j, d_j) \quad \text{for } j = \lfloor i / (r/2) \rfloor$$
+The prover emits virtual-level siblings as ordinary commitment hashes in the transcript. The **verifier does not need to know** about the virtual/stored distinction — it simply reads $\log_2 N$ sibling hashes and walks up to the root as usual.
 
-This pattern propagates upward. Defining the iterated self-compression:
-
-$$C^{(0)}(d) = d, \quad C^{(\lambda+1)}(d) = \text{Compress}(C^{(\lambda)}(d),\; C^{(\lambda)}(d))$$
-
-at level $\lambda < \log_2 r$, every node equals $C^{(\lambda)}(d_j)$ for the appropriate $j$. At level $\log_2 r$, we recover the tree that would have been built from the $N_{\text{nat}}$ original digests. Above that level, the tree is identical to the natural-height tree.
-
-**Example** ($N_{\text{nat}} = 4$, $N = 16$, $r = 4$):
+**Example proof** for query $i = 5$ in the $N_{\text{nat}} = 4$, $N = 16$ tree ($k = 2$):
 
 ```
-Leaf digests (level 0):
-  [d0, d0, d0, d0, d1, d1, d1, d1, d2, d2, d2, d2, d3, d3, d3, d3]
+Original index j = i >> k = 5 >> 2 = 1
 
-Level 1 (8 nodes, pairwise compress):
-  [C(d0,d0), C(d0,d0), C(d1,d1), C(d1,d1), C(d2,d2), C(d2,d2), C(d3,d3), C(d3,d3)]
-
-Level 2 (4 nodes) — equivalent to natural-height leaf layer:
-  [C(C(d0,d0), C(d0,d0)),  C(C(d1,d1), C(d1,d1)),  C(C(d2,d2), C(d2,d2)),  C(C(d3,d3), C(d3,d3))]
-
-Levels 3+ proceed as the natural-height tree would from its 4 leaves.
+Virtual level 0: sibling = virtual[0][1] = d1            (same as leaf hash)
+Virtual level 1: sibling = virtual[1][1] = C(d1, d1)     (same as running hash)
+Stored level 0:  sibling = digest_layers[0][1 ^ 1] = digest_layers[0][0] = C^2(d0)
+Stored level 1:  sibling = digest_layers[1][0 ^ 1] = digest_layers[1][1]
+...up to root
 ```
 
 ## Opening Semantics
@@ -129,4 +155,4 @@ When opening leaf $k$ in a target-height tree, the verifier receives the rows of
 
 $$\text{row}_i = M_i[\lfloor k / (N/n_i) \rfloor]$$
 
-The verifier can reconstruct the leaf hash and verify the authentication path of depth $\log_2 N$ as usual. The verifier does not need to know that a target height was used — it simply sees a Merkle tree of height $N$ with standard openings.
+The verifier reconstructs the leaf hash and verifies the authentication path of depth $\log_2 N$. The verifier does not need to know that a target height was used or that virtual levels exist — it simply sees a Merkle tree of height $N$ with standard openings and standard sibling hashes.
