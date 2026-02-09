@@ -145,11 +145,6 @@ impl LiftedCoset {
     /// For constraint evaluation, we need a coset of size trace_height × constraint_degree.
     /// This transforms (gK)^r into (gJ)^r while preserving the lift ratio.
     ///
-    /// The transformation scales all heights by 2^log_diff where
-    /// log_diff = log_blowup - log_constraint_degree, preserving:
-    /// - The blowup ratio (constraint_degree after transformation)
-    /// - The lift ratio (same row repetition factor)
-    ///
     /// # Panics
     /// Panics if log_constraint_degree > log_blowup.
     pub fn quotient_domain(&self, log_constraint_degree: usize) -> Self {
@@ -158,11 +153,11 @@ impl LiftedCoset {
             log_constraint_degree <= log_blowup,
             "constraint degree cannot exceed blowup"
         );
-        let log_diff = log_blowup - log_constraint_degree;
+        let log_max_trace_height = self.log_max_lde_height - log_blowup;
         Self {
-            log_trace_height: self.log_trace_height + log_diff,
-            log_lde_height: self.log_lde_height + log_diff,
-            log_max_lde_height: self.log_max_lde_height + log_diff,
+            log_trace_height: self.log_trace_height,
+            log_lde_height: self.log_trace_height + log_constraint_degree,
+            log_max_lde_height: log_max_trace_height + log_constraint_degree,
         }
     }
 
@@ -339,5 +334,25 @@ mod tests {
 
         // shift = g^(2^0) = g
         assert_eq!(shift, F::GENERATOR);
+    }
+
+    #[test]
+    fn quotient_domain_preserves_lift_ratio_and_updates_blowup() {
+        // Trace height 2^10, blowup 2^3 (B=8), max trace 2^12.
+        let lde = LiftedCoset::new(10, 3, 12);
+
+        // Constraint degree D = 4 (log D = 2), so quotient domain size is N*D.
+        let q = lde.quotient_domain(2);
+
+        // Trace height is unchanged; the evaluation domain becomes N*D.
+        assert_eq!(q.log_trace_height, 10);
+        assert_eq!(q.log_blowup(), 2);
+        assert_eq!(q.log_lde_height, 12);
+
+        // Max evaluation domain becomes N_max*D.
+        assert_eq!(q.log_max_lde_height, 14);
+
+        // Lift ratio is preserved.
+        assert_eq!(q.log_lift_ratio(), lde.log_lift_ratio());
     }
 }
