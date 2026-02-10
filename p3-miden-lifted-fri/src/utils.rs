@@ -21,8 +21,8 @@ use p3_util::reverse_slice_index_bits;
 /// Equivalently: `((acc·x + v₀)·x + v₁)·x + ... + vₙ₋₁`.
 /// The first element gets the highest power of `x`.
 ///
-/// For polynomial evaluation `p(x) = Σᵢ cᵢ·xⁱ` with coefficients in ascending
-/// order, pass `coeffs.iter().rev()`.
+/// For polynomial evaluation `p(x) = Σᵢ cᵢ·xⁱ`, pass coefficients in
+/// descending degree order `[cₙ, ..., c₁, c₀]`.
 #[inline]
 pub(crate) fn horner_acc<Acc, Val, X, I>(acc: Acc, x: X, vals: I) -> Acc
 where

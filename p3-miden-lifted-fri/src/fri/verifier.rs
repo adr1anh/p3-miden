@@ -53,7 +53,8 @@ where
     log_domain_size: usize,
     /// Per-round commitment and folding challenge.
     rounds: Vec<FriRoundOracle<L::Commitment, EF>>,
-    /// Coefficients of the final low-degree polynomial.
+    /// Coefficients of the final low-degree polynomial in descending degree order
+    /// `[cₙ, ..., c₁, c₀]`, ready for direct Horner evaluation.
     final_poly: Vec<EF>,
 }
 
@@ -196,12 +197,14 @@ where
             g_inv = g_inv.exp_power_of_2(log_arity);
         }
 
-        // Final polynomial check: p(ω^{bitrev(idx)}) should equal the folded value
+        // Final polynomial check: p(ω^{bitrev(idx)}) should equal the folded value.
+        // `final_poly` is in descending degree order [cₙ, ..., c₁, c₀], which is
+        // the native order for Horner evaluation.
         let generator = F::two_adic_generator(log_domain_size);
         for (idx, eval) in evals {
             let exp = reverse_bits_len(idx, log_domain_size);
             let x = generator.exp_u64(exp as u64);
-            let final_eval: EF = horner(x, self.final_poly.iter().rev().copied());
+            let final_eval: EF = horner(x, self.final_poly.iter().copied());
 
             if final_eval != eval {
                 return Err(FriError::FinalPolyMismatch { tree_index: idx });

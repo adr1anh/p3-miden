@@ -20,7 +20,8 @@ pub struct FriRoundTranscript<F, EF, Commitment> {
 pub struct FriTranscript<F, EF, Commitment> {
     /// Per-round commitments and challenges.
     pub rounds: Vec<FriRoundTranscript<F, EF, Commitment>>,
-    /// Coefficients of the final low-degree polynomial.
+    /// Coefficients of the final low-degree polynomial in descending degree order
+    /// `[cₙ, ..., c₁, c₀]`, ready for direct Horner evaluation.
     pub final_poly: Vec<EF>,
 }
 

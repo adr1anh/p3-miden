@@ -37,7 +37,8 @@ pub struct FriParams {
     /// Log₂ of the final polynomial degree.
     ///
     /// Folding stops when degree reaches `2^log_final_degree`.
-    /// Final polynomial is sent in clear (coefficients, not evaluations).
+    /// Final polynomial coefficients are sent in descending degree order
+    /// `[cₙ, ..., c₁, c₀]` for direct Horner evaluation by the verifier.
     pub log_final_degree: usize,
 
     /// Grinding bits before each folding challenge.

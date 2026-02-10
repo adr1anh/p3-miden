@@ -26,8 +26,8 @@ type FoldedTree<F, EF, L> = <L as Lmcs>::Tree<FlatMatrixView<F, EF, RowMajorMatr
 /// Prover's state from the FRI commit phase.
 ///
 /// Contains the data needed to answer queries (LMCS trees).
-/// Commitments, PoW witnesses, and the final polynomial are written to the
-/// transcript channel during construction.
+/// Commitments, PoW witnesses, and the final polynomial (in descending degree
+/// order) are written to the transcript channel during construction.
 ///
 /// Uses a single base-field LMCS. Extension field evaluations are flattened
 /// to base field before commitment.
@@ -67,7 +67,7 @@ where
 //
 // 5. Repeat until degree ≤ final_degree
 //
-// 6. Send final polynomial coefficients to verifier
+// 6. Send final polynomial coefficients to verifier (descending degree order)
 //
 // ## Coset Structure in Bit-Reversed Order
 //
@@ -188,10 +188,15 @@ where
         // 1. Take the first `final_poly_degree` evaluations (others are redundant due to blowup)
         // 2. Convert from bit-reversed to standard order
         // 3. Apply inverse DFT to get coefficients
+        // 4. Reverse to descending degree order for direct Horner evaluation
         folded_evals.truncate(final_poly_degree);
         reverse_slice_index_bits(&mut folded_evals);
 
-        let final_poly = Radix2DFTSmallBatch::default().idft_algebra(folded_evals);
+        let mut final_poly = Radix2DFTSmallBatch::default().idft_algebra(folded_evals);
+
+        // Store in descending degree order [cₙ, ..., c₁, c₀] so the verifier
+        // can evaluate via Horner without reversing.
+        final_poly.reverse();
 
         // Observe final polynomial coefficients for Fiat-Shamir
         channel.send_algebra_slice(&final_poly);

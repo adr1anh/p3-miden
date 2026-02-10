@@ -379,8 +379,10 @@ fn test_final_polynomial_correctness() {
         "Final polynomial should have {} coefficients",
         g_coeffs.len()
     );
+    let mut g_coeffs_rev = g_coeffs;
+    g_coeffs_rev.reverse();
     assert_eq!(
-        fri_transcript.final_poly, g_coeffs,
-        "Final polynomial coefficients should match the base polynomial"
+        fri_transcript.final_poly, g_coeffs_rev,
+        "Final polynomial coefficients should be in descending degree order"
     );
 }
