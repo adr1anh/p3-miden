@@ -18,8 +18,8 @@ use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_maybe_rayon::prelude::*;
 use p3_miden_lifted_air::{
-    AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, LiftedAir, LiftedAirBuilder,
-    PairBuilder, PeriodicAirBuilder, PermutationAirBuilder,
+    AirBuilder, AirBuilderWithPublicValues, ConstraintLayout, ExtensionBuilder, LiftedAir,
+    LiftedAirBuilder, PairBuilder, PeriodicAirBuilder, PermutationAirBuilder,
 };
 use p3_miden_lifted_stark::{LiftedCoset, Selectors};
 use p3_miden_lmcs::Lmcs;
@@ -164,15 +164,69 @@ type PackedVal<F> = <F as Field>::Packing;
 /// Type alias for packed extension field from EF.
 type PackedExt<F, EF> = <EF as ExtensionField<F>>::ExtensionPacking;
 
+/// Batch size for constraint linear-combination chunks in [`finalize_constraints`].
+const CONSTRAINT_BATCH: usize = 8;
+
+/// Batched linear combination of packed extension field values with EF coefficients.
+///
+/// Extension-field analogue of [`PackedField::packed_linear_combination`]. Processes
+/// `coeffs` and `values` in chunks of [`CONSTRAINT_BATCH`], then handles the remainder.
+#[inline]
+fn batched_ext_linear_combination<PE, EF>(coeffs: &[EF], values: &[PE]) -> PE
+where
+    EF: Field,
+    PE: PrimeCharacteristicRing + Algebra<EF> + Copy,
+{
+    debug_assert_eq!(coeffs.len(), values.len());
+    let len = coeffs.len();
+    let mut acc = PE::ZERO;
+    let mut start = 0;
+    while start + CONSTRAINT_BATCH <= len {
+        let batch: [PE; CONSTRAINT_BATCH] =
+            core::array::from_fn(|i| values[start + i] * coeffs[start + i]);
+        acc += PE::sum_array::<CONSTRAINT_BATCH>(&batch);
+        start += CONSTRAINT_BATCH;
+    }
+    for (&coeff, &val) in coeffs[start..].iter().zip(&values[start..]) {
+        acc += val * coeff;
+    }
+    acc
+}
+
+/// Batched linear combination of packed base field values with F coefficients.
+///
+/// Wraps [`PackedField::packed_linear_combination`] with batched chunking
+/// and remainder handling, mirroring [`batched_ext_linear_combination`].
+#[inline]
+fn batched_base_linear_combination<P: PackedField>(coeffs: &[P::Scalar], values: &[P]) -> P {
+    debug_assert_eq!(coeffs.len(), values.len());
+    let len = coeffs.len();
+    let mut acc = P::ZERO;
+    let mut start = 0;
+    while start + CONSTRAINT_BATCH <= len {
+        acc += P::packed_linear_combination::<CONSTRAINT_BATCH>(
+            &coeffs[start..start + CONSTRAINT_BATCH],
+            &values[start..start + CONSTRAINT_BATCH],
+        );
+        start += CONSTRAINT_BATCH;
+    }
+    for (&coeff, &val) in coeffs[start..].iter().zip(&values[start..]) {
+        acc += val * coeff;
+    }
+    acc
+}
+
 /// Evaluate constraints on the quotient domain (natural order).
 ///
-/// Evaluates constraints at each point of gJ and folds them with alpha.
+/// Evaluates constraints at each point of gJ, collects them into base/ext streams,
+/// and combines using decomposed alpha powers with `packed_linear_combination`.
 /// Input matrices must be in natural order on gJ.
 ///
 /// Uses SIMD-packed parallel iteration via rayon for optimal performance:
 /// - Processes `WIDTH` points simultaneously using packed field types
 /// - Main trace stays in base field, only aux trace uses extension field
 /// - Selectors are packed base field values
+/// - Constraints are collected then finalized in batches for efficient accumulation
 ///
 /// # Arguments
 /// - `air`: The AIR definition
@@ -183,6 +237,7 @@ type PackedExt<F, EF> = <EF as ExtensionField<F>>::ExtensionPacking;
 /// - `randomness`: Randomness for aux trace
 /// - `public_values`: Public values for constraint evaluation
 /// - `periodic_lde`: Periodic column LDE values
+/// - `layout`: Pre-computed constraint layout (base/ext index mapping)
 #[allow(clippy::too_many_arguments)]
 pub fn evaluate_constraints<F, EF, A, M>(
     air: &A,
@@ -193,6 +248,7 @@ pub fn evaluate_constraints<F, EF, A, M>(
     randomness: &[EF],
     public_values: &[F],
     periodic_lde: &PeriodicLde<F>,
+    layout: &ConstraintLayout,
 ) -> Vec<EF>
 where
     F: TwoAdicField + PrimeCharacteristicRing,
@@ -218,14 +274,15 @@ where
         sels.is_transition.push(F::ZERO);
     }
 
-    // Pack alpha for constraint folding
-    let alpha_packed: PE<F, EF> = alpha.into();
+    // ─── Decompose alpha powers by constraint layout ───
+    let aux_ef_width = aux_on_gj.width() / EF::DIMENSION;
+    let constraint_count = layout.total_constraints();
+    let base_count = layout.base_indices.len();
+    let ext_count = layout.ext_indices.len();
+    let (base_alpha_powers, ext_alpha_powers) = layout.decompose_alpha(alpha);
 
     // Main trace width
     let main_width = main_on_gj.width();
-
-    // Aux trace width in EF elements (each EF = EF::DIMENSION base elements)
-    let aux_ef_width = aux_on_gj.width() / EF::DIMENSION;
 
     // Pack randomness for aux trace
     let packed_randomness: Vec<PE<F, EF>> = randomness.iter().copied().map(Into::into).collect();
@@ -270,19 +327,24 @@ where
                     public_values,
                     periodic_values: &periodic_values,
                     selectors,
-                    alpha: alpha_packed,
-                    accumulator: PE::<F, EF>::ZERO,
+                    base_alpha_powers: &base_alpha_powers,
+                    ext_alpha_powers: &ext_alpha_powers,
+                    constraint_index: 0,
+                    constraint_count,
+                    base_constraints: Vec::with_capacity(base_count),
+                    ext_constraints: Vec::with_capacity(ext_count),
                     _phantom: PhantomData,
                 };
 
             air.eval(&mut folder);
+            let accumulator = folder.finalize_constraints();
 
             // Unpack WIDTH results into scalar extension field values
             // PE stores DIMENSION components, each as a packed base field
             let num_results = core::cmp::min(gj_height.saturating_sub(i_start), width);
             (0..num_results).map(move |idx| {
                 EF::from_basis_coefficients_fn(|coeff_idx| {
-                    folder.accumulator.as_basis_coefficients_slice()[coeff_idx].as_slice()[idx]
+                    accumulator.as_basis_coefficients_slice()[coeff_idx].as_slice()[idx]
                 })
             })
         })
@@ -299,15 +361,15 @@ where
 /// - `P`: Packed base field (e.g., `PackedBabyBear`)
 /// - `PE`: Packed extension field - must be `Algebra<EF> + Algebra<P> + BasedVectorSpace<P>`
 ///
-/// Uses Horner folding (accumulator = accumulator * alpha + x) like the verifier's
-/// `ConstraintFolder`, which doesn't require knowing the constraint count ahead of time.
+/// Collects constraints during `air.eval()` into separate base/ext vectors, then
+/// combines them in [`finalize_constraints`] using decomposed alpha powers and
+/// `packed_linear_combination` for efficient SIMD accumulation.
 ///
 /// # Type Parameters
 /// - `F`: Base field scalar
 /// - `EF`: Extension field scalar
 /// - `P`: Packed base field (with `P::Scalar = F`)
 /// - `PE`: Packed extension field (must implement appropriate algebra traits)
-#[derive(Debug)]
 pub struct ProverConstraintFolder<'a, F, EF, P, PE>
 where
     F: Field,
@@ -323,16 +385,58 @@ where
     pub packed_randomness: &'a [PE],
     /// Public values (base field scalars)
     pub public_values: &'a [F],
-    /// Periodic column values (packed base field - F polynomials evaluated at F coset points)
+    /// Periodic column values (packed base field)
     pub periodic_values: &'a [P],
     /// Constraint selectors (packed base field)
     pub selectors: Selectors<P>,
-    /// Challenge for Horner folding
-    pub alpha: PE,
-    /// Running accumulator (packed extension field)
-    pub accumulator: PE,
-    /// Phantom marker for EF
+    /// Base-field alpha powers, reordered to match base constraint emission order.
+    /// `base_alpha_powers[d][j]` = d-th basis coefficient of alpha power for j-th base constraint.
+    pub base_alpha_powers: &'a [Vec<F>],
+    /// Extension-field alpha powers, reordered to match ext constraint emission order.
+    pub ext_alpha_powers: &'a [EF],
+    /// Current constraint index (debug-only bookkeeping)
+    pub constraint_index: usize,
+    /// Total expected constraint count (debug-only bookkeeping)
+    pub constraint_count: usize,
+    /// Collected base-field constraints for this row
+    pub base_constraints: Vec<P>,
+    /// Collected extension-field constraints for this row
+    pub ext_constraints: Vec<PE>,
     pub _phantom: PhantomData<EF>,
+}
+
+impl<'a, F, EF, P, PE> ProverConstraintFolder<'a, F, EF, P, PE>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+    P: PackedField<Scalar = F>,
+    PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
+{
+    /// Combine all collected constraints with their pre-computed alpha powers.
+    ///
+    /// Base constraints use [`batched_base_linear_combination`] per basis dimension,
+    /// decomposing the extension-field multiply into D base-field SIMD dot products.
+    /// Extension constraints use [`batched_ext_linear_combination`] with scalar EF
+    /// coefficients. Both process in chunks of [`CONSTRAINT_BATCH`].
+    #[inline]
+    pub fn finalize_constraints(self) -> PE {
+        debug_assert_eq!(self.constraint_index, self.constraint_count);
+        debug_assert_eq!(
+            self.base_constraints.len(),
+            self.base_alpha_powers.first().map_or(0, Vec::len)
+        );
+        debug_assert_eq!(self.ext_constraints.len(), self.ext_alpha_powers.len());
+
+        // Base constraints: D independent base-field dot products
+        let base = &self.base_constraints;
+        let base_powers = self.base_alpha_powers;
+        let acc = PE::from_basis_coefficients_fn(|d| {
+            batched_base_linear_combination(&base_powers[d], base)
+        });
+
+        // Extension constraints: EF-coefficient dot product
+        acc + batched_ext_linear_combination(self.ext_alpha_powers, &self.ext_constraints)
+    }
 }
 
 impl<'a, F, EF, P, PE> AirBuilder for ProverConstraintFolder<'a, F, EF, P, PE>
@@ -367,13 +471,21 @@ where
         if size == 2 {
             self.selectors.is_transition
         } else {
-            panic!("only window size 2 supported in this prototype")
+            panic!("only window size 2 supported")
         }
     }
 
     #[inline]
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
-        self.accumulator = self.accumulator * self.alpha + x.into();
+        self.base_constraints.push(x.into());
+        self.constraint_index += 1;
+    }
+
+    #[inline]
+    fn assert_zeros<const N: usize, I: Into<Self::Expr>>(&mut self, array: [I; N]) {
+        let expr_array = array.map(Into::into);
+        self.base_constraints.extend(expr_array);
+        self.constraint_index += N;
     }
 }
 
@@ -420,7 +532,8 @@ where
     where
         I: Into<Self::ExprEF>,
     {
-        self.accumulator = self.accumulator * self.alpha + x.into();
+        self.ext_constraints.push(x.into());
+        self.constraint_index += 1;
     }
 }
 

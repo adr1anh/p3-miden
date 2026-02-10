@@ -22,7 +22,7 @@ use p3_field::{
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
-use p3_miden_lifted_air::LiftedAir;
+use p3_miden_lifted_air::{LiftedAir, SymbolicExpression, get_constraint_layout};
 use p3_miden_lifted_fri::prover::open_with_channel;
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::ProverChannel;
@@ -83,6 +83,7 @@ where
     L::Commitment: Copy,
     Dft: TwoAdicSubgroupDft<F>,
     Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
+    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
 {
     let witness = AirWitness::new(trace, public_values);
     prove_multi(config, &[(air, witness)], channel)
@@ -121,6 +122,7 @@ where
     L::Commitment: Copy,
     Dft: TwoAdicSubgroupDft<F>,
     Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
+    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
 {
     validate_inputs(instances)?;
 
@@ -195,6 +197,12 @@ where
     let constraint_degree = 1 << LOG_CONSTRAINT_DEGREE;
     let mut numerators: Vec<Vec<EF>> = Vec::with_capacity(instances.len());
 
+    // Pre-compute constraint layouts for each AIR (base/ext index mapping)
+    let layouts: Vec<_> = instances
+        .iter()
+        .map(|(air, w)| get_constraint_layout::<F, EF, A>(*air, w.public_values.len()))
+        .collect();
+
     for (i, (air, w)) in instances.iter().enumerate() {
         let trace_height = w.trace.height();
         let log_trace_height = log2_strict_usize(trace_height);
@@ -221,6 +229,7 @@ where
             &randomness[..air.num_randomness()],
             w.public_values,
             &periodic_lde,
+            &layouts[i],
         );
 
         numerators.push(numerator);
