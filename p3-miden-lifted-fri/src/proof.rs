@@ -8,6 +8,7 @@ use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
+use p3_util::reverse_bits_len;
 
 /// Structured transcript view for the full PCS interaction.
 ///
@@ -24,9 +25,9 @@ where
     pub fri_transcript: FriTranscript<L::F, EF, L::Commitment>,
     /// Proof-of-work witness for query sampling.
     pub query_pow_witness: L::F,
-    /// Query indices sampled for openings.
-    pub indices: Vec<usize>,
-    /// Batch openings per trace tree, aligned with `indices`.
+    /// Query tree indices (bit-reversed exponents) sampled for openings.
+    pub tree_indices: Vec<usize>,
+    /// Batch openings per trace tree, aligned with `tree_indices`.
     pub deep_openings: Vec<L::BatchProof>,
     /// Batch openings per FRI round, aligned with per-round indices.
     pub fri_openings: Vec<L::BatchProof>,
@@ -38,10 +39,13 @@ where
     L::F: TwoAdicField,
     EF: ExtensionField<L::F>,
 {
-    /// Parse a PCS transcript view from a verifier channel.
+    /// Parse a PCS transcript from a verifier channel without validation.
     ///
-    /// Commitment widths must match the committed rows (including any alignment padding), and all
-    /// commitments are expected to be lifted to the same `log_lde_height`.
+    /// Composes [`DeepTranscript`], [`FriTranscript`], and per-query LMCS batch proofs.
+    /// Does not verify any claims; validation happens in
+    /// [`verify_with_channel`](crate::verifier::verify_with_channel).
+    /// Commitment widths must match the committed rows (including any alignment padding),
+    /// and all commitments are expected to be lifted to the same `log_lde_height`.
     ///
     /// `log_lde_height` is the log₂ of the LDE evaluation domain height (i.e. the height of
     /// the committed LDE matrices). When a trace degree is known, it is typically
@@ -75,14 +79,19 @@ where
 
         let query_pow_witness = channel.grind(params.query_pow_bits)?;
 
-        let indices: Vec<usize> = (0..params.num_queries)
-            .map(|_| channel.sample_bits(log_lde_height))
+        // Sample exponents and convert to tree indices (bit-reversed),
+        // matching the prover/verifier convention.
+        let tree_indices: Vec<usize> = (0..params.num_queries)
+            .map(|_| {
+                let exp = channel.sample_bits(log_lde_height);
+                reverse_bits_len(exp, log_lde_height)
+            })
             .collect();
 
         let deep_openings: Vec<_> = commitments
             .iter()
             .map(|(_commitment, widths)| {
-                lmcs.read_batch_proof_from_channel(widths, log_lde_height, &indices, channel)
+                lmcs.read_batch_proof_from_channel(widths, log_lde_height, &tree_indices, channel)
                     .map_err(|e| match e {
                         p3_miden_lmcs::LmcsError::TranscriptError(te) => te,
                         _ => TranscriptError::NoMoreFields,
@@ -97,7 +106,7 @@ where
         let mut fri_openings = Vec::with_capacity(num_rounds);
         for round in 0..num_rounds {
             let log_num_rows = log_lde_height.saturating_sub(log_arity * (round + 1));
-            let round_indices: Vec<usize> = indices
+            let round_indices: Vec<usize> = tree_indices
                 .iter()
                 .map(|&idx| idx >> (log_arity * (round + 1)))
                 .collect();
@@ -117,7 +126,7 @@ where
             deep_transcript,
             fri_transcript,
             query_pow_witness,
-            indices,
+            tree_indices,
             deep_openings,
             fri_openings,
         })

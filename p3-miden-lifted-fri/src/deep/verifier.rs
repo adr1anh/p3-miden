@@ -4,9 +4,10 @@ use core::iter::zip;
 use core::marker::PhantomData;
 
 use super::{DeepEvals, DeepParams};
-use crate::utils::horner_acc;
+use crate::utils::{horner, horner_acc};
 use p3_challenger::CanSample;
 use p3_field::{ExtensionField, TwoAdicField};
+use p3_matrix::Matrix;
 use p3_miden_lmcs::{Lmcs, LmcsError};
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
@@ -21,7 +22,7 @@ use thiserror::Error;
 /// Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) / (zⱼ - X)
 /// ```
 ///
-/// where `f_reduced = Σᵢ αⁱ · fᵢ` batches all polynomial columns.
+/// where `f_reduced = Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ` batches all W polynomial columns.
 ///
 /// From the verifier's perspective, all opened columns appear to have the same height—
 /// lifting is transparent. The prover evaluates `fᵢ(zʳ)` for degree-d polynomials
@@ -85,11 +86,19 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
         let challenge_columns: EF = channel.sample_algebra_element();
         let challenge_points: EF = channel.sample_algebra_element();
 
-        // Reduce each opening's evaluations via Horner: (z_j, f_reduced(z_j))
+        // Reduce each opening's evaluations via Horner: (zⱼ, f_reduced(zⱼ)).
+        debug_assert_eq!(evals.num_points(), eval_points.len());
         let reduced_openings: Vec<(EF, EF)> = eval_points
             .iter()
             .enumerate()
-            .map(|(point_idx, point)| (*point, evals.reduce_point(point_idx, challenge_columns)))
+            .map(|(point_idx, &point)| {
+                let all_columns = evals
+                    .groups()
+                    .iter()
+                    .flat_map(|group| group.iter())
+                    .flat_map(|matrix| matrix.row(point_idx).expect("point_idx in range"));
+                (point, horner(challenge_columns, all_columns))
+            })
             .collect();
 
         let oracle = Self {
@@ -117,9 +126,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
     where
         Ch: VerifierChannel<F = F, Commitment = L::Commitment>,
     {
-        let mut reduced_rows: BTreeMap<usize, EF> = BTreeMap::new();
+        let mut reduced_rows: BTreeMap<usize, EF> =
+            tree_indices.iter().map(|&idx| (idx, EF::ZERO)).collect();
 
-        for (commit, widths) in &self.commitments {
+        for (group_idx, (commit, widths)) in self.commitments.iter().enumerate() {
             let opened_rows = lmcs
                 .open_batch(
                     commit,
@@ -128,17 +138,23 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
                     tree_indices.iter().copied(),
                     channel,
                 )
-                .map_err(DeepError::LmcsError)?;
+                .map_err(|source| DeepError::LmcsError {
+                    source,
+                    tree: group_idx,
+                })?;
 
-            // Reduce opened rows via Horner: f_reduced(X) = Σᵢ αⁱ · fᵢ(X).
+            // Reduce opened rows via Horner: f_reduced(X) = Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X).
             //
             // `horner_acc` continues the running accumulation across commitment groups:
             // group 0's columns get the highest powers, group 1's continue from where
             // group 0 left off. This matches the prover's coefficient ordering and
-            // `reduce_point`'s iteration order in `evals.rs`.
-            for &tree_idx in tree_indices {
-                let rows_for_query = &opened_rows[&tree_idx];
-                let acc = reduced_rows.entry(tree_idx).or_insert(EF::ZERO);
+            // the OOD reduction's iteration order above.
+            for (tree_idx, acc) in reduced_rows.iter_mut() {
+                let rows_for_query =
+                    opened_rows.get(tree_idx).ok_or(DeepError::InvalidOpening {
+                        tree: group_idx,
+                        tree_index: *tree_idx,
+                    })?;
                 *acc = horner_acc(
                     *acc,
                     self.challenge_columns,
@@ -159,14 +175,21 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
                 let row_point = shift * generator.exp_u64(exp as u64);
 
                 // DEEP quotient: Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) / (zⱼ - X)
-                let deep_eval: EF = zip(&self.reduced_openings, self.challenge_points.powers())
-                    .map(|((point, reduced_eval), coeff_point)| {
-                        coeff_point * (*reduced_eval - reduced_row) / (*point - row_point)
-                    })
-                    .sum();
-                (tree_idx, deep_eval)
+                // Precondition: eval points lie outside the LDE domain.
+                let deep_eval = zip(&self.reduced_openings, self.challenge_points.powers())
+                    .try_fold(EF::ZERO, |acc, ((point, reduced_eval), coeff_point)| {
+                        let denom_inv = (*point - row_point).try_inverse().ok_or(
+                            DeepError::EvalPointOnDomain {
+                                tree_index: tree_idx,
+                            },
+                        )?;
+                        Ok::<_, DeepError>(
+                            acc + coeff_point * (*reduced_eval - reduced_row) * denom_inv,
+                        )
+                    })?;
+                Ok((tree_idx, deep_eval))
             })
-            .collect();
+            .collect::<Result<_, DeepError>>()?;
 
         Ok(evals)
     }
@@ -179,8 +202,12 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
 /// Errors that can occur during DEEP oracle construction or verification.
 #[derive(Debug, Error)]
 pub enum DeepError {
-    #[error("LMCS error: {0}")]
-    LmcsError(#[from] LmcsError),
+    #[error("LMCS verification failed for commitment group {tree}: {source}")]
+    LmcsError { source: LmcsError, tree: usize },
+    #[error("invalid opening for tree index {tree_index} in commitment group {tree}")]
+    InvalidOpening { tree: usize, tree_index: usize },
+    #[error("evaluation point coincides with domain point at tree index {tree_index}")]
+    EvalPointOnDomain { tree_index: usize },
     #[error("transcript error: {0}")]
     TranscriptError(#[from] TranscriptError),
 }

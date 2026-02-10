@@ -76,7 +76,9 @@ pub trait StatefulHasher<Item, Out>: Clone {
 /// # Type Parameters
 ///
 /// - `Input`: The type being absorbed (e.g., field element `F`)
-/// - `Target`: The underlying binary type the hasher operates on (e.g., `u32`, `u64`)
+/// - `Target`: The type underlying the hasher's state. For a field-native sponge this
+///   equals `Input` (e.g., `Alignable<F, F>`); for a serializing sponge it is the binary
+///   word type of the inner hasher (e.g., `u32`, `u64`)
 ///
 /// The two type parameters allow distinguishing between different serialization
 /// targets. For example, `SerializingStatefulSponge` can implement both

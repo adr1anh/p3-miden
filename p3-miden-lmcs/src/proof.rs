@@ -9,7 +9,6 @@
 //! [`Proof`] objects once the hashing context is available.
 
 use crate::Lmcs;
-use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
@@ -68,15 +67,18 @@ pub struct BatchProof<F, C, const SALT_ELEMS: usize = 0> {
 }
 
 impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
-    /// Read a batch opening from a transcript channel without hashing.
+    /// Parse a batch opening from a transcript channel without validation.
     ///
-    /// Parses rows/salt for each unique queried index in sorted (ascending) order,
-    /// matching the order in which [`LmcsTree::prove_batch`](crate::LmcsTree::prove_batch)
-    /// writes them. Consumes exactly the hinted sibling hashes implied by the query
-    /// set and tree depth.
+    /// This is a parse-only function: it reads rows, salts, and sibling hashes from
+    /// the channel but does **not** hash leaves or verify against a commitment.
+    /// The returned proof may be invalid if the inputs (indices, widths, or channel
+    /// contents) are themselves invalid — validation happens in
+    /// [`open_batch`](crate::Lmcs::open_batch).
     ///
-    /// Assumes all indices are in `0..2^log_max_height`; out-of-range indices
-    /// produce an invalid proof that will fail verification.
+    /// Reads unique queried indices in sorted (ascending) order, matching the order
+    /// in which [`LmcsTree::prove_batch`](crate::LmcsTree::prove_batch) writes them.
+    /// Allocations are O(n · log_max_height) regardless of index values, where n is
+    /// the number of unique indices.
     pub fn read_from_channel<Ch>(
         widths: &[usize],
         log_max_height: usize,
@@ -90,25 +92,19 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
     {
         // Collect and sort indices to match prover's write order (BTreeSet iteration).
         let unique_indices: BTreeSet<usize> = indices.iter().copied().collect();
-        let mut openings: BTreeMap<usize, LeafOpening<F, SALT_ELEMS>> = BTreeMap::new();
-
         // Read openings in sorted order, matching prove_batch's write order.
-        for index in unique_indices.iter().copied() {
-            let Entry::Vacant(entry) = openings.entry(index) else {
-                unreachable!("unique_indices is deduplicated");
-            };
-
-            let mut rows = Vec::with_capacity(widths.len());
-            for &width in widths {
-                let row = channel.receive_hint_field_slice(width)?;
-                rows.push(Vec::from(row));
-            }
-
-            let salt_slice = channel.receive_hint_field_slice(SALT_ELEMS)?;
-            let salt: [F; SALT_ELEMS] = salt_slice.try_into().unwrap();
-
-            entry.insert(LeafOpening { rows, salt });
-        }
+        let openings: BTreeMap<usize, LeafOpening<F, SALT_ELEMS>> = unique_indices
+            .iter()
+            .copied()
+            .map(|index| {
+                let rows: Vec<_> = widths
+                    .iter()
+                    .map(|&w| Ok(Vec::from(channel.receive_hint_field_slice(w)?)))
+                    .collect::<Result<_, _>>()?;
+                let salt = channel.receive_hint_field_array()?;
+                Ok((index, LeafOpening { rows, salt }))
+            })
+            .collect::<Result<_, _>>()?;
 
         // Consume sibling hints in the same canonical order the prover emits them.
         let siblings: BTreeMap<(usize, usize), C> =
@@ -226,8 +222,10 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
 
 /// Sibling positions that must be supplied, in canonical (depth, left-to-right) order.
 ///
-/// Returns unique `(depth, index)` pairs where depth 0 is the leaf level.
-/// Callers can insert directly without checking for duplicates.
+/// Starting from the queried leaf indices, walks up `log_max_height` levels. At each
+/// level, for every node whose sibling is not already known, emits a `(depth, sibling_index)`
+/// pair. Returns at most `n * log_max_height` entries (where n = number of unique indices),
+/// since each level has at most n nodes.
 fn required_siblings<I>(indices: I, log_max_height: usize) -> Vec<(usize, usize)>
 where
     I: IntoIterator<Item = usize>,
@@ -264,4 +262,82 @@ where
     }
 
     missing
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use p3_matrix::dense::RowMajorMatrix;
+    use p3_miden_transcript::{VerifierChannel, VerifierTranscript};
+    use p3_symmetric::Hash;
+    use p3_util::log2_strict_usize;
+    use rand::SeedableRng;
+    use rand::rngs::SmallRng;
+
+    use crate::tests::{DIGEST, F, lmcs, roundtrip_open_batch};
+    use crate::{BatchProof, Lmcs, LmcsTree};
+
+    #[test]
+    fn batch_proof_consistent_with_open_batch() {
+        let lmcs = lmcs();
+
+        let test = |seed: u64, shapes: &[(usize, usize)], indices: &[usize]| {
+            let mut rng = SmallRng::seed_from_u64(seed);
+            let matrices: Vec<_> = shapes
+                .iter()
+                .map(|&(h, w)| RowMajorMatrix::rand(&mut rng, h, w))
+                .collect();
+            let tree = lmcs.build_tree(matrices);
+            let widths = tree.widths();
+            let log_max_height = log2_strict_usize(tree.height());
+
+            // Path A: open_batch (verification)
+            let (transcript, opened_rows) =
+                roundtrip_open_batch(&lmcs, &tree, indices).expect("open_batch should verify");
+
+            // Path B: BatchProof::read_from_channel (parse-only)
+            let mut verifier_channel = VerifierTranscript::from_data(
+                p3_miden_dev_utils::configs::baby_bear_poseidon2::test_challenger(),
+                &transcript,
+            );
+            let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
+                &widths,
+                log_max_height,
+                indices,
+                &mut verifier_channel,
+            )
+            .expect("batch proof should parse");
+            assert!(
+                verifier_channel.is_empty(),
+                "parse path should fully consume transcript"
+            );
+
+            // Same number of unique openings
+            assert_eq!(opened_rows.len(), batch.openings.len());
+
+            // Row data must match between the two paths
+            for (&idx, verified_rows) in &opened_rows {
+                let parsed = batch.openings.get(&idx).expect("parsed opening for index");
+                assert_eq!(
+                    *verified_rows, parsed.rows,
+                    "row mismatch between open_batch and BatchProof at index {idx}"
+                );
+            }
+
+            // Reconstructed single proofs must match tree's own single_proof
+            let proofs = batch
+                .single_proofs(&lmcs, &widths, log_max_height)
+                .expect("single_proofs should reconstruct");
+            for &idx in indices {
+                let proof = proofs.get(&idx).expect("proof for index");
+                let expected = tree.single_proof(idx);
+                assert_eq!(*proof, expected, "single_proof mismatch at index {idx}");
+            }
+        };
+
+        test(1, &[(8, 4)], &[0, 3, 7]);
+        test(42, &[(4, 3), (8, 5), (16, 7)], &[0, 5, 10, 15]);
+        test(99, &[(4, 2), (8, 6)], &[3, 1, 3, 0, 1]); // duplicates
+    }
 }

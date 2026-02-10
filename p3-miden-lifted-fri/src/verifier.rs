@@ -40,10 +40,10 @@ use crate::fri::verifier::FriOracle;
 /// Returns `Ok(evals)` where each group/matrix is a row-major matrix with one row per point.
 ///
 /// **Transcript consumption**: This function does not check that the channel is fully
-/// consumed after verification. Callers that use `verify_with_channel` as a standalone
-/// verifier should check `channel.is_empty()` afterwards to reject proofs with trailing
-/// data (proof malleability). When used as a component of a larger protocol, the caller
-/// manages transcript boundaries.
+/// consumed after verification. When used as a component of a larger protocol, the caller
+/// manages transcript boundaries. For standalone usage, either call
+/// `channel.is_empty()` afterwards or use [`verify_with_channel_strict`], which rejects
+/// proofs with trailing data (proof malleability).
 pub fn verify_with_channel<F, EF, L, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
@@ -110,6 +110,38 @@ where
     Ok(evals)
 }
 
+/// Like [`verify_with_channel`], but also checks that the transcript is fully consumed.
+///
+/// Returns [`PcsError::TrailingData`] if any unread data remains after verification.
+/// Use this for standalone verification where the entire transcript belongs to the PCS.
+pub fn verify_with_channel_strict<F, EF, L, Ch, const N: usize>(
+    params: &PcsParams,
+    lmcs: &L,
+    commitments: &[(L::Commitment, Vec<usize>)],
+    log_lde_height: usize,
+    eval_points: [EF; N],
+    channel: &mut Ch,
+) -> Result<DeepEvals<EF>, PcsError>
+where
+    F: TwoAdicField,
+    EF: ExtensionField<F> + PartialEq + Clone,
+    L: Lmcs<F = F>,
+    Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
+{
+    let evals = verify_with_channel(
+        params,
+        lmcs,
+        commitments,
+        log_lde_height,
+        eval_points,
+        channel,
+    )?;
+    if !channel.is_empty() {
+        return Err(PcsError::TrailingData);
+    }
+    Ok(evals)
+}
+
 // ============================================================================
 // Error Types
 // ============================================================================
@@ -119,6 +151,8 @@ where
 pub enum PcsError {
     #[error("no commitments provided")]
     NoCommitments,
+    #[error("trailing data in transcript after verification")]
+    TrailingData,
     #[error("DEEP error: {0}")]
     DeepError(#[from] DeepError),
     #[error("FRI error: {0}")]

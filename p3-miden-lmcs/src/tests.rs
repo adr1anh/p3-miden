@@ -80,7 +80,7 @@ where
     result
 }
 
-fn roundtrip_open_batch<C, M>(
+pub fn roundtrip_open_batch<C, M>(
     lmcs: &C,
     tree: &C::Tree<M>,
     indices: &[usize],

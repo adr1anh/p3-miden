@@ -193,8 +193,7 @@ where
                 .map(|&width| channel.receive_hint_field_slice(width).map(Vec::from))
                 .collect::<Result<Vec<_>, _>>()?;
 
-            let salt_slice = channel.receive_hint_field_slice(SALT_ELEMS)?;
-            let salt: [PF::Value; SALT_ELEMS] = salt_slice.try_into().unwrap();
+            let salt: [PF::Value; SALT_ELEMS] = channel.receive_hint_field_array()?;
 
             let leaf_hash = self.hash(
                 rows.iter()
@@ -287,16 +286,12 @@ where
 
     /// Parse batch hints without hashing.
     ///
-    /// Security notes:
+    /// Notes:
     /// - `widths` and `log_max_height` are trusted parameters.
     /// - `widths` must match the committed row lengths (including any alignment padding
-    ///   if `build_aligned_tree` was used); LMCS does not enforce that padded values are
-    ///   zero. Verifiers cannot distinguish zero padding from arbitrary values unless
-    ///   they check the opened rows or constrain them elsewhere.
-    /// - Empty `indices` returns `Ok(BatchProof { openings: BTreeMap::new(), siblings: BTreeMap::new() })`
-    ///   and consumes no hints.
-    /// - Out-of-range indices return `InvalidProof`.
-    /// - Extra hints are ignored and left unread.
+    ///   if `build_aligned_tree` was used).
+    /// - Empty or out-of-range indices are not rejected here; they produce an
+    ///   invalid proof that will fail in [`open_batch`](Lmcs::open_batch).
     fn read_batch_proof_from_channel<Ch>(
         &self,
         widths: &[usize],

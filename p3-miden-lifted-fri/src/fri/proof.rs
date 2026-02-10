@@ -30,7 +30,11 @@ where
     EF: ExtensionField<F>,
     Commitment: Clone,
 {
-    /// Parse a FRI transcript view from a verifier channel.
+    /// Parse a FRI transcript from a verifier channel without validation.
+    ///
+    /// Reads commitments, PoW witnesses, challenges, and the final polynomial.
+    /// Does not verify low-degree claims; validation happens in
+    /// [`test_low_degree`](crate::fri::verifier::test_low_degree).
     pub fn from_verifier_channel<Ch>(
         params: &FriParams,
         log_domain_size: usize,

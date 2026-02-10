@@ -114,18 +114,25 @@ impl<EF> DeepPoly<EF> {
             "mixed trace tree alignments are not supported"
         );
 
-        // Collect the matrices committed to in each of the provided trees.
+        // Collect the LDE matrices from each committed tree, grouped by commitment.
+        // matrices_groups[group_idx][matrix_idx] is a reference to the LDE matrix
+        // whose rows are bit-reversed coset evaluations at height `lde_height`.
         let matrices_groups: Vec<Vec<&M>> = trace_trees
             .iter()
             .map(|tree| tree.leaves().iter().collect())
             .collect();
 
-        // For each matrix, we pad the list of evaluations for each column with zeros, matching
-        // the virtual zero-valued columns inserted by the prover when opening rows.
-        // The verifier must be invoked with the aligned widths, and will read the padded
-        // evaluations from the transcript. It does not check that these are zero. A malicious
-        // prover may pad the matrices with non-zero columns, but these columns must still represent
-        // valid low-degree polynomials.
+        // Pad each matrix's column evaluations with zeros to a multiple of the alignment.
+        // This matches the virtual zero-valued columns the LMCS inserts when hashing rows,
+        // so the transcript contains aligned widths. The verifier reads and reduces over these
+        // padded widths but does not check that padding values are zero — a malicious prover
+        // could use non-zero padding, but those columns must still be valid low-degree
+        // polynomials (enforced by FRI).
+        //
+        // After alignment, the representation is:
+        //   batched_evals.groups()[group][matrix][col] : FieldArray<EF, N>
+        // where each FieldArray<EF, N> holds the evaluations of column `col` at all N
+        // opening points (one extension-field element per point).
         let batched_evals = batched_evals.aligned(alignment);
 
         // 1. Observe evaluations into transcript in point-major order.
@@ -155,7 +162,7 @@ impl<EF> DeepPoly<EF> {
         // Align each matrix width so padding is explicit in the transcript.
         let aligned_widths = aligned_widths(widths.iter().copied(), alignment);
 
-        // Compute explicit coefficients for -f_reduced(X) = -Σᵢ αⁱ · fᵢ(X).
+        // Compute explicit coefficients for -f_reduced(X) = -Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X).
         //
         // The verifier computes f_reduced via `horner(α, columns)`, which assigns
         // the highest power to the first column: column 0 gets α^(W-1), column W-1
@@ -181,7 +188,7 @@ impl<EF> DeepPoly<EF> {
             .map(|&width| neg_powers_iter.by_ref().take(width).collect())
             .collect();
 
-        // Compute -f_reduced(X) = -Σᵢ αⁱ · fᵢ(X) over the LDE domain.
+        // Compute -f_reduced(X) = -Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X) over the LDE domain.
         let mut neg_column_coeffs_iter = neg_column_coeffs.iter();
         let neg_f_reduced = zip(matrices_groups.iter(), &group_sizes)
             .map(|(matrices_group, &size)| {
@@ -256,7 +263,7 @@ impl<EF> DeepPoly<EF> {
     }
 }
 
-/// Accumulate `f_reduced(X) = Σᵢ αⁱ · fᵢ(X)` across matrices of varying heights.
+/// Accumulate `f_reduced(X) = Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X)` across matrices of varying heights.
 ///
 /// In bit-reversed order, lifting `f(X)` to `f(Xʳ)` repeats each value r times.
 /// We exploit this: when crossing a height boundary, upsample by repeating entries,

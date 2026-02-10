@@ -103,6 +103,9 @@ where
     ///
     /// `evals` maps tree indices to DEEP evaluations.
     /// Tree index = bitrev(exp, log_domain_size) where domain point = `g·ω^{exp}`.
+    ///
+    /// Empty `evals` will fail at the first round's LMCS `open_batch` call,
+    /// which rejects empty indices.
     pub fn test_low_degree<Ch>(
         &self,
         lmcs: &L,
@@ -135,7 +138,10 @@ where
                     row_indices,
                     channel,
                 )
-                .map_err(|e| FriError::LmcsError(e, round_idx))?;
+                .map_err(|source| FriError::LmcsError {
+                    source,
+                    round: round_idx,
+                })?;
 
             // Drain, verify, fold, and rebuild with new keys.
             //
@@ -158,15 +164,26 @@ where
                     let row_idx = idx >> log_arity;
                     let position = idx & (arity - 1);
 
-                    // LMCS should only return entries for requested indices.
-                    let flat_row = &opened_rows
+                    // open_batch guarantees all requested indices are returned with
+                    // the correct widths.
+                    let opening_err = FriError::InvalidOpening {
+                        tree_index: row_idx,
+                        round: round_idx,
+                    };
+                    let flat_row = opened_rows
                         .get(&row_idx)
-                        .ok_or(FriError::MissingRow(row_idx))?[0];
-                    let row: Vec<EF> = EF::reconstitute_from_base(flat_row[..base_width].to_vec());
+                        .and_then(|rows| rows.get(0))
+                        .ok_or(opening_err)?;
+                    let flat_row = flat_row.get(..base_width).ok_or(FriError::InvalidOpening {
+                        tree_index: row_idx,
+                        round: round_idx,
+                    })?;
+                    let row: Vec<EF> = EF::reconstitute_from_base(flat_row.to_vec());
 
-                    if row[position] != eval {
+                    if row.get(position) != Some(&eval) {
                         return Err(FriError::EvaluationMismatch {
-                            row_index: row_idx,
+                            round: round_idx,
+                            tree_index: row_idx,
                             position,
                         });
                     }
@@ -191,7 +208,7 @@ where
             let final_eval: EF = horner(x, self.final_poly.iter().rev().copied());
 
             if final_eval != eval {
-                return Err(FriError::FinalPolyMismatch);
+                return Err(FriError::FinalPolyMismatch { tree_index: idx });
             }
         }
 
@@ -206,16 +223,20 @@ where
 /// Errors that can occur during FRI verification.
 #[derive(Debug, Error)]
 pub enum FriError {
-    #[error("LMCS verification failed at round {1}: {0}")]
-    LmcsError(LmcsError, usize),
-    #[error("invalid proof structure")]
-    InvalidProofStructure,
-    #[error("LMCS did not return opened row {0}")]
-    MissingRow(usize),
-    #[error("evaluation mismatch at row {row_index}, position {position}")]
-    EvaluationMismatch { row_index: usize, position: usize },
-    #[error("final polynomial mismatch")]
-    FinalPolyMismatch,
+    #[error("LMCS verification failed at round {round}: {source}")]
+    LmcsError { source: LmcsError, round: usize },
+    #[error("invalid opening for tree index {tree_index} at round {round}")]
+    InvalidOpening { tree_index: usize, round: usize },
+    #[error(
+        "evaluation mismatch at round {round}, tree index {tree_index}, coset position {position}"
+    )]
+    EvaluationMismatch {
+        round: usize,
+        tree_index: usize,
+        position: usize,
+    },
+    #[error("final polynomial mismatch at tree index {tree_index}")]
+    FinalPolyMismatch { tree_index: usize },
     #[error("transcript error: {0}")]
     TranscriptError(#[from] TranscriptError),
 }

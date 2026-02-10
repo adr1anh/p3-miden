@@ -1,7 +1,6 @@
 use alloc::vec::Vec;
 
 use p3_field::{ExtensionField, Field, FieldArray, TwoAdicField};
-use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lmcs::utils::pad_row_to_alignment;
 use p3_miden_transcript::{ProverChannel, TranscriptError, VerifierChannel};
@@ -19,11 +18,11 @@ pub struct DeepEvals<EF: Field> {
 }
 
 impl<EF: Field> DeepEvals<EF> {
-    /// Parse out-of-domain evaluations from a verifier channel.
+    /// Parse out-of-domain evaluations from a verifier channel without validation.
     ///
     /// Reads in point-major order: for each evaluation point, then for each group,
     /// then for each matrix, we receive `width` extension field elements (one row).
-    /// Widths should include any alignment padding applied during commitment.
+    /// Widths must include any alignment padding applied during commitment.
     pub(crate) fn read_from_channel<F, Ch>(
         widths: &[&[usize]],
         num_points: usize,
@@ -82,20 +81,6 @@ impl<EF: Field> DeepEvals<EF> {
     /// Number of evaluation points (rows per matrix).
     pub fn num_points(&self) -> usize {
         self.num_points
-    }
-
-    /// Reduce all column evaluations at a single point via Horner.
-    ///
-    /// Computes `f_reduced(zⱼ) = Σᵢ αⁱ · fᵢ(zⱼ)` where `α` is the challenge and
-    /// `fᵢ(zⱼ)` are the column evaluations at point index `j`, flattened across
-    /// all groups and matrices in commitment order.
-    pub(crate) fn reduce_point(&self, point_idx: usize, challenge: EF) -> EF {
-        let values = self.groups.iter().flat_map(|group| {
-            group
-                .iter()
-                .flat_map(|matrix| matrix.row(point_idx).expect("point index in range"))
-        });
-        horner(challenge, values)
     }
 }
 

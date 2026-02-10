@@ -24,7 +24,7 @@ the maximum height. This simplifies downstream logic:
 - The PCS treats all matrices as having the same height.
 - DEEP batching applies the same domain points to all matrices.
 - Recursive verifiers avoid height-dependent branching.
-- Switching to alternative polynomial commitment schemes becomes easier.
+- Switching to alternative polynomial commitment schemes (e.g., STIR or WHIR) becomes easier.
 
 ## Upsampling & Commitment Sketch
 

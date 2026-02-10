@@ -208,6 +208,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
                 let group_evals: Vec<_> = group
                     .iter()
                     .map(|m| {
+                        // Weights have trace-height many entries (the polynomial degree),
+                        // fewer than the LDE-height rows of m. The dot product sums only
+                        // over the first weights.len() rows; the lifting factor in
+                        // barycentric_scalings accounts for the remaining (upsampled) rows.
                         let weights = &barycentric_weights[&(m.height() >> log_blowup)];
                         let mut results = m.columnwise_dot_product_batched(weights);
                         for batch_evals in results.iter_mut() {

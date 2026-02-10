@@ -217,8 +217,14 @@ pub trait Lmcs: Clone {
     /// `widths` and `log_max_height` must match the committed tree (including any
     /// alignment padding if `build_aligned_tree` was used).
     ///
-    /// Returns a map from unique indices to their opened rows. Duplicate indices in
-    /// the input iterator are coalesced into a single entry in the output.
+    /// # Preconditions
+    /// - `indices` must be non-empty and in `0..2^log_max_height`.
+    ///
+    /// # Postconditions
+    /// On success, the returned map contains exactly one entry per unique index from
+    /// the input. Each entry's `Vec<Vec<F>>` has one row per width in `widths`,
+    /// with that row's length matching the corresponding width. Duplicate indices
+    /// are coalesced into a single entry.
     fn open_batch<Ch>(
         &self,
         commitment: &Self::Commitment,
@@ -230,9 +236,12 @@ pub trait Lmcs: Clone {
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>;
 
-    /// Read a batch opening from a transcript channel without hashing.
+    /// Parse a batch opening from a transcript channel without validation.
     ///
-    /// This parses hints according to the implementation's transcript layout.
+    /// This is a parse-only function: it reads hints according to the implementation's
+    /// transcript layout but does not hash leaves or verify against a commitment.
+    /// The returned proof may be invalid if the inputs are themselves invalid;
+    /// validation happens in [`open_batch`](Lmcs::open_batch).
     fn read_batch_proof_from_channel<Ch>(
         &self,
         widths: &[usize],

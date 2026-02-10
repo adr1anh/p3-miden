@@ -91,6 +91,16 @@ pub trait VerifierChannel {
             .map(|values| values.first().unwrap())
     }
 
+    /// Read exactly `N` hint field elements as a fixed-size array.
+    fn receive_hint_field_array<const N: usize>(&mut self) -> Result<[Self::F; N], TranscriptError>
+    where
+        Self::F: Copy,
+    {
+        self.receive_hint_field_slice(N)?
+            .try_into()
+            .map_err(|_| TranscriptError::NoMoreFields)
+    }
+
     fn receive_hint_commitment(&mut self) -> Result<&Self::Commitment, TranscriptError> {
         self.receive_hint_commitment_slice(1)
             .map(|values| values.first().unwrap())

@@ -17,12 +17,12 @@ use p3_util::reverse_slice_index_bits;
 
 /// Horner fold with an explicit accumulator.
 ///
-/// Computes `Σᵢ αⁿ⁻¹⁻ⁱ · vals[i]` — the first element gets the highest power of `x`.
+/// Computes `acc·xⁿ + v₀·xⁿ⁻¹ + v₁·xⁿ⁻² + ... + vₙ₋₁·x⁰` where n = len(vals).
 /// Equivalently: `((acc·x + v₀)·x + v₁)·x + ... + vₙ₋₁`.
+/// The first element gets the highest power of `x`.
 ///
-/// This convention is used throughout the DEEP module for the random linear combination
-/// `f_reduced = Σᵢ αⁱ · fᵢ`, where columns are iterated in commitment order and the
-/// first column receives `α^(W-1)` (W = total column count).
+/// For polynomial evaluation `p(x) = Σᵢ cᵢ·xⁱ` with coefficients in ascending
+/// order, pass `coeffs.iter().rev()`.
 #[inline]
 pub(crate) fn horner_acc<Acc, Val, X, I>(acc: Acc, x: X, vals: I) -> Acc
 where
@@ -96,10 +96,8 @@ impl<
 pub(crate) trait MatrixExt<T: Send + Sync + Clone>: Matrix<T> {
     /// Compute Mᵀ · [v₀, v₁, ..., vₙ₋₁] for N weight vectors simultaneously.
     ///
-    /// Computes `result[col][j] = Σᵣ M[r, col] · vⱼ[r]` for all columns and all j ∈ [0, N).
-    ///
-    /// If the number of weight vectors differs from the matrix height, the computation
-    /// only uses the first `min(height, vs.len())` rows/weights; extras are ignored.
+    /// Computes `result[col][j] = Σᵣ M[r, col] · vⱼ[r]` for r in `0..vs.len()`,
+    /// for all columns and all j ∈ [0, N). Requires `vs.len() <= self.height()`.
     fn columnwise_dot_product_batched<EF, const N: usize>(
         &self,
         vs: &[FieldArray<EF, N>],
@@ -118,6 +116,12 @@ impl<T: Send + Sync + Clone, M: Matrix<T>> MatrixExt<T> for M {
         T: Field,
         EF: ExtensionField<T>,
     {
+        debug_assert!(
+            vs.len() <= self.height(),
+            "more weight vectors ({}) than matrix rows ({})",
+            vs.len(),
+            self.height()
+        );
         let packed_width = self.width().div_ceil(T::Packing::WIDTH);
 
         let packed_results: Vec<EF::ExtensionPacking> = self
