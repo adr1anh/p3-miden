@@ -25,7 +25,7 @@ use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use thiserror::Error;
 
-use p3_miden_lifted_stark::{LiftedCoset, StarkConfig};
+use p3_miden_lifted_stark::{AirInstance, LiftedCoset, StarkConfig, ValidationError};
 
 use crate::constraints::{
     CONSTRAINT_DEGREE, ConstraintFolder, align_width, reconstruct_quotient, row_to_packed_ext,
@@ -35,6 +35,8 @@ use crate::periodic::PeriodicPolys;
 /// Errors that can occur during verification.
 #[derive(Debug, Error)]
 pub enum VerifierError {
+    #[error("invalid instances: {0}")]
+    Validation(#[from] ValidationError),
     #[error("PCS verification failed: {0}")]
     Pcs(#[from] PcsError),
     #[error("transcript error: {0}")]
@@ -52,16 +54,6 @@ pub enum VerifierError {
     InvalidPeriodicTable,
     #[error("invalid PCS opening groups: expected 3")]
     InvalidOpeningGroups,
-    #[error("no instances provided")]
-    NoInstances,
-    #[error(
-        "instances must be in ascending height order: instance {index} has log_height {log_height}, but previous max was {prev_max}"
-    )]
-    InstancesNotAscending {
-        index: usize,
-        log_height: usize,
-        prev_max: usize,
-    },
 }
 
 /// Verify a single AIR.
@@ -94,32 +86,8 @@ where
     Dft: TwoAdicSubgroupDft<F>,
     Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
-    verify_multi(
-        config,
-        &[AirWithLogHeight::new(air, log_trace_height, public_values)],
-        channel,
-    )
-}
-
-/// An AIR with its trace height for multi-trace verification.
-pub struct AirWithLogHeight<'a, F, A> {
-    /// The AIR definition
-    pub air: &'a A,
-    /// Log₂ of the trace height
-    pub log_trace_height: usize,
-    /// Public values for this AIR
-    pub public_values: &'a [F],
-}
-
-impl<'a, F, A> AirWithLogHeight<'a, F, A> {
-    /// Create a new AIR-height pair.
-    pub fn new(air: &'a A, log_trace_height: usize, public_values: &'a [F]) -> Self {
-        Self {
-            air,
-            log_trace_height,
-            public_values,
-        }
-    }
+    let instance = AirInstance::new(log_trace_height, public_values);
+    verify_multi(config, &[(air, instance)], channel)
 }
 
 /// Verify multiple AIRs with traces of different heights.
@@ -140,14 +108,14 @@ impl<'a, F, A> AirWithLogHeight<'a, F, A> {
 ///
 /// # Arguments
 /// - `config`: STARK configuration (PCS params, LMCS, DFT)
-/// - `instances`: AIR definitions with their trace heights, sorted by height (ascending)
+/// - `instances`: Pairs of (AIR, instance) sorted by trace height (ascending)
 /// - `channel`: Verifier channel for transcript
 ///
 /// # Returns
 /// `Ok(())` on success, or a `VerifierError` if verification fails.
 pub fn verify_multi<F, EF, A, L, Dft, Ch>(
     config: &StarkConfig<L, Dft>,
-    instances: &[AirWithLogHeight<'_, F, A>],
+    instances: &[(&A, AirInstance<'_, F>)],
     channel: &mut Ch,
 ) -> Result<(), VerifierError>
 where
@@ -159,28 +127,14 @@ where
     Dft: TwoAdicSubgroupDft<F>,
     Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
-    if instances.is_empty() {
-        return Err(VerifierError::NoInstances);
-    }
-
-    // Validate instances are in ascending height order
-    let mut prev_log_height = 0;
-    for (i, inst) in instances.iter().enumerate() {
-        if inst.log_trace_height < prev_log_height {
-            return Err(VerifierError::InstancesNotAscending {
-                index: i,
-                log_height: inst.log_trace_height,
-                prev_max: prev_log_height,
-            });
-        }
-        prev_log_height = inst.log_trace_height;
-    }
+    let air_instances: Vec<_> = instances.iter().map(|(_, inst)| *inst).collect();
+    p3_miden_lifted_stark::validate_instances(&air_instances)?;
 
     let log_blowup = config.pcs.fri.log_blowup;
     let alignment = config.lmcs.alignment();
 
     // Max trace height determines the LDE domain
-    let log_max_trace_height = instances.last().unwrap().log_trace_height;
+    let log_max_trace_height = instances.last().unwrap().1.log_trace_height;
     let max_trace_height = 1usize << log_max_trace_height;
     let log_lde_height = log_max_trace_height + log_blowup;
 
@@ -193,7 +147,7 @@ where
     // 2. Sample randomness for aux traces
     let max_num_randomness = instances
         .iter()
-        .map(|inst| inst.air.num_randomness())
+        .map(|(air, _)| air.num_randomness())
         .max()
         .unwrap_or(0);
 
@@ -226,11 +180,11 @@ where
     // Each commitment group has one matrix per AIR instance (except quotient: single matrix)
     let main_widths: Vec<usize> = instances
         .iter()
-        .map(|inst| align_width(inst.air.width(), alignment))
+        .map(|(air, _)| align_width(air.width(), alignment))
         .collect();
     let aux_widths: Vec<usize> = instances
         .iter()
-        .map(|inst| align_width(inst.air.aux_width() * EF::DIMENSION, alignment))
+        .map(|(air, _)| align_width(air.aux_width() * EF::DIMENSION, alignment))
         .collect();
     let quotient_width = align_width(CONSTRAINT_DEGREE * EF::DIMENSION, alignment);
 
@@ -263,7 +217,7 @@ where
     // 10. Per-AIR constraint evaluation and beta accumulation
     let mut accumulated = EF::ZERO;
 
-    for (j, inst) in instances.iter().enumerate() {
+    for (j, (air, inst)) in instances.iter().enumerate() {
         let log_n_j = inst.log_trace_height;
         let n_j = 1usize << log_n_j;
         let log_lift_ratio = log_max_trace_height - log_n_j;
@@ -287,22 +241,21 @@ where
         let selectors = coset_j.selectors_at::<F, _>(y_j);
 
         // Periodic values at virtual point y_j
-        let periodic_polys = PeriodicPolys::new(inst.air.periodic_table())
-            .ok_or(VerifierError::InvalidPeriodicTable)?;
+        let periodic_polys =
+            PeriodicPolys::new(air.periodic_table()).ok_or(VerifierError::InvalidPeriodicTable)?;
         let periodic_values = periodic_polys.eval_at::<EF>(n_j, y_j);
 
         // Public values as EF
         let public_values_ef: Vec<EF> = inst.public_values.iter().copied().map(EF::from).collect();
 
         // Build 2-row matrices for the folder (row 0 = local, row 1 = next)
-        let trace_width = align_width(inst.air.width(), alignment);
-        let aux_ef_width =
-            align_width(inst.air.aux_width() * EF::DIMENSION, alignment) / EF::DIMENSION;
+        let trace_width = align_width(air.width(), alignment);
+        let aux_ef_width = align_width(air.aux_width() * EF::DIMENSION, alignment) / EF::DIMENSION;
 
         let main_pair = RowMajorMatrix::new([main_local, main_next].concat(), trace_width);
         let aux_pair = RowMajorMatrix::new([aux_local, aux_next].concat(), aux_ef_width);
 
-        let num_rand = inst.air.num_randomness();
+        let num_rand = air.num_randomness();
         let mut folder = ConstraintFolder {
             main: main_pair,
             aux: aux_pair,
@@ -315,7 +268,7 @@ where
             _phantom: PhantomData,
         };
 
-        inst.air.eval(&mut folder);
+        air.eval(&mut folder);
 
         // Accumulate: acc = acc * β + folded_j
         accumulated = accumulated * beta + folder.accumulator;

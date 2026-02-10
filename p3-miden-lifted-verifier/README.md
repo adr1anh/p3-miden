@@ -10,17 +10,12 @@ heights (power-of-two, ascending order) via virtual lifting.
 |------|---------|
 | `verify_single` | Verify a single-AIR proof |
 | `verify_multi` | Verify a multi-trace proof |
-| `AirWithLogHeight` | Bundle an AIR with its log height and public values |
+| `AirInstance` | Bundle a log height with public values |
 | `Proof` | Raw transcript data (the proof artifact) |
 
-```rust
-pub fn verify_single<F, EF, A, L, Dft, Ch>(
-    config: &StarkConfig<L, Dft>,
-    air: &A,
-    log_trace_height: usize,
-    public_values: &[F],
-    channel: &mut Ch,
-) -> Result<(), VerifierError>
+```text
+verify_single(config, air, log_trace_height, public_values, channel)
+verify_multi(config, &[(air, instance), ...], channel)
 ```
 
 The channel should be initialized with domain separator and public values

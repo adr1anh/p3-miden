@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 
 use p3_challenger::{CanSample, CanSampleBits};
 use p3_dft::TwoAdicSubgroupDft;
-use p3_field::{ExtensionField, PrimeField64, TwoAdicField, batch_multiplicative_inverse};
+use p3_field::{ExtensionField, Field, PrimeField64, TwoAdicField, batch_multiplicative_inverse};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
@@ -26,7 +26,7 @@ use p3_miden_transcript::ProverChannel;
 use p3_util::log2_strict_usize;
 use thiserror::Error;
 
-use p3_miden_lifted_stark::{LiftedCoset, StarkConfig};
+use p3_miden_lifted_stark::{AirWitness, LiftedCoset, StarkConfig, ValidationError};
 
 use crate::commit::commit_traces;
 use crate::constraints::{commit_quotient, evaluate_constraints};
@@ -43,24 +43,12 @@ const LOG_CONSTRAINT_DEGREE: usize = 2;
 /// Errors that can occur during proving.
 #[derive(Debug, Error)]
 pub enum ProverError {
+    #[error("invalid instances: {0}")]
+    Validation(#[from] ValidationError),
     #[error("aux trace required but not provided")]
     AuxTraceRequired,
-    #[error("trace height mismatch: expected {expected}, got {actual}")]
-    TraceHeightMismatch { expected: usize, actual: usize },
-    #[error("trace width mismatch: expected {expected}, got {actual}")]
-    TraceWidthMismatch { expected: usize, actual: usize },
     #[error("invalid periodic table")]
     InvalidPeriodicTable,
-    #[error(
-        "traces must be in ascending height order: trace {index} has height {height}, but previous max was {prev_max}"
-    )]
-    TracesNotAscending {
-        index: usize,
-        height: usize,
-        prev_max: usize,
-    },
-    #[error("no traces provided")]
-    NoTraces,
 }
 
 /// Prove a single AIR.
@@ -93,37 +81,13 @@ where
     Dft: TwoAdicSubgroupDft<F>,
     Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
-    prove_multi(
-        config,
-        &[AirWithTrace::new(air, trace, public_values)],
-        channel,
-    )
-}
-
-/// An AIR with its associated trace for multi-trace proving.
-pub struct AirWithTrace<'a, F, A> {
-    /// The AIR definition
-    pub air: &'a A,
-    /// Main trace matrix
-    pub trace: &'a RowMajorMatrix<F>,
-    /// Public values for this AIR
-    pub public_values: &'a [F],
-}
-
-impl<'a, F, A> AirWithTrace<'a, F, A> {
-    /// Create a new AIR-trace pair.
-    pub fn new(air: &'a A, trace: &'a RowMajorMatrix<F>, public_values: &'a [F]) -> Self {
-        Self {
-            air,
-            trace,
-            public_values,
-        }
-    }
+    let witness = AirWitness::new(trace, public_values);
+    prove_multi(config, &[(air, witness)], channel)
 }
 
 /// Prove multiple AIRs with traces of different heights.
 ///
-/// Traces must be provided in ascending height order (smallest first). Each trace
+/// Instances must be provided in ascending height order (smallest first). Each trace
 /// may have a different height that is a power of 2. The quotient numerators are
 /// accumulated using cyclic extension:
 ///
@@ -135,7 +99,7 @@ impl<'a, F, A> AirWithTrace<'a, F, A> {
 ///
 /// # Arguments
 /// - `config`: STARK configuration (PCS params, LMCS, DFT)
-/// - `airs_and_traces`: AIR definitions with their traces, sorted by height (ascending)
+/// - `instances`: Pairs of (AIR, witness) sorted by trace height (ascending)
 /// - `channel`: Prover channel for transcript
 ///
 /// # Returns
@@ -143,7 +107,7 @@ impl<'a, F, A> AirWithTrace<'a, F, A> {
 #[allow(clippy::too_many_arguments)]
 pub fn prove_multi<F, EF, A, L, Dft, Ch>(
     config: &StarkConfig<L, Dft>,
-    airs_and_traces: &[AirWithTrace<'_, F, A>],
+    instances: &[(&A, AirWitness<'_, F>)],
     channel: &mut Ch,
 ) -> Result<(), ProverError>
 where
@@ -155,38 +119,12 @@ where
     Dft: TwoAdicSubgroupDft<F>,
     Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
-    if airs_and_traces.is_empty() {
-        return Err(ProverError::NoTraces);
-    }
-
-    // Validate traces are in ascending height order
-    let mut prev_height = 0;
-    for (i, awt) in airs_and_traces.iter().enumerate() {
-        let height = awt.trace.height();
-        if height < prev_height {
-            return Err(ProverError::TracesNotAscending {
-                index: i,
-                height,
-                prev_max: prev_height,
-            });
-        }
-        assert!(
-            height.is_power_of_two(),
-            "trace height must be power of two"
-        );
-        if awt.trace.width() != awt.air.width() {
-            return Err(ProverError::TraceWidthMismatch {
-                expected: awt.air.width(),
-                actual: awt.trace.width(),
-            });
-        }
-        prev_height = height;
-    }
+    validate_inputs(instances)?;
 
     let log_blowup = config.pcs.fri.log_blowup;
 
     // Max trace height determines the LDE domain
-    let max_trace_height = airs_and_traces.last().unwrap().trace.height();
+    let max_trace_height = instances.last().unwrap().1.trace.height();
     let log_max_trace_height = log2_strict_usize(max_trace_height);
     let log_lde_height = log_max_trace_height + log_blowup;
 
@@ -196,18 +134,14 @@ where
     let max_quotient_height = max_quotient_coset.lde_height();
 
     // 1. Commit all main traces
-    let main_traces: Vec<_> = airs_and_traces
-        .iter()
-        .map(|awt| awt.trace.clone())
-        .collect();
+    let main_traces: Vec<_> = instances.iter().map(|(_, w)| w.trace.clone()).collect();
     let main_committed = commit_traces(config, main_traces);
     channel.send_commitment(main_committed.root());
 
     // 2. Sample randomness and build aux traces for all AIRs
-    // First, collect max randomness needed across all AIRs
-    let max_num_randomness = airs_and_traces
+    let max_num_randomness = instances
         .iter()
-        .map(|awt| awt.air.num_randomness())
+        .map(|(air, _)| air.num_randomness())
         .max()
         .unwrap_or(0);
 
@@ -216,16 +150,15 @@ where
         .collect();
 
     // Build and validate aux traces for all AIRs
-    let aux_traces: Vec<RowMajorMatrix<F>> = airs_and_traces
+    let aux_traces: Vec<RowMajorMatrix<F>> = instances
         .iter()
-        .map(|awt| {
-            let num_rand = awt.air.num_randomness();
-            let aux = awt
-                .air
-                .build_aux_trace(awt.trace, &randomness[..num_rand])
+        .map(|(air, w)| {
+            let num_rand = air.num_randomness();
+            let aux = air
+                .build_aux_trace(w.trace, &randomness[..num_rand])
                 .expect("aux trace required");
 
-            let expected_width = awt.air.aux_width() * EF::DIMENSION;
+            let expected_width = air.aux_width() * EF::DIMENSION;
             assert_eq!(
                 aux.width(),
                 expected_width,
@@ -234,9 +167,9 @@ where
             );
             assert_eq!(
                 aux.height(),
-                awt.trace.height(),
+                w.trace.height(),
                 "aux trace height mismatch: expected {}, got {}",
-                awt.trace.height(),
+                w.trace.height(),
                 aux.height()
             );
 
@@ -245,7 +178,7 @@ where
         .collect();
 
     // 3. Commit all aux traces
-    let aux_committed = commit_traces(config, aux_traces.clone());
+    let aux_committed = commit_traces(config, aux_traces);
     channel.send_commitment(aux_committed.root());
 
     // 4. Sample constraint folding alpha and accumulation beta
@@ -254,10 +187,10 @@ where
 
     // 5. Compute numerators for each trace and accumulate
     let constraint_degree = 1 << LOG_CONSTRAINT_DEGREE;
-    let mut numerators: Vec<Vec<EF>> = Vec::with_capacity(airs_and_traces.len());
+    let mut numerators: Vec<Vec<EF>> = Vec::with_capacity(instances.len());
 
-    for (i, awt) in airs_and_traces.iter().enumerate() {
-        let trace_height = awt.trace.height();
+    for (i, (air, w)) in instances.iter().enumerate() {
+        let trace_height = w.trace.height();
         let log_trace_height = log2_strict_usize(trace_height);
 
         // Create LiftedCoset for this trace (may be lifted relative to max)
@@ -269,18 +202,18 @@ where
         let aux_on_gj = aux_committed.quotient_domain_natural(i, constraint_degree);
 
         // Build periodic LDE for this trace via coset method
-        let periodic_lde = PeriodicLde::build(&this_quotient_coset, &awt.air.periodic_table())
+        let periodic_lde = PeriodicLde::build(&this_quotient_coset, &air.periodic_table())
             .ok_or(ProverError::InvalidPeriodicTable)?;
 
         // Compute numerator (NO vanishing division yet)
         let numerator = evaluate_constraints::<F, EF, A, _>(
-            awt.air,
+            *air,
             &main_on_gj,
             &aux_on_gj,
             &this_quotient_coset,
             alpha,
-            &randomness[..awt.air.num_randomness()],
-            awt.public_values,
+            &randomness[..air.num_randomness()],
+            w.public_values,
             &periodic_lde,
         );
 
@@ -339,6 +272,30 @@ where
         channel,
     );
 
+    Ok(())
+}
+
+/// Validate prover inputs: width match, non-empty, ascending height.
+///
+/// Power-of-two height is enforced by [`AirWitness::new`].
+fn validate_inputs<F, EF, A>(instances: &[(&A, AirWitness<'_, F>)]) -> Result<(), ProverError>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+    A: MidenAir<F, EF>,
+{
+    for (i, (air, w)) in instances.iter().enumerate() {
+        if w.trace.width() != air.width() {
+            return Err(ValidationError::WidthMismatch {
+                index: i,
+                expected: air.width(),
+                actual: w.trace.width(),
+            }
+            .into());
+        }
+    }
+    let verifier_instances: Vec<_> = instances.iter().map(|(_, w)| w.to_instance()).collect();
+    p3_miden_lifted_stark::validate_instances(&verifier_instances)?;
     Ok(())
 }
 

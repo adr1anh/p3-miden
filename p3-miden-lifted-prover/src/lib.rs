@@ -9,8 +9,8 @@ mod periodic;
 mod prover;
 
 // Re-exports from dependencies
-pub use p3_miden_lifted_stark::StarkConfig;
+pub use p3_miden_lifted_stark::{AirWitness, StarkConfig};
 pub use p3_miden_lifted_verifier::Proof;
 
 // Public API
-pub use prover::{AirWithTrace, ProverError, prove_multi, prove_single};
+pub use prover::{ProverError, prove_multi, prove_single};

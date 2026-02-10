@@ -8,6 +8,6 @@ mod periodic;
 mod proof;
 mod verifier;
 
-pub use p3_miden_lifted_stark::StarkConfig;
+pub use p3_miden_lifted_stark::{AirInstance, StarkConfig};
 pub use proof::Proof;
-pub use verifier::{AirWithLogHeight, VerifierError, verify_multi, verify_single};
+pub use verifier::{VerifierError, verify_multi, verify_single};

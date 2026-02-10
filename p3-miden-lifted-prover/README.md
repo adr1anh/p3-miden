@@ -10,16 +10,11 @@ and the lifted FRI PCS. Supports multiple traces of different heights
 |------|---------|
 | `prove_single` | Prove a single-AIR STARK |
 | `prove_multi` | Prove a multi-trace STARK (ascending heights) |
-| `AirWithTrace` | Bundle an AIR with its trace and public values |
+| `AirWitness` | Bundle a trace with its public values |
 
-```rust
-pub fn prove_single<F, EF, A, L, Dft, Ch>(
-    config: &StarkConfig<L, Dft>,
-    air: &A,
-    trace: &RowMajorMatrix<F>,
-    public_values: &[F],
-    channel: &mut Ch,
-) -> Result<(), ProverError>
+```text
+prove_single(config, air, trace, public_values, channel)
+prove_multi(config, &[(air, witness), ...], channel)
 ```
 
 The channel should be initialized with domain separator and public values

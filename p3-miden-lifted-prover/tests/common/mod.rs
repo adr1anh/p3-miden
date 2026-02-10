@@ -1,18 +1,16 @@
 #![allow(dead_code)]
 
 use p3_dft::Radix2DitParallel;
-use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_air::MidenAir;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_fri::PcsParams;
 use p3_miden_lifted_fri::deep::DeepParams;
 use p3_miden_lifted_fri::fri::{FriFold, FriParams};
-use p3_miden_lifted_prover::AirWithTrace;
-use p3_miden_lifted_verifier::{AirWithLogHeight, StarkConfig, verify_multi};
+use p3_miden_lifted_prover::AirWitness;
+use p3_miden_lifted_verifier::{StarkConfig, verify_multi};
 use p3_miden_lmcs::LmcsConfig;
 use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
-use p3_util::log2_strict_usize;
 
 pub type TestLmcs =
     LmcsConfig<bb::P, bb::P, bb::Sponge, bb::Compress, { bb::WIDTH }, { bb::DIGEST }>;
@@ -51,7 +49,7 @@ pub fn prove_and_verify<A: MidenAir<bb::F, bb::EF>>(
 
     let prover_instances: Vec<_> = instances
         .iter()
-        .map(|(t, pv)| AirWithTrace::new(air, t, pv))
+        .map(|(t, pv)| (air, AirWitness::new(t, pv)))
         .collect();
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
@@ -63,9 +61,9 @@ pub fn prove_and_verify<A: MidenAir<bb::F, bb::EF>>(
     .expect("proving should succeed");
     let transcript = prover_channel.into_data();
 
-    let verifier_instances: Vec<_> = instances
+    let verifier_instances: Vec<_> = prover_instances
         .iter()
-        .map(|(t, pv)| AirWithLogHeight::new(air, log2_strict_usize(t.height()), pv))
+        .map(|(a, w)| (*a, w.to_instance()))
         .collect();
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
