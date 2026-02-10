@@ -27,7 +27,7 @@ impl<F: TwoAdicField> PeriodicPolys<F> {
     ///
     /// # Returns
     /// `None` if any column length is zero or not a power of two.
-    pub fn new(column_evals: Vec<Vec<F>>) -> Option<Self> {
+    pub fn new(column_evals: &[Vec<F>]) -> Option<Self> {
         let dft = NaiveDft;
         let mut polys = Vec::with_capacity(column_evals.len());
 
@@ -36,7 +36,7 @@ impl<F: TwoAdicField> PeriodicPolys<F> {
             if p == 0 || !p.is_power_of_two() {
                 return None;
             }
-            let coeffs = dft.idft(column);
+            let coeffs = dft.idft(column.clone());
             polys.push(coeffs);
         }
 

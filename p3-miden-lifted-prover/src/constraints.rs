@@ -17,7 +17,10 @@ use p3_matrix::Matrix;
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_maybe_rayon::prelude::*;
-use p3_miden_air::{MidenAir, MidenAirBuilder};
+use p3_miden_lifted_air::{
+    AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, LiftedAir, LiftedAirBuilder,
+    PairBuilder, PeriodicAirBuilder, PermutationAirBuilder,
+};
 use p3_miden_lifted_stark::{LiftedCoset, Selectors};
 use p3_miden_lmcs::Lmcs;
 use p3_util::log2_strict_usize;
@@ -195,7 +198,7 @@ where
     F: TwoAdicField + PrimeCharacteristicRing,
     EF: ExtensionField<F>,
     PackedExt<F, EF>: Algebra<EF> + Algebra<PackedVal<F>> + BasedVectorSpace<PackedVal<F>>,
-    A: MidenAir<F, EF>,
+    A: LiftedAir<F, EF>,
     M: Matrix<F> + Sync,
 {
     type P<F> = PackedVal<F>;
@@ -332,7 +335,7 @@ where
     pub _phantom: PhantomData<EF>,
 }
 
-impl<'a, F, EF, P, PE> MidenAirBuilder for ProverConstraintFolder<'a, F, EF, P, PE>
+impl<'a, F, EF, P, PE> AirBuilder for ProverConstraintFolder<'a, F, EF, P, PE>
 where
     F: Field,
     EF: ExtensionField<F>,
@@ -343,13 +346,6 @@ where
     type Expr = P;
     type Var = P;
     type M = RowMajorMatrixView<'a, P>;
-    type PublicVar = F;
-    type PeriodicVal = P;
-    type EF = EF;
-    type ExprEF = PE;
-    type VarEF = PE;
-    type MP = RowMajorMatrixView<'a, PE>;
-    type RandomVar = PE;
 
     #[inline]
     fn main(&self) -> Self::M {
@@ -379,20 +375,45 @@ where
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
         self.accumulator = self.accumulator * self.alpha + x.into();
     }
+}
+
+impl<'a, F, EF, P, PE> AirBuilderWithPublicValues for ProverConstraintFolder<'a, F, EF, P, PE>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+    P: PackedField<Scalar = F>,
+    PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
+{
+    type PublicVar = F;
 
     #[inline]
     fn public_values(&self) -> &[Self::PublicVar] {
         self.public_values
     }
+}
 
-    #[inline]
-    fn periodic_evals(&self) -> &[Self::PeriodicVal] {
-        self.periodic_values
-    }
-
+impl<'a, F, EF, P, PE> PairBuilder for ProverConstraintFolder<'a, F, EF, P, PE>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+    P: PackedField<Scalar = F>,
+    PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
+{
     fn preprocessed(&self) -> Self::M {
         panic!("preprocessed trace not supported in this prototype")
     }
+}
+
+impl<'a, F, EF, P, PE> ExtensionBuilder for ProverConstraintFolder<'a, F, EF, P, PE>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+    P: PackedField<Scalar = F>,
+    PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
+{
+    type EF = EF;
+    type ExprEF = PE;
+    type VarEF = PE;
 
     #[inline]
     fn assert_zero_ext<I>(&mut self, x: I)
@@ -401,6 +422,17 @@ where
     {
         self.accumulator = self.accumulator * self.alpha + x.into();
     }
+}
+
+impl<'a, F, EF, P, PE> PermutationAirBuilder for ProverConstraintFolder<'a, F, EF, P, PE>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+    P: PackedField<Scalar = F>,
+    PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
+{
+    type MP = RowMajorMatrixView<'a, PE>;
+    type RandomVar = PE;
 
     #[inline]
     fn permutation(&self) -> Self::MP {
@@ -411,8 +443,28 @@ where
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.packed_randomness
     }
+}
 
-    fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
-        &[]
+impl<'a, F, EF, P, PE> PeriodicAirBuilder for ProverConstraintFolder<'a, F, EF, P, PE>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+    P: PackedField<Scalar = F>,
+    PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
+{
+    type PeriodicVar = P;
+
+    #[inline]
+    fn periodic_values(&self) -> &[Self::PeriodicVar] {
+        self.periodic_values
     }
+}
+
+impl<'a, F, EF, P, PE> LiftedAirBuilder for ProverConstraintFolder<'a, F, EF, P, PE>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+    P: PackedField<Scalar = F>,
+    PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
+{
 }

@@ -1,6 +1,6 @@
 [package]
-name = "p3-miden-air"
-description = "Miden-specific AIR traits and utilities for Plonky3."
+name = "p3-miden-lifted-air"
+description = "AIR traits for the Miden lifted STARK protocol, with symbolic constraint analysis."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,3 +16,6 @@ p3-util.workspace = true
 
 serde = { workspace = true, features = ["derive", "alloc"] }
 tracing.workspace = true
+
+[dev-dependencies]
+p3-baby-bear.workspace = true

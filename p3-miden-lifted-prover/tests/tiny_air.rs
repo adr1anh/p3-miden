@@ -1,10 +1,13 @@
 mod common;
 
-use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
+use p3_field::PrimeCharacteristicRing;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_air::{MidenAir, MidenAirBuilder};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
+use p3_miden_lifted_air::{
+    AirBuilder, AirWithPeriodicColumns, BaseAir, BaseAirWithPublicValues, ExtensionBuilder,
+    LiftedAir, LiftedAirBuilder,
+};
 use p3_miden_lifted_prover::prove_single;
 use p3_miden_lifted_verifier::{VerifierError, verify_single};
 use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
@@ -19,21 +22,40 @@ use common::{prove_and_verify, test_config};
 
 #[derive(Clone, Debug)]
 struct TinyAir {
-    /// Period lengths for periodic columns (empty = no periodic columns).
-    periods: Vec<usize>,
+    /// Pre-computed periodic column data.
+    periodic_cols: Vec<Vec<bb::F>>,
 }
 
 impl TinyAir {
     fn new(periods: Vec<usize>) -> Self {
-        Self { periods }
+        let periodic_cols = periods
+            .iter()
+            .map(|&p| {
+                let mut col = vec![bb::F::ZERO; p];
+                col[0] = bb::F::ONE;
+                col[p - 1] = bb::F::ONE;
+                col
+            })
+            .collect();
+        Self { periodic_cols }
     }
 }
 
-impl MidenAir<bb::F, bb::EF> for TinyAir {
+impl BaseAir<bb::F> for TinyAir {
     fn width(&self) -> usize {
         1
     }
+}
 
+impl BaseAirWithPublicValues<bb::F> for TinyAir {}
+
+impl AirWithPeriodicColumns<bb::F> for TinyAir {
+    fn periodic_columns(&self) -> &[Vec<bb::F>] {
+        &self.periodic_cols
+    }
+}
+
+impl LiftedAir<bb::F, bb::EF> for TinyAir {
     fn aux_width(&self) -> usize {
         1
     }
@@ -42,23 +64,11 @@ impl MidenAir<bb::F, bb::EF> for TinyAir {
         1
     }
 
-    fn periodic_table(&self) -> Vec<Vec<bb::F>> {
-        self.periods
-            .iter()
-            .map(|&p| {
-                let mut col = vec![bb::F::ZERO; p];
-                col[0] = bb::F::ONE;
-                col[p - 1] = bb::F::ONE;
-                col
-            })
-            .collect()
-    }
-
     fn build_aux_trace(
         &self,
         main: &RowMajorMatrix<bb::F>,
         challenges: &[bb::EF],
-    ) -> Option<RowMajorMatrix<bb::F>> {
+    ) -> Option<RowMajorMatrix<bb::EF>> {
         let height = main.height();
         let challenge = challenges[0];
 
@@ -69,15 +79,13 @@ impl MidenAir<bb::F, bb::EF> for TinyAir {
             current = current.exp_power_of_2(2);
         }
 
-        let flattened = <bb::EF as BasedVectorSpace<bb::F>>::flatten_to_base(aux_values);
-        let width = <bb::EF as BasedVectorSpace<bb::F>>::DIMENSION;
-        Some(RowMajorMatrix::new(flattened, width))
+        Some(RowMajorMatrix::new(aux_values, 1))
     }
 
-    fn eval<AB: MidenAirBuilder<F = bb::F>>(&self, builder: &mut AB) {
+    fn eval<AB: LiftedAirBuilder<F = bb::F>>(&self, builder: &mut AB) {
         let main = builder.main();
         let start = builder.public_values()[0];
-        let periodic = builder.periodic_evals().to_vec();
+        let periodic = builder.periodic_values().to_vec();
         let (local, next) = (
             main.row_slice(0).expect("empty matrix"),
             main.row_slice(1).expect("single row matrix"),
@@ -94,9 +102,9 @@ impl MidenAir<bb::F, bb::EF> for TinyAir {
 
         // Periodic column constraints: first and last row see 1
         for p in &periodic {
-            let p_ef: AB::ExprEF = (*p).into();
-            builder.when_first_row().assert_one_ext(p_ef.clone());
-            builder.when_last_row().assert_one_ext(p_ef);
+            let p_expr: AB::Expr = (*p).into();
+            builder.when_first_row().assert_one(p_expr.clone());
+            builder.when_last_row().assert_one(p_expr);
         }
 
         // Aux trace constraints

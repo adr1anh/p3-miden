@@ -10,7 +10,10 @@ use core::marker::PhantomData;
 
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_air::MidenAirBuilder;
+use p3_miden_lifted_air::{
+    AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, LiftedAirBuilder, PairBuilder,
+    PeriodicAirBuilder, PermutationAirBuilder,
+};
 use p3_miden_lifted_stark::{LiftedCoset, Selectors};
 use p3_util::log2_strict_usize;
 
@@ -42,7 +45,7 @@ where
     pub _phantom: PhantomData<F>,
 }
 
-impl<'a, F, EF> MidenAirBuilder for ConstraintFolder<'a, F, EF>
+impl<'a, F, EF> AirBuilder for ConstraintFolder<'a, F, EF>
 where
     F: Field,
     EF: ExtensionField<F>,
@@ -51,13 +54,6 @@ where
     type Expr = EF;
     type Var = EF;
     type M = RowMajorMatrix<EF>;
-    type PublicVar = EF;
-    type PeriodicVal = EF;
-    type EF = EF;
-    type ExprEF = EF;
-    type VarEF = EF;
-    type MP = RowMajorMatrix<EF>;
-    type RandomVar = EF;
 
     fn main(&self) -> Self::M {
         self.main.clone()
@@ -82,18 +78,38 @@ where
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
         self.accumulator = self.accumulator * self.alpha + x.into();
     }
+}
+
+impl<'a, F, EF> AirBuilderWithPublicValues for ConstraintFolder<'a, F, EF>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+{
+    type PublicVar = EF;
 
     fn public_values(&self) -> &[Self::PublicVar] {
         self.public_values
     }
+}
 
-    fn periodic_evals(&self) -> &[Self::PeriodicVal] {
-        self.periodic_values
-    }
-
+impl<'a, F, EF> PairBuilder for ConstraintFolder<'a, F, EF>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+{
     fn preprocessed(&self) -> Self::M {
         panic!("preprocessed trace not supported in this prototype")
     }
+}
+
+impl<'a, F, EF> ExtensionBuilder for ConstraintFolder<'a, F, EF>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+{
+    type EF = EF;
+    type ExprEF = EF;
+    type VarEF = EF;
 
     fn assert_zero_ext<I>(&mut self, x: I)
     where
@@ -101,6 +117,15 @@ where
     {
         self.accumulator = self.accumulator * self.alpha + x.into();
     }
+}
+
+impl<'a, F, EF> PermutationAirBuilder for ConstraintFolder<'a, F, EF>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+{
+    type MP = RowMajorMatrix<EF>;
+    type RandomVar = EF;
 
     fn permutation(&self) -> Self::MP {
         self.aux.clone()
@@ -109,10 +134,25 @@ where
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.randomness
     }
+}
 
-    fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
-        &[]
+impl<'a, F, EF> PeriodicAirBuilder for ConstraintFolder<'a, F, EF>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+{
+    type PeriodicVar = EF;
+
+    fn periodic_values(&self) -> &[Self::PeriodicVar] {
+        self.periodic_values
     }
+}
+
+impl<'a, F, EF> LiftedAirBuilder for ConstraintFolder<'a, F, EF>
+where
+    F: Field,
+    EF: ExtensionField<F>,
+{
 }
 
 // ============================================================================

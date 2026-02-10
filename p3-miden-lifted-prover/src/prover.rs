@@ -15,11 +15,14 @@ use alloc::vec::Vec;
 
 use p3_challenger::{CanSample, CanSampleBits};
 use p3_dft::TwoAdicSubgroupDft;
-use p3_field::{ExtensionField, Field, PrimeField64, TwoAdicField, batch_multiplicative_inverse};
+use p3_field::{
+    BasedVectorSpace, ExtensionField, Field, PrimeField64, TwoAdicField,
+    batch_multiplicative_inverse,
+};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
-use p3_miden_air::MidenAir;
+use p3_miden_lifted_air::LiftedAir;
 use p3_miden_lifted_fri::prover::open_with_channel;
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::ProverChannel;
@@ -75,7 +78,7 @@ pub fn prove_single<F, EF, A, L, Dft, Ch>(
 where
     F: TwoAdicField + PrimeField64,
     EF: ExtensionField<F>,
-    A: MidenAir<F, EF>,
+    A: LiftedAir<F, EF>,
     L: Lmcs<F = F>,
     L::Commitment: Copy,
     Dft: TwoAdicSubgroupDft<F>,
@@ -113,7 +116,7 @@ pub fn prove_multi<F, EF, A, L, Dft, Ch>(
 where
     F: TwoAdicField + PrimeField64,
     EF: ExtensionField<F>,
-    A: MidenAir<F, EF>,
+    A: LiftedAir<F, EF>,
     L: Lmcs<F = F>,
     L::Commitment: Copy,
     Dft: TwoAdicSubgroupDft<F>,
@@ -149,7 +152,7 @@ where
         .map(|_| channel.sample_algebra_element::<EF>())
         .collect();
 
-    // Build and validate aux traces for all AIRs
+    // Build and validate aux traces for all AIRs, then flatten to base field
     let aux_traces: Vec<RowMajorMatrix<F>> = instances
         .iter()
         .map(|(air, w)| {
@@ -158,11 +161,11 @@ where
                 .build_aux_trace(w.trace, &randomness[..num_rand])
                 .expect("aux trace required");
 
-            let expected_width = air.aux_width() * EF::DIMENSION;
             assert_eq!(
                 aux.width(),
-                expected_width,
-                "aux trace width mismatch: expected {expected_width}, got {}",
+                air.aux_width(),
+                "aux trace width mismatch: expected {}, got {}",
+                air.aux_width(),
                 aux.width()
             );
             assert_eq!(
@@ -173,7 +176,10 @@ where
                 aux.height()
             );
 
-            aux
+            // Flatten EF -> F for commitment
+            let base_width = aux.width() * EF::DIMENSION;
+            let base_values = <EF as BasedVectorSpace<F>>::flatten_to_base(aux.values);
+            RowMajorMatrix::new(base_values, base_width)
         })
         .collect();
 
@@ -202,7 +208,7 @@ where
         let aux_on_gj = aux_committed.quotient_domain_natural(i, constraint_degree);
 
         // Build periodic LDE for this trace via coset method
-        let periodic_lde = PeriodicLde::build(&this_quotient_coset, &air.periodic_table())
+        let periodic_lde = PeriodicLde::build(&this_quotient_coset, air.periodic_columns())
             .ok_or(ProverError::InvalidPeriodicTable)?;
 
         // Compute numerator (NO vanishing division yet)
@@ -282,7 +288,7 @@ fn validate_inputs<F, EF, A>(instances: &[(&A, AirWitness<'_, F>)]) -> Result<()
 where
     F: Field,
     EF: ExtensionField<F>,
-    A: MidenAir<F, EF>,
+    A: LiftedAir<F, EF>,
 {
     for (i, (air, w)) in instances.iter().enumerate() {
         if w.trace.width() != air.width() {

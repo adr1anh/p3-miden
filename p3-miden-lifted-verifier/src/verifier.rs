@@ -19,7 +19,7 @@ use p3_dft::TwoAdicSubgroupDft;
 use p3_field::{ExtensionField, PrimeCharacteristicRing, PrimeField64, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_air::MidenAir;
+use p3_miden_lifted_air::LiftedAir;
 use p3_miden_lifted_fri::verifier::{PcsError, verify_with_channel as verify_pcs_with_channel};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
@@ -80,7 +80,7 @@ pub fn verify_single<F, EF, A, L, Dft, Ch>(
 where
     F: TwoAdicField + PrimeField64 + PrimeCharacteristicRing,
     EF: ExtensionField<F>,
-    A: MidenAir<F, EF>,
+    A: LiftedAir<F, EF>,
     L: Lmcs<F = F>,
     L::Commitment: Copy,
     Dft: TwoAdicSubgroupDft<F>,
@@ -121,7 +121,7 @@ pub fn verify_multi<F, EF, A, L, Dft, Ch>(
 where
     F: TwoAdicField + PrimeField64 + PrimeCharacteristicRing,
     EF: ExtensionField<F>,
-    A: MidenAir<F, EF>,
+    A: LiftedAir<F, EF>,
     L: Lmcs<F = F>,
     L::Commitment: Copy,
     Dft: TwoAdicSubgroupDft<F>,
@@ -241,8 +241,8 @@ where
         let selectors = coset_j.selectors_at::<F, _>(y_j);
 
         // Periodic values at virtual point y_j
-        let periodic_polys =
-            PeriodicPolys::new(air.periodic_table()).ok_or(VerifierError::InvalidPeriodicTable)?;
+        let periodic_polys = PeriodicPolys::new(air.periodic_columns())
+            .ok_or(VerifierError::InvalidPeriodicTable)?;
         let periodic_values = periodic_polys.eval_at::<EF>(n_j, y_j);
 
         // Public values as EF

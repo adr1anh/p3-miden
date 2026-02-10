@@ -2,8 +2,8 @@
 
 use p3_dft::Radix2DitParallel;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_air::MidenAir;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
+use p3_miden_lifted_air::LiftedAir;
 use p3_miden_lifted_fri::PcsParams;
 use p3_miden_lifted_fri::deep::DeepParams;
 use p3_miden_lifted_fri::fri::{FriFold, FriParams};
@@ -41,7 +41,7 @@ pub fn test_config() -> StarkConfig<TestLmcs, TestDft> {
 /// Prove and verify multiple traces, each with its own public values.
 ///
 /// `instances` is a slice of `(trace, public_values)` pairs in ascending height order.
-pub fn prove_and_verify<A: MidenAir<bb::F, bb::EF>>(
+pub fn prove_and_verify<A: LiftedAir<bb::F, bb::EF>>(
     air: &A,
     instances: &[(RowMajorMatrix<bb::F>, Vec<bb::F>)],
 ) {
