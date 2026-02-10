@@ -176,17 +176,18 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
 
                 // DEEP quotient: Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) / (zⱼ - X)
                 // Precondition: eval points lie outside the LDE domain.
-                let deep_eval = zip(&self.reduced_openings, self.challenge_points.powers())
-                    .try_fold(EF::ZERO, |acc, ((point, reduced_eval), coeff_point)| {
-                        let denom_inv = (*point - row_point).try_inverse().ok_or(
-                            DeepError::EvalPointOnDomain {
+                let mut deep_eval = EF::ZERO;
+                for ((point, reduced_eval), coeff_point) in
+                    zip(&self.reduced_openings, self.challenge_points.powers())
+                {
+                    let denom_inv =
+                        (*point - row_point)
+                            .try_inverse()
+                            .ok_or(DeepError::EvalPointOnDomain {
                                 tree_index: tree_idx,
-                            },
-                        )?;
-                        Ok::<_, DeepError>(
-                            acc + coeff_point * (*reduced_eval - reduced_row) * denom_inv,
-                        )
-                    })?;
+                            })?;
+                    deep_eval += coeff_point * (*reduced_eval - reduced_row) * denom_inv;
+                }
                 Ok((tree_idx, deep_eval))
             })
             .collect::<Result<_, DeepError>>()?;
