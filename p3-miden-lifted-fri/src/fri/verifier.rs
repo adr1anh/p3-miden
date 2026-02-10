@@ -166,18 +166,14 @@ where
 
                     // open_batch guarantees all requested indices are returned with
                     // the correct widths.
-                    let opening_err = FriError::InvalidOpening {
-                        tree_index: row_idx,
-                        round: round_idx,
-                    };
                     let flat_row = opened_rows
                         .get(&row_idx)
-                        .and_then(|rows| rows.get(0))
-                        .ok_or(opening_err)?;
-                    let flat_row = flat_row.get(..base_width).ok_or(FriError::InvalidOpening {
-                        tree_index: row_idx,
-                        round: round_idx,
-                    })?;
+                        .and_then(|rows| rows.first())
+                        .and_then(|row| row.get(..base_width))
+                        .ok_or(FriError::InvalidOpening {
+                            tree_index: row_idx,
+                            round: round_idx,
+                        })?;
                     let row: Vec<EF> = EF::reconstitute_from_base(flat_row.to_vec());
 
                     if row.get(position) != Some(&eval) {
