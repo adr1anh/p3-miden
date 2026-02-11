@@ -350,6 +350,7 @@ where
         commitments,
         opened_values,
         opening_proof,
+        aux_finals: vec![],
         degree_bits: log_ext_degree,
     }
 }
