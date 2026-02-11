@@ -11,6 +11,7 @@ use p3_maybe_rayon::prelude::*;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_miden_transcript::ProverChannel;
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
+use tracing::debug_span;
 
 use crate::fri::FriParams;
 
@@ -192,7 +193,8 @@ where
         folded_evals.truncate(final_poly_degree);
         reverse_slice_index_bits(&mut folded_evals);
 
-        let mut final_poly = Radix2DFTSmallBatch::default().idft_algebra(folded_evals);
+        let mut final_poly = debug_span!("idft final poly")
+            .in_scope(|| Radix2DFTSmallBatch::default().idft_algebra(folded_evals));
 
         // Store in descending degree order [cₙ, ..., c₁, c₀] so the verifier
         // can evaluate via Horner without reversing.

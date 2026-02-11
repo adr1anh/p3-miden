@@ -13,6 +13,7 @@ use p3_miden_transcript::ProverChannel;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
+use tracing::{debug_span, info_span};
 
 /// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///
@@ -266,35 +267,44 @@ where
         assert!(!leaves.is_empty(), "cannot commit empty batch");
         debug_assert!(alignment > 0, "alignment must be non-zero");
 
-        // Build leaf states from matrices using the sponge
-        let mut leaf_states: Vec<[PD::Value; WIDTH]> =
-            build_leaf_states_upsampled::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h);
+        // Build leaf hashes: absorb all matrix rows into sponge states, then squeeze.
+        let leaf_digests: Vec<[PD::Value; DIGEST_ELEMS]> =
+            info_span!("hash leaves").in_scope(|| {
+                let mut leaf_states: Vec<[PD::Value; WIDTH]> =
+                    build_leaf_states_upsampled::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h);
 
-        // Absorb salt into states using SIMD-parallelized path (no-op when salt is None)
-        if let Some(ref salt_matrix) = salt {
-            debug_assert_eq!(salt_matrix.height(), leaf_states.len());
-            debug_assert_eq!(salt_matrix.width(), SALT_ELEMS);
-            absorb_matrix::<PF, PD, _, _, WIDTH, DIGEST_ELEMS>(&mut leaf_states, salt_matrix, h);
-        }
+                // Absorb salt into states using SIMD-parallelized path (no-op when salt is None)
+                if let Some(ref salt_matrix) = salt {
+                    debug_assert_eq!(salt_matrix.height(), leaf_states.len());
+                    debug_assert_eq!(salt_matrix.width(), SALT_ELEMS);
+                    absorb_matrix::<PF, PD, _, _, WIDTH, DIGEST_ELEMS>(
+                        &mut leaf_states,
+                        salt_matrix,
+                        h,
+                    );
+                }
 
-        // Squeeze the final hashes from the states
-        let leaf_digests: Vec<[PD::Value; DIGEST_ELEMS]> = leaf_states
-            .into_par_iter()
-            .map(|state| h.squeeze(&state))
-            .collect();
+                // Squeeze the final hashes from the states
+                leaf_states
+                    .into_par_iter()
+                    .map(|state| h.squeeze(&state))
+                    .collect()
+            });
 
         // Build digest layers by repeatedly compressing until we reach the root
-        let mut digest_layers = vec![leaf_digests];
+        let digest_layers = debug_span!("compress tree layers").in_scope(|| {
+            let mut digest_layers = vec![leaf_digests];
+            loop {
+                let prev_layer = digest_layers.last().unwrap();
+                if prev_layer.len() == 1 {
+                    break;
+                }
 
-        loop {
-            let prev_layer = digest_layers.last().unwrap();
-            if prev_layer.len() == 1 {
-                break;
+                let next_layer = compress_uniform::<PD, C, DIGEST_ELEMS>(prev_layer, c);
+                digest_layers.push(next_layer);
             }
-
-            let next_layer = compress_uniform::<PD, C, DIGEST_ELEMS>(prev_layer, c);
-            digest_layers.push(next_layer);
-        }
+            digest_layers
+        });
 
         Self {
             leaves,
