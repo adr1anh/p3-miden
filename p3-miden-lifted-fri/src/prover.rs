@@ -10,6 +10,7 @@ use p3_matrix::Matrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_miden_transcript::ProverChannel;
 use p3_util::reverse_bits_len;
+use tracing::{info_span, instrument};
 
 use crate::PcsParams;
 use crate::deep::prover::DeepPoly;
@@ -33,6 +34,7 @@ use crate::fri::prover::FriPolys;
 ///
 /// Alignment is derived from the trace trees to pad DEEP evaluations consistently.
 /// Trace trees must be built with `build_aligned_tree` to match this padding.
+#[instrument(name = "PCS opening", skip_all)]
 pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
@@ -60,20 +62,24 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     // ─────────────────────────────────────────────────────────────────────────
     // Construct DEEP quotient (observes evals, grinds, samples α and β)
     // ─────────────────────────────────────────────────────────────────────────
-    let deep_poly = DeepPoly::from_trees::<L, M, N, Ch>(
-        &params.deep,
-        trace_trees,
-        eval_points,
-        params.fri.log_blowup,
-        channel,
-    );
+    let deep_poly = info_span!("DEEP quotient").in_scope(|| {
+        DeepPoly::from_trees::<L, M, N, Ch>(
+            &params.deep,
+            trace_trees,
+            eval_points,
+            params.fri.log_blowup,
+            channel,
+        )
+    });
 
     // ─────────────────────────────────────────────────────────────────────────
     // FRI commit phase (observes commitments, grinds per-round, samples betas)
     // ─────────────────────────────────────────────────────────────────────────
     // The deep_poly contains evaluations on the LDE domain (size 2^log_lde_height).
     // FRI will prove that this polynomial is low-degree.
-    let fri_polys = FriPolys::<F, EF, L>::new(&params.fri, lmcs, deep_poly.deep_evals, channel);
+    let fri_polys = info_span!("FRI commit phase").in_scope(|| {
+        FriPolys::<F, EF, L>::new(&params.fri, lmcs, deep_poly.deep_evals, channel)
+    });
 
     // ─────────────────────────────────────────────────────────────────────────
     // Grind for query sampling
@@ -96,11 +102,13 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     // ─────────────────────────────────────────────────────────────────────────
     // Generate query proofs
     // ─────────────────────────────────────────────────────────────────────────
-    // Open input trees at all query indices at once (one proof per tree)
-    for tree in trace_trees {
-        tree.prove_batch(tree_indices.iter().copied(), channel);
-    }
+    info_span!("query phase").in_scope(|| {
+        // Open input trees at all query indices at once (one proof per tree)
+        for tree in trace_trees {
+            tree.prove_batch(tree_indices.iter().copied(), channel);
+        }
 
-    // Open all FRI rounds at all query indices at once (one proof per round)
-    fri_polys.prove_queries(&params.fri, &tree_indices, channel);
+        // Open all FRI rounds at all query indices at once (one proof per round)
+        fri_polys.prove_queries(&params.fri, &tree_indices, channel);
+    });
 }

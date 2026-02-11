@@ -15,6 +15,7 @@ use p3_miden_lmcs::utils::aligned_widths;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_miden_transcript::ProverChannel;
 use p3_util::log2_strict_usize;
+use tracing::info_span;
 
 use crate::utils::bit_reversed_coset_points;
 
@@ -69,7 +70,8 @@ impl<EF> DeepPoly<EF> {
             .collect();
 
         let quotient = PointQuotients::new(FieldArray::from(eval_points), &coset_points);
-        let batched_evals = quotient.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
+        let batched_evals = info_span!("evaluate at OOD points")
+            .in_scope(|| quotient.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup));
 
         let (deep_poly, _evals) =
             Self::from_evals::<L, M, N, Ch>(params, trace_trees, batched_evals, &quotient, channel);
