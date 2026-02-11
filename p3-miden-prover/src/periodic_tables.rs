@@ -82,13 +82,13 @@
 //! - [`evaluate_periodic_at_point`]: Evaluates periodic columns at a single challenge point.
 //!   Called by the verifier to check constraint satisfaction.
 
-use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_commit::PolynomialSpace;
 use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::{ExtensionField, TwoAdicField, batch_multiplicative_inverse};
 use p3_interpolation::interpolate_coset_with_precomputation;
+use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_strict_usize;
 use tracing::info_span;
@@ -102,31 +102,26 @@ use tracing::info_span;
 /// (z / g)^(N / max_period), so `lde_idx % table_period` is sufficient.
 #[derive(Clone, Debug)]
 pub(crate) struct PeriodicLdeTable<F> {
-    values: RowMajorMatrix<F>,
+    values: Option<RowMajorMatrix<F>>,
 }
 
-impl<F: Clone + Send + Sync> PeriodicLdeTable<F> {
+impl<F> PeriodicLdeTable<F> {
     pub fn width(&self) -> usize {
-        self.values.width
+        self.values.as_ref().map(|values| values.width).unwrap_or(0)
     }
 
-    /// Returns the row repetition period of the compact LDE table (`max_period * blowup`).
-    pub fn table_period(&self) -> usize {
-        if self.values.width == 0 {
-            0
-        } else {
-            self.values.values.len() / self.values.width
-        }
+    pub fn is_empty(&self) -> bool {
+        self.values.is_none()
     }
 
     #[inline]
-    pub fn get(&self, lde_idx: usize, col_idx: usize) -> &F {
-        let table_period = self.table_period();
+    pub fn get(&self, lde_idx: usize, col_idx: usize) -> Option<&F> {
+        let values = self.values.as_ref()?;
+        let table_period = values.values.len() / values.width;
         // lde_idx is an index into the evaluation (LDE/quotient) domain; rows repeat every
         // `table_period`.
-        debug_assert!(table_period > 0, "cannot index into empty periodic table");
         let row_idx = lde_idx % table_period;
-        &self.values.values[row_idx * self.values.width + col_idx]
+        Some(&values.values[row_idx * values.width + col_idx])
     }
 }
 
@@ -153,66 +148,69 @@ impl<F: TwoAdicField + Clone + Send + Sync> PeriodicLdeTable<F> {
         quotient_domain: &impl PolynomialSpace<Val = F>,
     ) -> Self {
         if periodic_table.is_empty() {
-            return Self {
-                values: RowMajorMatrix::new(Vec::new(), 0),
-            };
+            return Self { values: None };
         }
 
-    let trace_len = trace_domain.size();
-    let quotient_len = quotient_domain.size();
-    let blowup = quotient_len / trace_len;
-    let log_blowup = log2_strict_usize(blowup);
+        let trace_len = trace_domain.size();
+        let quotient_len = quotient_domain.size();
+        assert!(
+            quotient_len.is_multiple_of(trace_len),
+            "quotient domain must be a multiple of trace domain"
+        );
+        let blowup = quotient_len / trace_len;
+        assert!(blowup.is_power_of_two(), "blowup must be a power of two");
+        let log_blowup = log2_strict_usize(blowup);
 
-    let max_period = periodic_table
-        .iter()
-        .map(|col| {
-            let period = col.len();
-            debug_assert!(period.is_power_of_two(), "period must be a power of two");
-            period
-        })
-        .max()
-        .expect("non-empty periodic table");
+        let max_period = periodic_table
+            .iter()
+            .map(|col| {
+                let period = col.len();
+                assert!(period > 0, "periodic column cannot be empty");
+                assert!(period.is_power_of_two(), "period must be a power of two");
+                assert!(
+                    trace_len.is_multiple_of(period),
+                    "periodic column length must divide trace length"
+                );
+                period
+            })
+            .max()
+            .expect("non-empty periodic table");
 
-    let lde_period = max_period * blowup;
-    let trace_shift = trace_domain.first_point();
-    let lde_shift = quotient_domain.first_point() * trace_shift.inverse();
-    // Fold the evaluation-domain (quotient) coset shift down to the period coset:
-    // (quotient_shift / trace_shift)^(trace_len / max_period).
-    let periodic_shift = lde_shift.exp_u64((trace_len / max_period) as u64);
+        let trace_shift = trace_domain.first_point();
+        let lde_shift = quotient_domain.first_point() * trace_shift.inverse();
+        // Fold the evaluation-domain (quotient) coset shift down to the period coset:
+        // (quotient_shift / trace_shift)^(trace_len / max_period).
+        let periodic_shift = lde_shift.exp_u64((trace_len / max_period) as u64);
 
-    let _span = info_span!(
-        "periodic columns LDE",
-        cols = periodic_table.len(),
-        quotient_size = quotient_len,
-        max_period,
-        blowup
-    )
-    .entered();
+        let _span = info_span!(
+            "periodic columns LDE",
+            cols = periodic_table.len(),
+            quotient_size = quotient_len,
+            max_period,
+            blowup
+        )
+        .entered();
 
-    let dft = Radix2DFTSmallBatch::<F>::default();
-    let num_cols = periodic_table.len();
+        let dft = Radix2DFTSmallBatch::<F>::default();
+        let num_cols = periodic_table.len();
 
-    // Write column LDEs directly into the row-major buffer to avoid a full extra copy.
-    let mut row_major_values = vec![F::ZERO; lde_period * num_cols];
-    for (col_idx, col) in periodic_table.iter().enumerate() {
-        let period = col.len();
-        debug_assert!(period > 0, "periodic column cannot be empty");
-
-        let padded: Vec<F> = if period == max_period {
-            col.clone()
-        } else {
-            (0..max_period).map(|i| col[i % period]).collect()
-        };
-
-        let extended = dft.coset_lde(padded, log_blowup, periodic_shift);
-
-        for (row_idx, value) in extended.into_iter().enumerate() {
-            row_major_values[row_idx * num_cols + col_idx] = value;
+        // Build a padded row-major matrix, where each row is the periodic values at that index,
+        // padded to the max-period cycle length.
+        let mut padded_values = Vec::with_capacity(max_period * num_cols);
+        for row_idx in 0..max_period {
+            for col in periodic_table.iter() {
+                let period = col.len();
+                padded_values.push(col[row_idx % period]);
+            }
         }
-    }
+        let padded_matrix = RowMajorMatrix::new(padded_values, num_cols);
+
+        let lde_matrix = dft
+            .coset_lde_batch(padded_matrix, log_blowup, periodic_shift)
+            .to_row_major_matrix();
 
         Self {
-            values: RowMajorMatrix::new(row_major_values, num_cols),
+            values: Some(lde_matrix),
         }
     }
 }
@@ -301,13 +299,14 @@ fn subgroup_data<F>(trace_height: usize, log_trace_height: usize, period: usize)
 where
     F: TwoAdicField,
 {
-    debug_assert!(
+    assert!(period > 0, "periodic column cannot be empty");
+    assert!(
         trace_height.is_multiple_of(period),
         "Periodic column length must divide trace length"
     );
 
     let log_period = log2_strict_usize(period);
-    debug_assert!(
+    assert!(
         log_trace_height >= log_period,
         "Periodic column period cannot exceed trace height"
     );
@@ -323,6 +322,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
     use p3_field::coset::TwoAdicMultiplicativeCoset;
     use p3_field::{Field, PrimeCharacteristicRing};
     use p3_goldilocks::Goldilocks;
@@ -393,7 +393,11 @@ mod tests {
         let optimized_result: Vec<Vec<Val>> = (0..periodic_table.len())
             .map(|col_idx| {
                 (0..quotient_size)
-                    .map(|i| *optimized_table.get(i, col_idx))
+                    .map(|i| {
+                        *optimized_table
+                            .get(i, col_idx)
+                            .expect("periodic table must be populated when non-empty")
+                    })
                     .collect()
             })
             .collect();
@@ -472,7 +476,11 @@ mod tests {
         let optimized_result: Vec<Vec<Val>> = (0..periodic_table.len())
             .map(|col_idx| {
                 (0..quotient_size)
-                    .map(|i| *optimized_table.get(i, col_idx))
+                    .map(|i| {
+                        *optimized_table
+                            .get(i, col_idx)
+                            .expect("periodic table must be populated when non-empty")
+                    })
                     .collect()
             })
             .collect();
@@ -494,5 +502,91 @@ mod tests {
 
         // Compare results
         assert_eq!(optimized_result, naive_result);
+    }
+
+    #[test]
+    #[should_panic(expected = "periodic column cannot be empty")]
+    fn test_periodic_lde_table_empty_period_panics() {
+        let trace_height = 8;
+        let trace_domain =
+            TwoAdicMultiplicativeCoset::new(Val::GENERATOR, log2_strict_usize(trace_height))
+                .expect("valid trace domain");
+        let quotient_domain = trace_domain.create_disjoint_domain(trace_height << 1);
+
+        let periodic_table = vec![Vec::<Val>::new()];
+        let _ =
+            PeriodicLdeTable::from_periodic_table(&periodic_table, &trace_domain, &quotient_domain);
+    }
+
+    #[test]
+    #[should_panic(expected = "period must be a power of two")]
+    fn test_periodic_lde_table_non_power_of_two_period_panics() {
+        let trace_height = 16;
+        let trace_domain =
+            TwoAdicMultiplicativeCoset::new(Val::GENERATOR, log2_strict_usize(trace_height))
+                .expect("valid trace domain");
+        let quotient_domain = trace_domain.create_disjoint_domain(trace_height << 1);
+
+        let periodic_table = vec![vec![
+            Val::from_u32(1),
+            Val::from_u32(2),
+            Val::from_u32(3),
+            Val::from_u32(4),
+            Val::from_u32(5),
+            Val::from_u32(6),
+        ]];
+        let _ =
+            PeriodicLdeTable::from_periodic_table(&periodic_table, &trace_domain, &quotient_domain);
+    }
+
+    #[test]
+    #[should_panic(expected = "periodic column length must divide trace length")]
+    fn test_periodic_lde_table_period_exceeds_trace_panics() {
+        let trace_height = 8;
+        let trace_domain =
+            TwoAdicMultiplicativeCoset::new(Val::GENERATOR, log2_strict_usize(trace_height))
+                .expect("valid trace domain");
+        let quotient_domain = trace_domain.create_disjoint_domain(trace_height << 1);
+
+        let periodic_table = vec![vec![
+            Val::from_u32(1),
+            Val::from_u32(2),
+            Val::from_u32(3),
+            Val::from_u32(4),
+            Val::from_u32(5),
+            Val::from_u32(6),
+            Val::from_u32(7),
+            Val::from_u32(8),
+            Val::from_u32(9),
+            Val::from_u32(10),
+            Val::from_u32(11),
+            Val::from_u32(12),
+            Val::from_u32(13),
+            Val::from_u32(14),
+            Val::from_u32(15),
+            Val::from_u32(16),
+        ]];
+        let _ =
+            PeriodicLdeTable::from_periodic_table(&periodic_table, &trace_domain, &quotient_domain);
+    }
+
+    #[test]
+    #[should_panic(expected = "quotient domain must be a multiple of trace domain")]
+    fn test_periodic_lde_table_invalid_blowup_panics() {
+        let trace_height = 8;
+        let trace_domain =
+            TwoAdicMultiplicativeCoset::new(Val::GENERATOR, log2_strict_usize(trace_height))
+                .expect("valid trace domain");
+        let quotient_domain = TwoAdicMultiplicativeCoset::new(Val::GENERATOR, log2_strict_usize(4))
+            .expect("valid quotient domain");
+
+        let periodic_table = vec![vec![
+            Val::from_u32(1),
+            Val::from_u32(2),
+            Val::from_u32(3),
+            Val::from_u32(4),
+        ]];
+        let _ =
+            PeriodicLdeTable::from_periodic_table(&periodic_table, &trace_domain, &quotient_domain);
     }
 }

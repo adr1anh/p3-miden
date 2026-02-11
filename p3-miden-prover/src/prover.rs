@@ -569,14 +569,16 @@ where
                     randomness.iter().copied().map(Into::into).collect();
 
                 // Grab precomputed periodic evaluations for this packed chunk.
-                let periodic_values: Vec<PackedVal<SC>> = if periodic_table.is_empty() {
+                let periodic_values: Vec<PackedVal<SC>> = if periodic_on_quotient.is_empty() {
                     Vec::new()
                 } else {
                     let num_cols = periodic_on_quotient.width();
                     (0..num_cols)
                         .map(|col_idx| {
                             PackedVal::<SC>::from_fn(|j| {
-                                *periodic_on_quotient.get(i_start + j, col_idx)
+                                *periodic_on_quotient
+                                    .get(i_start + j, col_idx)
+                                    .expect("periodic table must be populated when non-empty")
                             })
                         })
                         .collect()
