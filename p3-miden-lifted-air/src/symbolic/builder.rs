@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use p3_field::{ExtensionField, Field};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
+use p3_util::log2_strict_usize;
 use tracing::instrument;
 
 use crate::{
@@ -264,6 +265,55 @@ where
     );
     air.eval(&mut builder);
     builder.constraint_layout()
+}
+
+/// Compute the log₂ quotient degree for a [`LiftedAir`].
+///
+/// Evaluates the AIR symbolically to determine the maximum constraint degree `d`,
+/// then returns `log₂(D)` where `D = next_power_of_two(d - 1)`.
+///
+/// The quotient polynomial `Q(x) = C(x) / Z_H(x)` has degree `(d - 1) * N`,
+/// so we need `D >= d - 1` chunks (each of degree `< N`) for the decomposition.
+/// Rounding `D` to the next power of two satisfies the coset structure.
+///
+/// This is used by both the prover (quotient domain sizing) and verifier
+/// (quotient width computation) to agree on the constraint degree without
+/// hardcoding a constant.
+#[instrument(name = "compute log quotient degree", skip_all, level = "debug")]
+pub fn get_log_quotient_degree<F, EF, A>(air: &A, num_public_values: usize) -> usize
+where
+    F: Field,
+    EF: ExtensionField<F>,
+    A: LiftedAir<F, EF>,
+    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
+{
+    let preprocessed_width = air.preprocessed_trace().map_or(0, |t| t.width());
+    let mut builder = SymbolicAirBuilder::<F, EF>::new(
+        preprocessed_width,
+        air.width(),
+        num_public_values,
+        air.aux_width(),
+        air.num_randomness(),
+        air.periodic_columns().len(),
+    );
+    air.eval(&mut builder);
+
+    let base_degree = builder
+        .base_constraints()
+        .iter()
+        .map(|c| c.degree_multiple())
+        .max()
+        .unwrap_or(0);
+    let ext_degree = builder
+        .extension_constraints()
+        .iter()
+        .map(|c| c.degree_multiple())
+        .max()
+        .unwrap_or(0);
+    let degree = base_degree.max(ext_degree);
+
+    // The quotient has degree (d-1)*N, so D = next_power_of_two(d - 1).
+    log2_strict_usize(degree.saturating_sub(1).next_power_of_two())
 }
 
 // ============================================================================

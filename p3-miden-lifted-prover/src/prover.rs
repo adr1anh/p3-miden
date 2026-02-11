@@ -22,7 +22,7 @@ use p3_field::{
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
-use p3_miden_lifted_air::{LiftedAir, SymbolicExpression, get_constraint_layout};
+use p3_miden_lifted_air::{LiftedAir, SymbolicExpression, get_constraint_layout, get_log_quotient_degree};
 use p3_miden_lifted_fri::prover::open_with_channel;
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::ProverChannel;
@@ -35,13 +35,6 @@ use crate::commit::commit_traces;
 use crate::constraints::{commit_quotient, evaluate_constraints};
 
 use crate::periodic::PeriodicLde;
-
-/// Log₂ of constraint degree for quotient decomposition.
-///
-/// The quotient polynomial Q is evaluated on the coset gJ of size N×D
-/// where D = 2^LOG_CONSTRAINT_DEGREE = 4, then decomposed into D chunks
-/// and extended to gK for commitment.
-const LOG_CONSTRAINT_DEGREE: usize = 2;
 
 /// Errors that can occur during proving.
 #[derive(Debug, Error)]
@@ -128,6 +121,13 @@ where
 
     let log_blowup = config.pcs.fri.log_blowup;
 
+    // Derive constraint degree from the AIR definitions (max across all instances)
+    let log_constraint_degree = instances
+        .iter()
+        .map(|(air, w)| get_log_quotient_degree::<F, EF, A>(*air, w.public_values.len()))
+        .max()
+        .unwrap_or(0);
+
     // Max trace height determines the LDE domain
     let max_trace_height = instances.last().unwrap().1.trace.height();
     let log_max_trace_height = log2_strict_usize(max_trace_height);
@@ -135,7 +135,7 @@ where
 
     // Max LDE coset (for the largest trace, no lifting)
     let max_lde_coset = LiftedCoset::unlifted(log_max_trace_height, log_blowup);
-    let max_quotient_coset = max_lde_coset.quotient_domain(LOG_CONSTRAINT_DEGREE);
+    let max_quotient_coset = max_lde_coset.quotient_domain(log_constraint_degree);
     let max_quotient_height = max_quotient_coset.lde_height();
 
     // 1. Commit all main traces
@@ -194,7 +194,7 @@ where
     let beta: EF = channel.sample_algebra_element::<EF>();
 
     // 5. Compute numerators for each trace and accumulate
-    let constraint_degree = 1 << LOG_CONSTRAINT_DEGREE;
+    let constraint_degree = 1 << log_constraint_degree;
     let mut numerators: Vec<Vec<EF>> = Vec::with_capacity(instances.len());
 
     // Pre-compute constraint layouts for each AIR (base/ext index mapping)
@@ -209,7 +209,7 @@ where
 
         // Create LiftedCoset for this trace (may be lifted relative to max)
         let this_lde_coset = LiftedCoset::new(log_trace_height, log_blowup, log_max_trace_height);
-        let this_quotient_coset = this_lde_coset.quotient_domain(LOG_CONSTRAINT_DEGREE);
+        let this_quotient_coset = this_lde_coset.quotient_domain(log_constraint_degree);
 
         // Get views into committed LDEs for this trace
         let main_on_gj = main_committed.quotient_domain_natural(i, constraint_degree);

@@ -19,7 +19,7 @@ use p3_dft::TwoAdicSubgroupDft;
 use p3_field::{ExtensionField, PrimeCharacteristicRing, PrimeField64, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_lifted_air::LiftedAir;
+use p3_miden_lifted_air::{LiftedAir, SymbolicExpression, get_log_quotient_degree};
 use p3_miden_lifted_fri::verifier::{PcsError, verify_with_channel as verify_pcs_with_channel};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
@@ -28,7 +28,7 @@ use thiserror::Error;
 use p3_miden_lifted_stark::{AirInstance, LiftedCoset, StarkConfig, ValidationError};
 
 use crate::constraints::{
-    CONSTRAINT_DEGREE, ConstraintFolder, align_width, reconstruct_quotient, row_to_packed_ext,
+    ConstraintFolder, align_width, reconstruct_quotient, row_to_packed_ext,
 };
 use crate::periodic::PeriodicPolys;
 
@@ -85,6 +85,7 @@ where
     L::Commitment: Copy,
     Dft: TwoAdicSubgroupDft<F>,
     Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
+    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
 {
     let instance = AirInstance::new(log_trace_height, public_values);
     verify_multi(config, &[(air, instance)], channel)
@@ -126,12 +127,21 @@ where
     L::Commitment: Copy,
     Dft: TwoAdicSubgroupDft<F>,
     Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
+    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
 {
     let air_instances: Vec<_> = instances.iter().map(|(_, inst)| *inst).collect();
     p3_miden_lifted_stark::validate_instances(&air_instances)?;
 
     let log_blowup = config.pcs.fri.log_blowup;
     let alignment = config.lmcs.alignment();
+
+    // Derive constraint degree from the AIR definitions (max across all instances)
+    let log_constraint_degree = instances
+        .iter()
+        .map(|(air, inst)| get_log_quotient_degree::<F, EF, A>(*air, inst.public_values.len()))
+        .max()
+        .unwrap_or(0);
+    let constraint_degree = 1usize << log_constraint_degree;
 
     // Max trace height determines the LDE domain
     let log_max_trace_height = instances.last().unwrap().1.log_trace_height;
@@ -186,7 +196,7 @@ where
         .iter()
         .map(|(air, _)| align_width(air.aux_width() * EF::DIMENSION, alignment))
         .collect();
-    let quotient_width = align_width(CONSTRAINT_DEGREE * EF::DIMENSION, alignment);
+    let quotient_width = align_width(constraint_degree * EF::DIMENSION, alignment);
 
     let commitments = vec![
         (main_commit, main_widths),

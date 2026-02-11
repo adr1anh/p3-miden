@@ -204,8 +204,9 @@ at `y_j`, and the opened trace values already correspond to `p_j(y_j)`.
   order (shortest first). The prover and verifier both validate this.
 - **Power-of-two heights** — All trace heights are powers of two.
 - **Bit-reversed storage** — All evaluation matrices are in bit-reversed order.
-- **Constraint degree** — Fixed at `D = 4` (`LOG_CONSTRAINT_DEGREE = 2`).
-  Both prover and verifier must agree on this constant.
+- **Constraint degree** — Derived automatically from the AIR via symbolic
+  constraint analysis (`get_log_quotient_degree`). `D = next_power_of_two(max_degree_multiple)`.
+  Both prover and verifier compute this from the same AIR definition.
 - **Transcript ordering** — The Fiat-Shamir transcript follows a strict
   observe/squeeze protocol. Prover and verifier must process commitments and
   challenges in identical order. This is security-critical.
