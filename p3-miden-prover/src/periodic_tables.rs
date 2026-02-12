@@ -103,6 +103,7 @@ use tracing::info_span;
 #[derive(Clone, Debug)]
 pub(crate) struct PeriodicLdeTable<F> {
     values: Option<RowMajorMatrix<F>>,
+    table_period: usize,
 }
 
 impl<F> PeriodicLdeTable<F> {
@@ -117,10 +118,10 @@ impl<F> PeriodicLdeTable<F> {
     #[inline]
     pub fn get(&self, lde_idx: usize, col_idx: usize) -> Option<&F> {
         let values = self.values.as_ref()?;
-        let table_period = values.values.len() / values.width;
         // lde_idx is an index into the evaluation (LDE/quotient) domain; rows repeat every
         // `table_period`.
-        let row_idx = lde_idx % table_period;
+        debug_assert!(self.table_period > 0);
+        let row_idx = lde_idx % self.table_period;
         Some(&values.values[row_idx * values.width + col_idx])
     }
 }
@@ -148,7 +149,10 @@ impl<F: TwoAdicField + Clone + Send + Sync> PeriodicLdeTable<F> {
         quotient_domain: &impl PolynomialSpace<Val = F>,
     ) -> Self {
         if periodic_table.is_empty() {
-            return Self { values: None };
+            return Self {
+                values: None,
+                table_period: 0,
+            };
         }
 
         let trace_len = trace_domain.size();
@@ -209,8 +213,11 @@ impl<F: TwoAdicField + Clone + Send + Sync> PeriodicLdeTable<F> {
             .coset_lde_batch(padded_matrix, log_blowup, periodic_shift)
             .to_row_major_matrix();
 
+        let table_period = lde_matrix.values.len() / lde_matrix.width;
+
         Self {
             values: Some(lde_matrix),
+            table_period,
         }
     }
 }
