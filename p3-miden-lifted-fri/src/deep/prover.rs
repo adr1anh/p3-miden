@@ -274,6 +274,10 @@ fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>, C: AsRef<[
     matrices: &[&M],
     coeffs: &[C],
 ) -> Vec<EF> {
+    debug_assert!(
+        matrices.windows(2).all(|w| w[0].height() <= w[1].height()),
+        "matrices must be sorted by ascending height"
+    );
     let n = matrices.last().unwrap().height();
 
     let mut acc = EF::zero_vec(n);

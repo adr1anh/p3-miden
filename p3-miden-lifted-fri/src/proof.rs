@@ -112,9 +112,9 @@ where
                 .collect();
             let base_width = arity * EF::DIMENSION;
             // FRI round openings are unaligned, so use the base width directly.
-            let widths = [base_width];
+            let round_widths = [base_width];
             let batch = lmcs
-                .read_batch_proof_from_channel(&widths, log_num_rows, &round_indices, channel)
+                .read_batch_proof_from_channel(&round_widths, log_num_rows, &round_indices, channel)
                 .map_err(|e| match e {
                     p3_miden_lmcs::LmcsError::TranscriptError(te) => te,
                     _ => TranscriptError::NoMoreFields,

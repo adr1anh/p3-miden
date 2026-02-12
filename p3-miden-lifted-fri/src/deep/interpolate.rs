@@ -89,6 +89,7 @@ use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::linear_map::LinearMap;
 use p3_util::{flatten_to_base, log2_strict_usize, reconstitute_from_base};
+use tracing::debug_span;
 
 use super::evals::{BatchedEvals, BatchedGroupEvals};
 use crate::utils::MatrixExt;
@@ -114,6 +115,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
     /// `gK` also avoids `H`. If a caller uses a different domain relationship, it must
     /// additionally ensure points are outside the trace domain.
     pub fn new(points: FieldArray<EF, N>, coset_points: &[F]) -> Self {
+        let _span = debug_span!("PointQuotients::new", n = coset_points.len()).entered();
         let n_points = coset_points.len();
 
         // Compute differences in parallel: for each domain point x, compute [z₀ - x, z₁ - x, ...]
@@ -149,6 +151,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
         coset_points: &[F],
         log_blowup: usize,
     ) -> BatchedEvals<EF, N> {
+        let _span = debug_span!("batch_eval_lifted", n_groups = matrices_groups.len()).entered();
         let n = coset_points.len();
         let d = n >> log_blowup;
         let log_d = log2_strict_usize(d);
@@ -172,31 +175,32 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
         // Compute barycentric weights for each point at each height:
         // w_{i,j}(z_j) = x_i / (z_j - x_i) = x_i · point_quotient[i][j]
         // For smaller domains, sum chunks (weight folding).
-        let barycentric_weights: LinearMap<usize, Vec<FieldArray<EF, N>>> = {
-            assert_eq!(*used_degrees.last().unwrap(), d);
-            // Initial weights at full domain size
-            let top_weights: Vec<FieldArray<EF, N>> = coset_points[..d]
-                .par_iter()
-                .zip(self.point_quotient[..d].par_iter())
-                .map(|(&x, invs)| (*invs).map(|inv| inv * x))
-                .collect();
-
-            let mut weights = Vec::with_capacity(used_degrees.len());
-            weights.push(top_weights);
-
-            // Descending order: progressively sum chunks to shrink weights
-            for &next_degree in used_degrees.iter().rev().skip(1) {
-                let prev_weights = weights.last().unwrap();
-                let chunk_size = prev_weights.len() / next_degree;
-                let next_weights = prev_weights
-                    .par_chunks_exact(chunk_size)
-                    .map(|chunk| chunk.iter().copied().sum())
+        let barycentric_weights: LinearMap<usize, Vec<FieldArray<EF, N>>> =
+            debug_span!("barycentric_weights", d).in_scope(|| {
+                assert_eq!(*used_degrees.last().unwrap(), d);
+                // Initial weights at full domain size
+                let top_weights: Vec<FieldArray<EF, N>> = coset_points[..d]
+                    .par_iter()
+                    .zip(self.point_quotient[..d].par_iter())
+                    .map(|(&x, invs)| (*invs).map(|inv| inv * x))
                     .collect();
-                weights.push(next_weights);
-            }
 
-            weights.into_iter().map(|w| (w.len(), w)).collect()
-        };
+                let mut weights = Vec::with_capacity(used_degrees.len());
+                weights.push(top_weights);
+
+                // Descending order: progressively sum chunks to shrink weights
+                for &next_degree in used_degrees.iter().rev().skip(1) {
+                    let prev_weights = weights.last().unwrap();
+                    let chunk_size = prev_weights.len() / next_degree;
+                    let next_weights = prev_weights
+                        .par_chunks_exact(chunk_size)
+                        .map(|chunk| chunk.iter().copied().sum())
+                        .collect();
+                    weights.push(next_weights);
+                }
+
+                weights.into_iter().map(|w| (w.len(), w)).collect()
+            });
 
         // f(z_j^r) = s_j(z_j) · Σ w_{i,j}(z_j) · f(x_i)
         // For each group, evaluate at all N points using columnwise_dot_product_batched
