@@ -110,15 +110,14 @@ pub(crate) fn check_constraints<F, EF, A>(
 
         // Compute periodic values for the current row
         let periodic_table = air.periodic_table();
-        let periodic_values: Vec<EF> = periodic_table
+        let periodic_values: Vec<F> = periodic_table
             .iter()
             .map(|col| {
                 if col.is_empty() {
-                    EF::ZERO
+                    F::ZERO
                 } else {
                     // Use modulo to get the repeating value
-                    // Convert from base field to extension field using From trait
-                    EF::from(col[row_index % col.len()])
+                    col[row_index % col.len()]
                 }
             })
             .collect();
@@ -163,7 +162,7 @@ pub struct DebugConstraintBuilder<'a, F: Field, EF: ExtensionField<F>> {
     /// The public values provided for constraint validation (e.g. inputs or outputs).
     public_values: &'a [F],
     /// Periodic column values (computed for the current row)
-    periodic_values: Vec<EF>,
+    periodic_values: Vec<F>,
     /// A flag indicating whether this is the first row.
     is_first_row: F,
     /// A flag indicating whether this is the last row.
@@ -188,7 +187,7 @@ where
     type VarEF = EF;
     type MP = ViewPair<'a, EF>;
     type RandomVar = EF;
-    type PeriodicVal = EF;
+    type PeriodicVal = F;
 
     fn main(&self) -> Self::M {
         self.main

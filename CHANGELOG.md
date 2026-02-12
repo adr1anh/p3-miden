@@ -1,3 +1,8 @@
+## 0.4.3 (TBD)
+
+- Fix periodic column evaluation on LDE/quotient domains.
+- [BREAKING] Remove forced conversion of periodic values from F to EF.
+
 ## 0.4.2 (2025-01-14)
 
 - [BREAKING] Removed `p3-miden-goldilocks` crate, now uses upstream `p3-goldilocks` (#3).

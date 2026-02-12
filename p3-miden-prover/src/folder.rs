@@ -27,7 +27,7 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// Public inputs to the AIR
     pub public_values: &'a [Val<SC>],
     /// Periodic column values (precomputed for the current row)
-    pub periodic_values: &'a [PackedChallenge<SC>],
+    pub periodic_values: &'a [PackedVal<SC>],
     /// Evaluations of the Selector polynomial for the first row of the trace
     pub is_first_row: PackedVal<SC>,
     /// Evaluations of the Selector polynomial for the last row of the trace
@@ -56,7 +56,7 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
     type VarEF = PackedChallenge<SC>;
     type MP = RowMajorMatrixView<'a, PackedChallenge<SC>>;
     type RandomVar = PackedChallenge<SC>;
-    type PeriodicVal = PackedChallenge<SC>;
+    type PeriodicVal = PackedVal<SC>;
 
     #[inline]
     fn main(&self) -> Self::M {
