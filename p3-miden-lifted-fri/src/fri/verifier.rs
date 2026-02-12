@@ -119,6 +119,7 @@ where
     {
         let log_arity = params.fold.log_arity();
         let arity = params.fold.arity();
+        // FRI commits base-field values; each extension element spans DIMENSION base elements.
         let base_width = arity * EF::DIMENSION;
         let widths = [base_width];
 
@@ -167,14 +168,14 @@ where
 
                     // open_batch guarantees all requested indices are returned with
                     // the correct widths.
-                    let flat_row = opened_rows
+                    let flat_row: &[F] = opened_rows
                         .get(&row_idx)
-                        .and_then(|rows| rows.first())
-                        .and_then(|row| row.get(..base_width))
+                        .and_then(|rows| rows.iter_rows().next()?.get(..base_width))
                         .ok_or(FriError::InvalidOpening {
                             tree_index: row_idx,
                             round: round_idx,
                         })?;
+                    // Reinterpret base-field elements as extension field for folding.
                     let row: Vec<EF> = EF::reconstitute_from_base(flat_row.to_vec());
 
                     if row.get(position) != Some(&eval) {
@@ -197,7 +198,12 @@ where
             g_inv = g_inv.exp_power_of_2(log_arity);
         }
 
-        // Final polynomial check: p(ω^{bitrev(idx)}) should equal the folded value.
+        // After all folding rounds, the polynomial has been reduced to degree < final_degree.
+        // The prover sent this final polynomial's coefficients; we evaluate it at each
+        // remaining query point and check consistency with the folded values. This closes
+        // the FRI proximity argument: if the original polynomial was far from low-degree,
+        // at least one query fails with high probability.
+        //
         // `final_poly` is in descending degree order [cₙ, ..., c₁, c₀], which is
         // the native order for Horner evaluation.
         let generator = F::two_adic_generator(log_domain_size);

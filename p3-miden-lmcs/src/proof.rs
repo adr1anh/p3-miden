@@ -9,6 +9,7 @@
 //! [`Proof`] objects once the hashing context is available.
 
 use crate::Lmcs;
+use crate::utils::RowList;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
@@ -29,7 +30,7 @@ use serde::{Deserialize, Serialize};
 ))]
 pub struct Proof<F, C, const SALT_ELEMS: usize = 0> {
     /// Opened rows for this query.
-    pub rows: Vec<Vec<F>>,
+    pub rows: RowList<F>,
     /// Salt for this leaf (zero-sized when the configuration is non-hiding).
     pub salt: [F; SALT_ELEMS],
     /// Sibling hashes from leaf level to root (bottom-to-top).
@@ -44,7 +45,7 @@ pub struct Proof<F, C, const SALT_ELEMS: usize = 0> {
 ))]
 pub struct LeafOpening<F, const SALT_ELEMS: usize = 0> {
     /// Opened rows for this query.
-    pub rows: Vec<Vec<F>>,
+    pub rows: RowList<F>,
     /// Salt for this leaf (zero-sized when the configuration is non-hiding).
     pub salt: [F; SALT_ELEMS],
 }
@@ -92,15 +93,14 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
     {
         // Collect and sort indices to match prover's write order (BTreeSet iteration).
         let unique_indices: BTreeSet<usize> = indices.iter().copied().collect();
+        let total_width: usize = widths.iter().sum();
         // Read openings in sorted order, matching prove_batch's write order.
         let openings: BTreeMap<usize, LeafOpening<F, SALT_ELEMS>> = unique_indices
             .iter()
             .copied()
             .map(|index| {
-                let rows: Vec<_> = widths
-                    .iter()
-                    .map(|&w| Ok(Vec::from(channel.receive_hint_field_slice(w)?)))
-                    .collect::<Result<_, _>>()?;
+                let elems = channel.receive_hint_field_slice(total_width)?.to_vec();
+                let rows = RowList::new(elems, widths);
                 let salt = channel.receive_hint_field_array()?;
                 Ok((index, LeafOpening { rows, salt }))
             })
@@ -139,10 +139,10 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         let mut tree: BTreeMap<(usize, usize), C> = BTreeMap::new();
 
         for (&index, opening) in self.openings.iter() {
-            if opening.rows.len() != widths.len() {
+            if opening.rows.num_rows() != widths.len() {
                 return None;
             }
-            for (row, &width) in opening.rows.iter().zip(widths.iter()) {
+            for (row, &width) in opening.rows.iter_rows().zip(widths.iter()) {
                 if row.len() != width {
                     return None;
                 }
@@ -151,8 +151,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
             let leaf_hash = lmcs.hash(
                 opening
                     .rows
-                    .iter()
-                    .map(|row| row.as_slice())
+                    .iter_rows()
                     .chain(core::iter::once(opening.salt.as_slice())),
             );
 
@@ -162,6 +161,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
                 siblings: Vec::with_capacity(log_max_height),
             });
 
+            // Reject if two openings claim different data for the same leaf.
             if tree
                 .insert((0, index), leaf_hash)
                 .is_some_and(|existing_hash| existing_hash != leaf_hash)

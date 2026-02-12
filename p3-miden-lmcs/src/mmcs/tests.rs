@@ -110,21 +110,15 @@ fn extract_proofs_roundtrip() {
             );
 
             let opening_proof = (proof.salt, proof.siblings.clone());
+            let rows_vec: Vec<Vec<F>> = proof.rows.iter_rows().map(|r| r.to_vec()).collect();
             let batch_opening = BatchOpeningRef {
-                opened_values: &proof.rows,
+                opened_values: &rows_vec,
                 opening_proof: &opening_proof,
             };
             Mmcs::verify_batch(&mmcs, &commitment, &dimensions, idx, batch_opening)
                 .expect("proof should verify");
 
-            let expected_rows = tree.rows(idx);
-            for (matrix_idx, expected_row) in expected_rows.iter().enumerate() {
-                assert_eq!(
-                    proof.rows[matrix_idx].as_slice(),
-                    expected_row.as_slice(),
-                    "row mismatch for index {idx}, matrix {matrix_idx}"
-                );
-            }
+            assert_eq!(proof.rows, tree.rows(idx));
         }
     };
 
@@ -149,8 +143,12 @@ fn mmcs_roundtrip_non_hiding() {
     .expect("mmcs verify should succeed");
 
     let expected_rows = tree.rows(index);
-    for (row, expected_row) in batch_opening.opened_values.iter().zip(expected_rows.iter()) {
-        assert_eq!(row.as_slice(), expected_row.as_slice());
+    for (row, expected_row) in batch_opening
+        .opened_values
+        .iter()
+        .zip(expected_rows.iter_rows())
+    {
+        assert_eq!(row.as_slice(), expected_row);
     }
 }
 

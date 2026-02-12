@@ -7,7 +7,6 @@ use super::{DeepEvals, DeepParams};
 use crate::utils::{horner, horner_acc};
 use p3_challenger::CanSample;
 use p3_field::{ExtensionField, TwoAdicField};
-use p3_matrix::Matrix;
 use p3_miden_lmcs::{Lmcs, LmcsError};
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
@@ -92,11 +91,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
             .iter()
             .enumerate()
             .map(|(point_idx, &point)| {
-                let all_columns = evals
-                    .groups()
-                    .iter()
-                    .flat_map(|group| group.iter())
-                    .flat_map(|matrix| matrix.row(point_idx).expect("point_idx in range"));
+                let all_columns = evals.point(point_idx).iter_values();
                 (point, horner(challenge_columns, all_columns))
             })
             .collect();
@@ -147,26 +142,25 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
             //
             // `horner_acc` continues the running accumulation across commitment groups:
             // group 0's columns get the highest powers, group 1's continue from where
-            // group 0 left off. This matches the prover's coefficient ordering and
-            // the OOD reduction's iteration order above.
+            // group 0 left off. The coefficient ordering must match the prover's exactly;
+            // otherwise the reconstructed DEEP quotient diverges from the FRI-committed
+            // polynomial, causing spurious rejections.
             for (tree_idx, acc) in reduced_rows.iter_mut() {
                 let rows_for_query =
                     opened_rows.get(tree_idx).ok_or(DeepError::InvalidOpening {
                         tree: group_idx,
                         tree_index: *tree_idx,
                     })?;
-                *acc = horner_acc(
-                    *acc,
-                    self.challenge_columns,
-                    rows_for_query.iter().flatten().copied(),
-                );
+                *acc = horner_acc(*acc, self.challenge_columns, rows_for_query.iter_values());
             }
         }
 
         let generator = F::two_adic_generator(self.log_lde_height);
         let shift = F::GENERATOR;
 
-        // Compute DEEP evaluation for each query
+        // Reconstruct Q(x) at each queried domain point x from the opened row data.
+        // If the prover's OOD claims were correct, these values lie on the
+        // low-degree polynomial committed via FRI.
         let evals: BTreeMap<usize, EF> = reduced_rows
             .into_iter()
             .map(|(tree_idx, reduced_row)| {

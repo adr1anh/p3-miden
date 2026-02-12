@@ -2,7 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::{array, mem};
 
-use crate::utils::{PackedValueExt, aligned_widths, pad_row_to_alignment, pad_rows_to_alignment};
+use crate::utils::{PackedValueExt, RowList, aligned_widths, pad_row_to_alignment};
 use crate::{LmcsTree, Proof};
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
@@ -123,24 +123,17 @@ where
     /// that require zero padding must check these columns explicitly.
     ///
     /// Panics if `index` is out of range for the tree height.
-    fn rows(&self, index: usize) -> Vec<Vec<F>> {
+    fn rows(&self, index: usize) -> RowList<F> {
         let max_height = self.height();
-        let alignment = self.alignment;
-
-        let rows = self
-            .leaves
-            .iter()
-            .map(|m| {
-                let height = m.height();
-                let log_scaling_factor = log2_strict_usize(max_height / height);
-                let row_index = index >> log_scaling_factor;
-                m.row_slice(row_index)
-                    .expect("row_index must be valid after upsampling")
-                    .to_vec()
-            })
-            .collect();
-
-        pad_rows_to_alignment(rows, alignment)
+        let rows_iter = self.leaves.iter().map(|m| {
+            // Lifting: a matrix of height h maps leaf index i to row i >> log₂(max_height/h).
+            let log_scaling = log2_strict_usize(max_height / m.height());
+            let row_index = index >> log_scaling;
+            m.row_slice(row_index)
+                .expect("row_index must be valid after upsampling")
+                .to_vec()
+        });
+        RowList::from_rows_aligned(rows_iter, self.alignment)
     }
 
     /// Prove a batch opening and stream it into a transcript channel.

@@ -16,7 +16,7 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
-use crate::utils::aligned_len;
+use crate::utils::{RowList, aligned_len};
 use crate::{
     BatchProof, HidingLmcsConfig, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, LmcsTree, Proof,
 };
@@ -32,7 +32,7 @@ pub use p3_miden_dev_utils::matrix::concatenate_matrices;
 pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 type Commitment = <BaseLmcs as Lmcs>::Commitment;
 type TestTranscriptData = TranscriptData<F, Commitment>;
-type OpenedRows = BTreeMap<usize, Vec<Vec<F>>>;
+type OpenedRows = BTreeMap<usize, RowList<F>>;
 
 /// Create a local LMCS config.
 pub fn lmcs() -> BaseLmcs {
@@ -145,15 +145,8 @@ fn lmcs_roundtrip() {
             roundtrip_open_batch(&lmcs, &tree, &indices).expect("batch opening should verify");
 
         for (&leaf_idx, rows_for_query) in &opened_rows {
-            assert_eq!(rows_for_query.len(), widths.len());
-            let expected_rows = tree.rows(leaf_idx);
-            for (matrix_idx, expected_row) in expected_rows.iter().enumerate() {
-                assert_eq!(
-                    rows_for_query[matrix_idx].as_slice(),
-                    expected_row.as_slice(),
-                    "mismatch at leaf {leaf_idx}, matrix {matrix_idx}"
-                );
-            }
+            assert_eq!(rows_for_query.num_rows(), widths.len());
+            assert_eq!(*rows_for_query, tree.rows(leaf_idx));
         }
     };
 
@@ -183,8 +176,7 @@ fn lmcs_duplicate_indices_roundtrip() {
     assert_eq!(opened_rows.len(), 3);
 
     for (&index, rows) in &opened_rows {
-        let expected_rows = tree.rows(index);
-        assert_eq!(*rows, expected_rows, "row mismatch for index {index}");
+        assert_eq!(*rows, tree.rows(index), "row mismatch for index {index}");
     }
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
@@ -199,9 +191,9 @@ fn lmcs_duplicate_indices_roundtrip() {
     assert_eq!(batch.openings.len(), 3);
     for &index in &[0usize, 1, 3] {
         let opening = batch.openings.get(&index).expect("opening for index");
-        let expected_rows = tree.rows(index);
         assert_eq!(
-            opening.rows, expected_rows,
+            opening.rows,
+            tree.rows(index),
             "batch opening rows mismatch for index {index}"
         );
     }
@@ -227,14 +219,7 @@ fn hiding_roundtrip() {
             roundtrip_open_batch(&config, &tree, indices).expect("batch opening should verify");
 
         for (&leaf_idx, rows) in &opened_rows {
-            let expected_rows = tree.rows(leaf_idx);
-            for (matrix_idx, expected_row) in expected_rows.iter().enumerate() {
-                assert_eq!(
-                    rows[matrix_idx].as_slice(),
-                    expected_row.as_slice(),
-                    "mismatch at leaf {leaf_idx}, matrix {matrix_idx}"
-                );
-            }
+            assert_eq!(*rows, tree.rows(leaf_idx));
         }
     };
 
@@ -323,12 +308,12 @@ fn build_tree_alignment_modes() {
     }
 
     let rows_aligned = tree_aligned.rows(0);
-    assert_eq!(rows_aligned[0].len(), widths_aligned[0]);
-    assert_eq!(rows_aligned[1].len(), widths_aligned[1]);
+    let widths_a: Vec<usize> = rows_aligned.iter_rows().map(|r| r.len()).collect();
+    assert_eq!(widths_a, widths_aligned);
 
     let rows_unaligned = tree_unaligned.rows(0);
-    assert_eq!(rows_unaligned[0].len(), widths_unaligned[0]);
-    assert_eq!(rows_unaligned[1].len(), widths_unaligned[1]);
+    let widths_u: Vec<usize> = rows_unaligned.iter_rows().map(|r| r.len()).collect();
+    assert_eq!(widths_u, widths_unaligned);
 
     let indices = [0usize, 1usize];
     let (_transcript, opened_rows) = roundtrip_open_batch(&lmcs, &tree_aligned, &indices)
@@ -380,7 +365,7 @@ fn batch_proof_handles_empty_or_oob() {
         salt,
         siblings,
     } = proof;
-    assert!(rows.is_empty());
+    assert_eq!(rows.num_rows(), 0);
     assert!(salt.is_empty());
     assert_eq!(siblings.len(), 2);
 

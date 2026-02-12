@@ -43,7 +43,7 @@
 //! the highest power to the first element: `f₀·αᵂ⁻¹ + f₁·αᵂ⁻² + ... + fᵂ₋₁·α⁰`.
 //!
 //! This convention is shared by:
-//! - Prover OOD reduction (`evals::BatchedEvals::reduce`)
+//! - Prover OOD reduction (`horner` over aligned batched evals)
 //! - Verifier OOD reduction (inline in `verifier::DeepOracle::new` via `horner_acc`)
 //! - Verifier query-time row reduction (`verifier::DeepOracle::open_batch` via `horner_acc`)
 //! - Prover LDE evaluation (`prover::DeepPoly::from_trees` via explicit dot-product

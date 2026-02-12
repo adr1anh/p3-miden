@@ -88,7 +88,9 @@ where
             siblings,
         } = tree.single_proof(index);
 
-        BatchOpening::new(rows, (salt, siblings))
+        // Convert RowList to Vec<Vec<F>> at the Mmcs trait boundary.
+        let rows_vec: Vec<Vec<PF::Value>> = rows.iter_rows().map(|r| r.to_vec()).collect();
+        BatchOpening::new(rows_vec, (salt, siblings))
     }
 
     fn get_matrices<'a, M: Matrix<PF::Value>>(&self, tree: &'a Self::ProverData<M>) -> Vec<&'a M> {

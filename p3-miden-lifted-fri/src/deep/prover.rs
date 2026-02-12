@@ -2,9 +2,8 @@ use alloc::vec::Vec;
 use core::iter::zip;
 
 use super::DeepParams;
-use super::evals::BatchedEvals;
 use super::interpolate::PointQuotients;
-use crate::utils::PackedFieldExtensionExt;
+use crate::utils::{PackedFieldExtensionExt, horner};
 use p3_challenger::CanSample;
 use p3_field::{
     ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue, TwoAdicField,
@@ -12,7 +11,7 @@ use p3_field::{
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 use p3_miden_lmcs::utils::aligned_widths;
-use p3_miden_lmcs::{Lmcs, LmcsTree};
+use p3_miden_lmcs::{Lmcs, LmcsTree, RowList};
 use p3_miden_transcript::ProverChannel;
 use p3_util::log2_strict_usize;
 use tracing::info_span;
@@ -32,9 +31,7 @@ impl<EF> DeepPoly<EF> {
     /// Construct `Q(X)` by evaluating trace trees at the opening points.
     ///
     /// This computes the LDE coset points from the trace tree height, evaluates the committed
-    /// matrices at `eval_points`, and then calls [`Self::from_evals`]. The returned `DeepPoly`
-    /// owns only the DEEP quotient evaluations; if you need aligned evaluation matrices for
-    /// testing, call `from_evals` directly.
+    /// matrices at `eval_points`, and then calls [`Self::from_evals`].
     ///
     /// Preconditions: `eval_points` must be distinct and lie outside the trace subgroup `H`
     /// and LDE evaluation coset `gK`. The outer protocol is expected to enforce this.
@@ -83,19 +80,19 @@ impl<EF> DeepPoly<EF> {
     /// # Arguments
     /// - `trace_trees`: Trace trees used to derive alignment and matrix groups. All trees must
     ///   share the same alignment; mixed alignments are not supported.
-    /// - `batched_evals`: Indexed as `batched_evals[group_idx][matrix_idx]` with `FieldArray<N>`
-    ///   per column. Widths are expected to match the unpadded matrices; this method pads columns
-    ///   to the trace alignment before serializing into the transcript.
+    /// - `batched_evals`: One row per matrix, each row holding `FieldArray<EF, N>` per column.
+    ///   Widths match the unpadded matrices; alignment padding is applied lazily during
+    ///   channel writes and Horner reduction.
     /// - `quotient`: Precomputed `1/(zⱼ - xᵢ)` for all opening points zⱼ and domain points xᵢ.
     ///
-    /// Returns the constructed `DeepPoly` and the aligned `batched_evals` (useful for tests).
+    /// Returns the constructed `DeepPoly` and the (unaligned) `batched_evals` for test inspection.
     pub(crate) fn from_evals<L, M, const N: usize, Ch>(
         params: &DeepParams,
         trace_trees: &[&L::Tree<M>],
-        batched_evals: BatchedEvals<EF, N>,
+        batched_evals: RowList<FieldArray<EF, N>>,
         quotient: &PointQuotients<L::F, EF, N>,
         channel: &mut Ch,
-    ) -> (Self, BatchedEvals<EF, N>)
+    ) -> (Self, RowList<FieldArray<EF, N>>)
     where
         L: Lmcs,
         L::F: TwoAdicField,
@@ -124,21 +121,16 @@ impl<EF> DeepPoly<EF> {
             .map(|tree| tree.leaves().iter().collect())
             .collect();
 
-        // Pad each matrix's column evaluations with zeros to a multiple of the alignment.
-        // This matches the virtual zero-valued columns the LMCS inserts when hashing rows,
-        // so the transcript contains aligned widths. The verifier reads and reduces over these
-        // padded widths but does not check that padding values are zero — a malicious prover
-        // could use non-zero padding, but those columns must still be valid low-degree
-        // polynomials (enforced by FRI).
-        //
-        // After alignment, the representation is:
-        //   batched_evals.groups()[group][matrix][col] : FieldArray<EF, N>
-        // where each FieldArray<EF, N> holds the evaluations of column `col` at all N
-        // opening points (one extension-field element per point).
-        let batched_evals = batched_evals.aligned(alignment);
-
-        // 1. Observe evaluations into transcript in point-major order.
-        batched_evals.write_to_channel(channel);
+        // 1. Bind the prover's OOD evaluation claims into the Fiat-Shamir transcript.
+        //    The DEEP challenges (α, β) are derived after this, so a cheating prover
+        //    cannot adapt its claims to the challenges.
+        //    Each row is implicitly zero-padded to the tree alignment, matching the
+        //    virtual zero columns the LMCS inserts when hashing rows.
+        for point_idx in 0..N {
+            for eval in batched_evals.iter_aligned(alignment) {
+                channel.send_algebra_element(eval[point_idx]);
+            }
+        }
 
         // 2. Grind for proof-of-work witness
         let _pow_witness = channel.grind(params.deep_pow_bits);
@@ -148,8 +140,9 @@ impl<EF> DeepPoly<EF> {
         let challenge_points: EF = channel.sample_algebra_element();
 
         // Pre-compute f_reduced(zⱼ) for all N points using Horner.
-        // Structure: batched_evals.groups()[group_idx][matrix_idx][col_idx] is FieldArray<EF, N>
-        let f_reduced_at_points: FieldArray<EF, N> = batched_evals.reduce(challenge_columns);
+        // Reduces across all matrices' aligned columns in flat order.
+        let f_reduced_at_points: FieldArray<EF, N> =
+            horner(challenge_columns, batched_evals.iter_aligned(alignment));
 
         let w = <L::F as Field>::Packing::WIDTH;
         let point_quotient = &quotient.point_quotient;
@@ -213,6 +206,10 @@ impl<EF> DeepPoly<EF> {
         let point_coeffs: [EF; N] = core::array::from_fn(|j| challenge_points.exp_u64(j as u64));
 
         // Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) · 1/(zⱼ - X)
+        //
+        // If all evaluation claims are correct, each numerator vanishes at X = zⱼ,
+        // canceling the pole. Q(X) is then low-degree, which FRI can verify.
+        // A false claim leaves an uncanceled pole, making Q high-degree.
         let mut deep_evals = EF::zero_vec(n);
 
         if w == 1 {
@@ -346,7 +343,8 @@ mod tests {
 
     use crate::utils::horner;
     use p3_field::{PrimeCharacteristicRing, dot_product};
-    use p3_miden_lmcs::utils::{aligned_widths, pad_rows_to_alignment};
+    use p3_miden_lmcs::RowList;
+    use p3_miden_lmcs::utils::aligned_widths;
 
     use crate::tests::{EF, F};
 
@@ -361,7 +359,7 @@ mod tests {
             vec![F::from_u64(1), F::from_u64(2)],
             vec![F::from_u64(3), F::from_u64(4), F::from_u64(5)],
         ];
-        let padded_rows = pad_rows_to_alignment(rows.clone(), alignment);
+        let padded = RowList::from_rows_aligned(&rows, alignment);
 
         let mut neg_powers_iter = c
             .shifted_powers(EF::NEG_ONE)
@@ -374,13 +372,10 @@ mod tests {
             .collect();
 
         // Explicit coefficient sum: Σᵢ coeffs[i] · rows[i]
-        let explicit: EF = dot_product(
-            neg_coeffs.iter().flatten().copied(),
-            padded_rows.iter().flatten().copied(),
-        );
+        let explicit: EF = dot_product(neg_coeffs.iter().flatten().copied(), padded.iter_values());
 
         // Horner using reduce_with_powers (same as used in verifier)
-        let horner: EF = horner(c, padded_rows.iter().flatten().copied());
+        let horner: EF = horner(c, padded.iter_values());
 
         assert_eq!(explicit, EF::NEG_ONE * horner);
     }
@@ -420,13 +415,10 @@ mod tests {
             ],
             vec![F::from_u64(100), F::from_u64(200)],
         ];
-        let padded_rows = pad_rows_to_alignment(rows.clone(), alignment);
+        let padded = RowList::from_rows_aligned(&rows, alignment);
 
-        let explicit: EF = dot_product(
-            coeffs.iter().flatten().copied(),
-            padded_rows.iter().flatten().copied(),
-        );
-        let horner: EF = horner(c, padded_rows.iter().flatten().copied());
+        let explicit: EF = dot_product(coeffs.iter().flatten().copied(), padded.iter_values());
+        let horner: EF = horner(c, padded.iter_values());
 
         assert_eq!(explicit, EF::NEG_ONE * horner);
     }

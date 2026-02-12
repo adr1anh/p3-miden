@@ -12,7 +12,7 @@ use p3_miden_transcript::{TranscriptError, VerifierChannel};
 /// This records the prover's PoW witness and the two challenges sampled
 /// from the Fiat-Shamir transcript after observing evaluations.
 pub struct DeepTranscript<F: Field, EF: ExtensionField<F>> {
-    /// `evals.groups()[commit_idx][matrix_idx]` stores rows by point.
+    /// `evals.point(idx).as_slice()` gives all column values for a single point.
     pub evals: DeepEvals<EF>,
     /// Proof-of-work witness sampled before DEEP challenges.
     pub pow_witness: F,

@@ -10,9 +10,10 @@ use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_miden_transcript::VerifierChannel;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 
+use crate::utils::RowList;
 use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsError, OpenedRows};
 
-type Opening<F, C> = (Vec<Vec<F>>, C);
+type Opening<F, C> = (RowList<F>, C);
 
 /// LMCS configuration holding cryptographic primitives (sponge + compression).
 ///
@@ -182,24 +183,22 @@ where
         let mut openings_by_index: BTreeMap<usize, Opening<Self::F, Self::Commitment>> =
             BTreeMap::new();
 
+        let total_width: usize = widths.iter().sum();
+
         // Read openings in sorted tree index order.
         for index in unique_indices {
             if index >= max_height {
                 return Err(LmcsError::InvalidProof);
             }
 
-            let rows = widths
-                .iter()
-                .map(|&width| channel.receive_hint_field_slice(width).map(Vec::from))
-                .collect::<Result<Vec<_>, _>>()?;
+            // Read full leaf as a flat slice; RowList recovers per-matrix structure from widths.
+            let elems = channel.receive_hint_field_slice(total_width)?.to_vec();
+            let rows = RowList::new(elems, widths);
 
             let salt: [PF::Value; SALT_ELEMS] = channel.receive_hint_field_array()?;
 
-            let leaf_hash = self.hash(
-                rows.iter()
-                    .map(|row| row.as_slice())
-                    .chain(core::iter::once(salt.as_slice())),
-            );
+            // Recompute leaf hash from opened data to verify against the Merkle commitment.
+            let leaf_hash = self.hash(rows.iter_rows().chain(core::iter::once(salt.as_slice())));
 
             openings_by_index.insert(index, (rows, leaf_hash));
         }

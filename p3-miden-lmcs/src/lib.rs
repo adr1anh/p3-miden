@@ -162,13 +162,14 @@ pub use hiding_lmcs::HidingLmcsConfig;
 pub use lifted_tree::LiftedMerkleTree;
 pub use lmcs::LmcsConfig;
 pub use proof::{BatchProof, LeafOpening, Proof};
+pub use utils::RowList;
 
 // ============================================================================
 // Type Aliases
 // ============================================================================
 
 /// Opened rows keyed by leaf index, returned by [`Lmcs::open_batch`].
-pub type OpenedRows<F> = BTreeMap<usize, Vec<Vec<F>>>;
+pub type OpenedRows<F> = BTreeMap<usize, RowList<F>>;
 
 // ============================================================================
 // Traits
@@ -222,7 +223,7 @@ pub trait Lmcs: Clone {
     ///
     /// # Postconditions
     /// On success, the returned map contains exactly one entry per unique index from
-    /// the input. Each entry's `Vec<Vec<F>>` has one row per width in `widths`,
+    /// the input. Each entry's `RowList<F>` has one row per width in `widths`,
     /// with that row's length matching the corresponding width. Duplicate indices
     /// are coalesced into a single entry.
     fn open_batch<Ch>(
@@ -271,7 +272,7 @@ pub trait LmcsTree<F, Commitment, M> {
     /// Get the opened rows for a given leaf index.
     ///
     /// Rows are padded to the tree's alignment (1 for unaligned trees).
-    fn rows(&self, index: usize) -> Vec<Vec<F>>;
+    fn rows(&self, index: usize) -> RowList<F>;
 
     /// Column alignment used when streaming openings.
     fn alignment(&self) -> usize;
