@@ -1,3 +1,8 @@
+## 0.4.3 (TBD)
+
+- Fix periodic column evaluation on LDE/quotient domains.
+- [BREAKING] Remove forced conversion of periodic values from F to EF.
+
 ## 0.4.2 (2025-01-14)
 
 - Added `p3-miden-lifted-fri` crate with Lifted FRI PCS (DEEP quotient + FRI), added `p3-miden-symmetric` crate with `StatefulHasher` trait for incremental hashing (#10).
@@ -5,6 +10,7 @@
 - Updated `Pcs` trait implementation for Plonky3 v0.4.2 compatibility (#3).
 - Updated Plonky3 dependencies to v0.4.2 (#3).
 - Handle aux boundary values constraints in prover and verifier (#7).
+- Fix panics in verifier (#19).
 
 ## 0.4.0 (2025-12-23)
 
