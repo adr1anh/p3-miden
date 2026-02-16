@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 /// Flat storage of variable-width rows.
 ///
 /// In a STARK proof, each row typically holds one committed matrix's evaluations at a
-/// queried leaf index. Matrices have different widths because they encode different sets
-/// of constraint polynomials (e.g., main trace vs auxiliary trace).
+/// leaf index queried by the verifier as part of the low-degree test (LDT). Matrices
+/// have different widths because they encode different sets of constraint polynomials
+/// (e.g., main trace vs auxiliary trace).
 ///
 /// Stores all elements contiguously in a single `Vec<T>`, with a separate `Vec<usize>`
 /// tracking the width of each row. This avoids N+1 heap allocations compared to

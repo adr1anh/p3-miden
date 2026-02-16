@@ -27,12 +27,12 @@ where
     F: TwoAdicField,
     EF: ExtensionField<F>,
 {
-    /// Parse DEEP transcript data from a verifier channel without validation.
+    /// Parse DEEP transcript data from a verifier channel.
     ///
-    /// Reads OOD evaluations, PoW witness, and batching challenges.
-    /// Does not verify the DEEP quotient; validation happens in the
-    /// DEEP verifier. Commitment widths must match the committed rows
-    /// (including any alignment padding).
+    /// Reads OOD evaluations, verifies the PoW witness, and samples batching
+    /// challenges. Does not verify the DEEP quotient itself; that validation
+    /// happens in the DEEP verifier. Commitment widths must match the
+    /// committed rows (including any alignment padding).
     pub fn from_verifier_channel<Ch>(
         params: &DeepParams,
         commitments: &[(<Ch as VerifierChannel>::Commitment, Vec<usize>)],

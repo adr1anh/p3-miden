@@ -200,9 +200,9 @@ where
 
         // After all folding rounds, the polynomial has been reduced to degree < final_degree.
         // The prover sent this final polynomial's coefficients; we evaluate it at each
-        // remaining query point and check consistency with the folded values. This closes
-        // the FRI proximity argument: if the original polynomial was far from low-degree,
-        // at least one query fails with high probability.
+        // folded query point on the final domain and check consistency with the folded
+        // values. This closes the FRI proximity argument: if the original codeword was
+        // far from low-degree, at least one query fails with high probability.
         //
         // `final_poly` is in descending degree order [cₙ, ..., c₁, c₀], which is
         // the native order for Horner evaluation.

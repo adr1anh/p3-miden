@@ -144,7 +144,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
             // group 0's columns get the highest powers, group 1's continue from where
             // group 0 left off. The coefficient ordering must match the prover's exactly;
             // otherwise the reconstructed DEEP quotient diverges from the FRI-committed
-            // polynomial, causing spurious rejections.
+            // codeword, causing verification failure.
             for (tree_idx, acc) in reduced_rows.iter_mut() {
                 let rows_for_query =
                     opened_rows.get(tree_idx).ok_or(DeepError::InvalidOpening {

@@ -31,11 +31,11 @@ where
     EF: ExtensionField<F>,
     Commitment: Clone,
 {
-    /// Parse a FRI transcript from a verifier channel without validation.
+    /// Parse a FRI transcript from a verifier channel.
     ///
-    /// Reads commitments, PoW witnesses, challenges, and the final polynomial.
-    /// Does not verify low-degree claims; validation happens in
-    /// `FriOracle::test_low_degree`.
+    /// Reads commitments, verifies PoW witnesses, samples challenges, and
+    /// reads the final polynomial. Does not verify low-degree claims;
+    /// that validation happens in `FriOracle::test_low_degree`.
     pub fn from_verifier_channel<Ch>(
         params: &FriParams,
         log_domain_size: usize,

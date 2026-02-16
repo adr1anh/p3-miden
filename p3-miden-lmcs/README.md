@@ -32,17 +32,22 @@ Let a polynomial f be evaluated over a coset gK with |K| = n, stored in
 bit-reversed order. Let N = r · n be the max height over all matrices in the same commitment group. **Upsampling** repeats each
 row r times in the bit-reversed layout, which corresponds to evaluating the
 **lifted** polynomial f'(X) = f(X^r) over a larger coset of size N. The
-commitment is the Merkle root of leaf hashes computed by absorbing upsampled
-rows (in matrix order) into the configured `StatefulHasher`, optionally
-absorbing a salt, and then squeezing a hash:
+commitment is the Merkle root of leaf hashes. Each leaf is computed by
+sequentially absorbing the upsampled rows of all matrices into a
+`StatefulHasher` instance, then squeezing:
 
 ```
 leaf(i) = squeeze(absorb(row_0(i) || row_1(i) || ... || row_{t-1}(i) || salt?))
 ```
 
-where row_j(i) is the upsampled row for matrix j at index i. Matrix order is
-binding. Matrices are absorbed in their declared order (shortest to tallest), and each
-row is absorbed left-to-right. Reordering matrices produces a different commitment.
+where row_j(i) is the upsampled row for matrix j at leaf index i.
+
+**Absorption order**: Matrices are absorbed in their declared order (shortest to
+tallest). Within each matrix, the row's field elements are absorbed left-to-right.
+When alignment is enabled, each row is zero-padded to the aligned width before
+absorbing the next matrix's row. An optional salt is absorbed after all rows.
+This ordering is binding: reordering matrices or columns produces a different
+commitment.
 
 ## Alignment
 

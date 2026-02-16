@@ -212,8 +212,9 @@ impl<EF> DeepPoly<EF> {
         // A false claim leaves an uncanceled pole, making Q high-degree.
         let mut deep_evals = EF::zero_vec(n);
 
-        if w == 1 {
-            // Scalar path: use par_iter directly to avoid chunking overhead
+        if w == 1 || n < w {
+            // Scalar path: use when packing width is 1, or the domain is smaller than
+            // the packing width (avoiding silent truncation from chunks_exact).
             deep_evals
                 .par_iter_mut()
                 .zip(neg_f_reduced.par_iter())

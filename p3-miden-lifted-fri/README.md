@@ -7,8 +7,8 @@ using LMCS for commitments over evaluation matrices.
 
 This is a polynomial commitment scheme where the verifier requests evaluations
 of all committed matrices at the same N points (derived via Fiat-Shamir).
-Typically N = 2 (e.g., z and gz for next-row constraints), but the
-implementation is generic over N.
+The protocol and implementation are fully generic over N; the typical
+STARK instantiation uses N = 2 (z and gz for next-row constraints).
 All matrices appear at a uniform height via LMCS upsampling, which:
 - Eliminates height-dependent code paths, enabling uniform recursive verifier implementations.
 - Simplifies DEEP quotient construction (same domain points for all matrices).
@@ -70,6 +70,11 @@ folds evaluations by the chosen arity to test low degree.
   height of committed LDE matrices). When a trace degree is known, the typical mapping is:
   `log_lde_height = log_trace_height + log_blowup` (plus any caller-chosen extension).
 - **Upsampling** (row repetition in bit-reversed order) semantics follow `p3-miden-lmcs`.
+- **Lifted-trace soundness**: This implementation assumes that the AIR's transition
+  constraints do not depend on the wrap-around row (i.e., they are not periodic over the
+  original small domain). The PCS does not enforce periodicity constraints on lifted
+  columns; the caller/AIR must ensure that transition constraints are compatible with
+  the lifted evaluation domain.
 - Alignment padding is a transcript-formatting convenience for trace commitments built with
   `build_aligned_tree` (alignment is recorded on the tree). FRI round commitments are unaligned. Padding keeps verifier parsing
   uniform because the underlying sponge pads with zeros after absorbing a list of elements.
