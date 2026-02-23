@@ -58,4 +58,35 @@ impl<EF: Field> DeepEvals<EF> {
     pub fn num_points(&self) -> usize {
         self.points.len()
     }
+
+    /// Split into one `DeepEvals` per commitment group.
+    ///
+    /// `group_sizes[g]` is the number of matrices in group `g`. The sum of all
+    /// group sizes must equal the number of rows in each point's `RowList`.
+    pub fn split_by_groups(self, group_sizes: &[usize]) -> Vec<Self> {
+        assert_eq!(
+            group_sizes.iter().sum::<usize>(),
+            self.points.first().map_or(0, |p| p.num_rows()),
+            "group_sizes sum must equal number of rows per point"
+        );
+
+        let num_groups = group_sizes.len();
+        let mut groups: Vec<Vec<RowList<EF>>> = (0..num_groups)
+            .map(|_| Vec::with_capacity(self.points.len()))
+            .collect();
+
+        for row_list in self.points {
+            let mut rows = row_list.iter_rows();
+            for (g, &size) in group_sizes.iter().enumerate() {
+                let group_rows: Vec<&[EF]> = (&mut rows).take(size).collect();
+                groups[g].push(RowList::from_rows(group_rows));
+            }
+            assert!(
+                rows.next().is_none(),
+                "group_sizes sum does not match row count"
+            );
+        }
+
+        groups.into_iter().map(|points| Self { points }).collect()
+    }
 }

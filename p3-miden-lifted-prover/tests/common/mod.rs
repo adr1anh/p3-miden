@@ -1,0 +1,70 @@
+#![allow(dead_code)]
+
+use p3_dft::Radix2DitParallel;
+use p3_matrix::dense::RowMajorMatrix;
+use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
+use p3_miden_lifted_air::LiftedAir;
+use p3_miden_lifted_fri::PcsParams;
+use p3_miden_lifted_fri::deep::DeepParams;
+use p3_miden_lifted_fri::fri::{FriFold, FriParams};
+use p3_miden_lifted_prover::AirWitness;
+use p3_miden_lifted_verifier::{StarkConfig, verify_multi};
+use p3_miden_lmcs::LmcsConfig;
+use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
+
+pub type TestLmcs =
+    LmcsConfig<bb::P, bb::P, bb::Sponge, bb::Compress, { bb::WIDTH }, { bb::DIGEST }>;
+pub type TestDft = Radix2DitParallel<bb::F>;
+
+pub fn test_config() -> StarkConfig<TestLmcs, TestDft> {
+    let pcs = PcsParams {
+        fri: FriParams {
+            log_blowup: 2,
+            fold: FriFold::ARITY_2,
+            log_final_degree: 2,
+            folding_pow_bits: 0,
+        },
+        deep: DeepParams { deep_pow_bits: 0 },
+        num_queries: 2,
+        query_pow_bits: 0,
+    };
+
+    let (_, sponge, compress) = bb::test_components();
+    let lmcs: TestLmcs = LmcsConfig::new(sponge, compress);
+    let dft = TestDft::default();
+
+    StarkConfig { pcs, lmcs, dft }
+}
+
+/// Prove and verify multiple traces, each with its own public values.
+///
+/// `instances` is a slice of `(trace, public_values)` pairs in ascending height order.
+pub fn prove_and_verify<A: LiftedAir<bb::F, bb::EF>>(
+    air: &A,
+    instances: &[(RowMajorMatrix<bb::F>, Vec<bb::F>)],
+) {
+    let config = test_config();
+
+    let prover_instances: Vec<_> = instances
+        .iter()
+        .map(|(t, pv)| (air, AirWitness::new(t, pv)))
+        .collect();
+
+    let mut prover_channel = ProverTranscript::new(bb::test_challenger());
+    p3_miden_lifted_prover::prove_multi::<bb::F, bb::EF, _, _, _, _>(
+        &config,
+        &prover_instances,
+        &mut prover_channel,
+    )
+    .expect("proving should succeed");
+    let transcript = prover_channel.into_data();
+
+    let verifier_instances: Vec<_> = prover_instances
+        .iter()
+        .map(|(a, w)| (*a, w.to_instance()))
+        .collect();
+
+    let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
+    verify_multi::<bb::F, bb::EF, _, _, _, _>(&config, &verifier_instances, &mut verifier_channel)
+        .expect("verification should succeed");
+}

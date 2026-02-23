@@ -1,0 +1,69 @@
+[package]
+name = "p3-miden-lifted-examples"
+description = "Example AIRs wrapped for the lifted STARK prover."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+homepage.workspace = true
+
+[dependencies]
+p3-air.workspace = true
+p3-field.workspace = true
+p3-blake3-air.workspace = true
+p3-keccak-air.workspace = true
+p3-poseidon2-air.workspace = true
+p3-matrix.workspace = true
+p3-miden-lifted-air.workspace = true
+
+# Bin-only dependencies (not needed by the library).
+p3-baby-bear.workspace = true
+p3-batch-stark.workspace = true
+p3-challenger.workspace = true
+p3-commit.workspace = true
+p3-dft.workspace = true
+p3-fri.workspace = true
+p3-goldilocks.workspace = true
+p3-lookup.workspace = true
+p3-merkle-tree.workspace = true
+p3-miden-dev-utils.workspace = true
+p3-miden-lifted-prover.workspace = true
+p3-miden-lifted-verifier.workspace = true
+p3-symmetric.workspace = true
+p3-uni-stark.workspace = true
+p3-util.workspace = true
+rand.workspace = true
+serde.workspace = true
+tracing.workspace = true
+tracing-forest.workspace = true
+tracing-subscriber.workspace = true
+
+[features]
+default = ["std"]
+std = []
+parallel = ["p3-miden-dev-utils/parallel", "p3-miden-lifted-prover/parallel"]
+
+[[bin]]
+name = "lifted_keccak"
+required-features = ["std"]
+
+[[bin]]
+name = "lifted_3_hashes"
+required-features = ["std"]
+
+[[bin]]
+name = "batch_stark_keccak"
+required-features = ["std"]
+
+[[bin]]
+name = "batch_stark_3_hashes"
+required-features = ["std"]
+
+[[bin]]
+name = "lifted_miden"
+required-features = ["std"]
+
+[[bin]]
+name = "batch_miden"
+required-features = ["std"]

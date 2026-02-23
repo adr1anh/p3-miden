@@ -49,6 +49,8 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     M: Matrix<F>,
     Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
+    const { assert!(N > 0, "at least one evaluation point required") };
+
     // Determine LDE domain size from the supplied LDE height.
     // For now, all trace trees must share this height; mixed LDE heights are not supported yet.
     assert!(!trace_trees.is_empty(), "at least one trace tree required");
@@ -103,11 +105,15 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     // ─────────────────────────────────────────────────────────────────────────
     info_span!("query phase").in_scope(|| {
         // Open input trees at all query indices at once (one proof per tree)
-        for tree in trace_trees {
-            tree.prove_batch(tree_indices.iter().copied(), channel);
-        }
+        info_span!("open input trees", n_trees = trace_trees.len()).in_scope(|| {
+            for tree in trace_trees {
+                tree.prove_batch(tree_indices.iter().copied(), channel);
+            }
+        });
 
         // Open all FRI rounds at all query indices at once (one proof per round)
-        fri_polys.prove_queries(&params.fri, &tree_indices, channel);
+        info_span!("open FRI trees").in_scope(|| {
+            fri_polys.prove_queries(&params.fri, &tree_indices, channel);
+        });
     });
 }

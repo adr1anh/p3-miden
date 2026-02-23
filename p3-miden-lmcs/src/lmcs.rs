@@ -308,6 +308,10 @@ where
             channel,
         )?)
     }
+
+    fn alignment(&self) -> usize {
+        <H as Alignable<PF::Value, PD::Value>>::ALIGNMENT
+    }
 }
 // ============================================================================
 // Tests

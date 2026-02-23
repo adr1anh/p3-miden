@@ -2,8 +2,11 @@
 
 use alloc::vec::Vec;
 
+use serde::Serialize;
+
 /// Raw transcript data captured by a prover and replayed by a verifier.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(bound(serialize = "F: Serialize, C: Serialize"))]
 pub struct TranscriptData<F, C> {
     fields: Vec<F>,
     commitments: Vec<C>,

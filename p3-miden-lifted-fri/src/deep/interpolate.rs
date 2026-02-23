@@ -89,7 +89,7 @@ use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::linear_map::LinearMap;
 use p3_util::{flatten_to_base, log2_strict_usize, reconstitute_from_base};
-use tracing::debug_span;
+use tracing::{debug_span, info_span};
 
 use p3_miden_lmcs::RowList;
 
@@ -116,7 +116,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
     /// `gK` also avoids `H`. If a caller uses a different domain relationship, it must
     /// additionally ensure points are outside the trace domain.
     pub fn new(points: FieldArray<EF, N>, coset_points: &[F]) -> Self {
-        let _span = debug_span!("PointQuotients::new", n = coset_points.len()).entered();
+        let _span = info_span!("PointQuotients::new", n = coset_points.len()).entered();
         let n_points = coset_points.len();
 
         // Compute differences in parallel: for each domain point x, compute [z₀ - x, z₁ - x, ...]
@@ -152,7 +152,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
         coset_points: &[F],
         log_blowup: usize,
     ) -> RowList<FieldArray<EF, N>> {
-        let _span = debug_span!("batch_eval_lifted", n_groups = matrices_groups.len()).entered();
+        let _span = info_span!("batch_eval_lifted", n_groups = matrices_groups.len()).entered();
         let n = coset_points.len();
         let d = n >> log_blowup;
         let log_d = log2_strict_usize(d);
@@ -211,6 +211,9 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
             .flat_map(|group| {
                 group.iter().map(|m| {
                     let weights = &barycentric_weights[&(m.height() >> log_blowup)];
+                    let _guard =
+                        debug_span!("evaluate matrix", height = weights.len(), width = m.width())
+                            .entered();
                     let mut results = m.columnwise_dot_product_batched(weights);
                     for batch_evals in results.iter_mut() {
                         *batch_evals *= barycentric_scalings;
@@ -471,6 +474,72 @@ mod tests {
 
             for (col, (m, s)) in multi_row.iter().zip(single_row2.iter()).enumerate() {
                 assert_eq!(m[1], s[0], "mismatch at row {row_idx}, col {col} for z2");
+            }
+        }
+    }
+
+    /// Verify two-point `PointQuotients<2>` produces correct results for mixed-height
+    /// matrices, checked against `interpolate_coset`.
+    #[test]
+    fn two_point_quotients_match_interpolate_coset() {
+        let rng = &mut SmallRng::seed_from_u64(999);
+        let log_blowup = 2;
+        let log_n = 8;
+        let n = 1 << log_n;
+        let shift = F::GENERATOR;
+
+        let coset_points_br = bit_reversed_coset_points::<F>(log_n);
+
+        let z1: EF = rng.sample(StandardUniform);
+        let z2: EF = rng.sample(StandardUniform);
+
+        // Matrix 1: full height (no lifting)
+        let poly_degree_1 = n >> log_blowup;
+        let width = 3;
+        let lifted_shift_1 = shift;
+
+        let mut coeffs1 = RowMajorMatrix::<F>::rand(rng, poly_degree_1, width).values;
+        coeffs1.resize(n * width, F::ZERO);
+        let evals1_std =
+            NaiveDft.coset_dft_batch(RowMajorMatrix::new(coeffs1, width), lifted_shift_1);
+        let evals1_br: RowMajorMatrix<F> =
+            evals1_std.clone().bit_reverse_rows().to_row_major_matrix();
+
+        // Matrix 2: half height (lift factor 2)
+        let poly_degree_2 = poly_degree_1 >> 1;
+        let lifted_shift_2 = shift.square();
+
+        let mut coeffs2 = RowMajorMatrix::<F>::rand(rng, poly_degree_2, width).values;
+        coeffs2.resize((n >> 1) * width, F::ZERO);
+        let evals2_std =
+            NaiveDft.coset_dft_batch(RowMajorMatrix::new(coeffs2, width), lifted_shift_2);
+        let evals2_br: RowMajorMatrix<F> =
+            evals2_std.clone().bit_reverse_rows().to_row_major_matrix();
+
+        let matrices_groups: Vec<Vec<&RowMajorMatrix<F>>> = vec![vec![&evals1_br, &evals2_br]];
+
+        // Evaluate at both points using PointQuotients<2>
+        let pq = PointQuotients::<F, EF, 2>::new(FieldArray([z1, z2]), &coset_points_br);
+        let result = pq.batch_eval_lifted(&matrices_groups, &coset_points_br, log_blowup);
+        let rows: Vec<&[FieldArray<EF, 2>]> = result.iter_rows().collect();
+        assert_eq!(rows.len(), 2, "expected 2 matrix rows");
+
+        // Verify each point against reference
+        for (point_idx, (label, z)) in [(0, "z1", z1), (1, "z2", z2)]
+            .into_iter()
+            .map(|(i, l, z)| (i, (l, z)))
+        {
+            // Matrix 1 (no lifting): evaluate at z directly
+            let expected1 = interpolate_coset(&evals1_std, lifted_shift_1, z);
+            for (col, (&our, &exp)) in rows[0].iter().zip(expected1.iter()).enumerate() {
+                assert_eq!(our[point_idx], exp, "{label}, mat1, col={col}: mismatch");
+            }
+
+            // Matrix 2 (lift factor 2): evaluate at z^2
+            let z_lifted = z.square();
+            let expected2 = interpolate_coset(&evals2_std, lifted_shift_2, z_lifted);
+            for (col, (&our, &exp)) in rows[1].iter().zip(expected2.iter()).enumerate() {
+                assert_eq!(our[point_idx], exp, "{label}, mat2, col={col}: mismatch");
             }
         }
     }

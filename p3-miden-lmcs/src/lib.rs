@@ -252,6 +252,11 @@ pub trait Lmcs: Clone {
     ) -> Result<Self::BatchProof, LmcsError>
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>;
+
+    /// Get the alignment used by `build_aligned_tree`.
+    ///
+    /// This is the hasher's rate, used to pad rows when streaming hints.
+    fn alignment(&self) -> usize;
 }
 
 /// Trait for built LMCS trees.

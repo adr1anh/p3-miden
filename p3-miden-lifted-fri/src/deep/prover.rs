@@ -183,81 +183,80 @@ impl<EF> DeepPoly<EF> {
             .map(|&width| neg_powers_iter.by_ref().take(width).collect())
             .collect();
 
-        // Compute -f_reduced(X) = -Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X) over the LDE domain.
-        let mut neg_column_coeffs_iter = neg_column_coeffs.iter();
-        let neg_f_reduced = zip(matrices_groups.iter(), &group_sizes)
-            .map(|(matrices_group, &size)| {
-                let group_coeffs: Vec<&Vec<EF>> =
-                    neg_column_coeffs_iter.by_ref().take(size).collect();
-                accumulate_matrices(matrices_group, &group_coeffs)
-            })
-            .reduce(|mut acc, next| {
-                debug_assert_eq!(acc.len(), next.len());
-                acc.par_chunks_mut(w).zip(next.par_chunks(w)).for_each(
-                    |(acc_chunk, next_chunk)| {
-                        EF::add_slices(acc_chunk, next_chunk);
-                    },
-                );
-                acc
-            })
-            .unwrap_or_else(|| EF::zero_vec(n));
-
-        // Pre-compute βʲ for all N points
+        // Compute -f_reduced(X) = -Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X) over the LDE domain, then
+        // transform in-place into the DEEP quotient:
+        //   Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) · 1/(zⱼ - X)
+        //
+        // The column reduction and quotient assembly are fused: the `neg_f_reduced`
+        // vector is consumed in-place to produce `deep_evals`, avoiding a separate
+        // full-domain allocation and improving cache locality.
         let point_coeffs: [EF; N] = core::array::from_fn(|j| challenge_points.exp_u64(j as u64));
 
-        // Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) · 1/(zⱼ - X)
-        //
-        // If all evaluation claims are correct, each numerator vanishes at X = zⱼ,
-        // canceling the pole. Q(X) is then low-degree, which FRI can verify.
-        // A false claim leaves an uncanceled pole, making Q high-degree.
-        let mut deep_evals = EF::zero_vec(n);
+        let deep_evals = info_span!("DEEP reduce + assemble").in_scope(|| {
+            let mut neg_column_coeffs_iter = neg_column_coeffs.iter();
+            let mut neg_f_reduced = zip(matrices_groups.iter(), &group_sizes)
+                .map(|(matrices_group, &size)| {
+                    let group_coeffs: Vec<&Vec<EF>> =
+                        neg_column_coeffs_iter.by_ref().take(size).collect();
+                    accumulate_matrices(matrices_group, &group_coeffs)
+                })
+                .reduce(|mut acc, next| {
+                    debug_assert_eq!(acc.len(), next.len());
+                    acc.par_chunks_mut(w).zip(next.par_chunks(w)).for_each(
+                        |(acc_chunk, next_chunk)| {
+                            EF::add_slices(acc_chunk, next_chunk);
+                        },
+                    );
+                    acc
+                })
+                .unwrap_or_else(|| EF::zero_vec(n));
 
-        if w == 1 || n < w {
-            // Scalar path: use when packing width is 1, or the domain is smaller than
-            // the packing width (avoiding silent truncation from chunks_exact).
-            deep_evals
-                .par_iter_mut()
-                .zip(neg_f_reduced.par_iter())
-                .zip(point_quotient.par_iter())
-                .for_each(|((acc, &neg), q)| {
-                    // First point (j=0) has coefficient β⁰ = 1
-                    let mut result = q[0] * (f_reduced_at_points[0] + neg);
-                    // Remaining points multiply by βʲ
-                    for j in 1..N {
-                        result += point_coeffs[j] * q[j] * (f_reduced_at_points[j] + neg);
-                    }
-                    *acc = result;
-                });
-        } else {
-            // Packed path: use chunks for SIMD vectorization
-            // Pre-broadcast scalars to packed values (done once, outside hot loop)
-            let f_reduced_packed: [EF::ExtensionPacking; N] =
-                f_reduced_at_points.0.map(EF::ExtensionPacking::from);
-            let point_coeffs_packed: [EF::ExtensionPacking; N] =
-                point_coeffs.map(EF::ExtensionPacking::from);
+            // Transform neg_f_reduced in-place into deep_evals.
+            // Q(x) = Σⱼ βʲ · q_j(x) · (f_reduced(zⱼ) + neg_f_reduced(x))
+            if w == 1 || n < w {
+                neg_f_reduced
+                    .par_iter_mut()
+                    .zip(point_quotient.par_iter())
+                    .for_each(|(neg, q)| {
+                        let mut result = q[0] * (f_reduced_at_points[0] + *neg);
+                        for j in 1..N {
+                            result += point_coeffs[j] * q[j] * (f_reduced_at_points[j] + *neg);
+                        }
+                        *neg = result;
+                    });
+            } else {
+                let f_reduced_packed: [EF::ExtensionPacking; N] =
+                    f_reduced_at_points.0.map(EF::ExtensionPacking::from);
+                let point_coeffs_packed: [EF::ExtensionPacking; N] =
+                    point_coeffs.map(EF::ExtensionPacking::from);
 
-            deep_evals
-                .par_chunks_exact_mut(w)
-                .zip(neg_f_reduced.par_chunks_exact(w))
-                .zip(point_quotient.par_chunks_exact(w))
-                .for_each(|((acc_chunk, neg_chunk), q_chunk)| {
-                    let neg_p = EF::ExtensionPacking::from_ext_slice(neg_chunk);
+                neg_f_reduced
+                    .par_chunks_exact_mut(w)
+                    .zip(point_quotient.par_chunks_exact(w))
+                    .for_each(|(neg_chunk, q_chunk)| {
+                        let neg_p = EF::ExtensionPacking::from_ext_slice(neg_chunk);
 
-                    // Transpose quotients: q_chunk[lane][point] -> q_packed[point] packs all lanes
-                    let q_packed: [EF::ExtensionPacking; N] =
-                        EF::ExtensionPacking::pack_ext_columns(FieldArray::as_raw_slice(q_chunk));
+                        // Transpose quotients: q_chunk[lane][point] -> q_packed[point] packs all lanes
+                        let q_packed: [EF::ExtensionPacking; N] =
+                            EF::ExtensionPacking::pack_ext_columns(FieldArray::as_raw_slice(
+                                q_chunk,
+                            ));
 
-                    // First point (j=0) has coefficient β⁰ = 1, compute directly
-                    let mut result_p = q_packed[0] * (f_reduced_packed[0] + neg_p);
+                        // First point (j=0) has coefficient β⁰ = 1, compute directly
+                        let mut result_p = q_packed[0] * (f_reduced_packed[0] + neg_p);
 
-                    // Remaining points (j>0) multiply by βʲ
-                    for j in 1..N {
-                        result_p +=
-                            point_coeffs_packed[j] * q_packed[j] * (f_reduced_packed[j] + neg_p);
-                    }
-                    result_p.to_ext_slice(acc_chunk);
-                });
-        }
+                        // Remaining points (j>0) multiply by βʲ
+                        for j in 1..N {
+                            result_p += point_coeffs_packed[j]
+                                * q_packed[j]
+                                * (f_reduced_packed[j] + neg_p);
+                        }
+                        result_p.to_ext_slice(neg_chunk);
+                    });
+            }
+
+            neg_f_reduced // now contains deep_evals
+        });
 
         (Self { deep_evals }, batched_evals)
     }
@@ -307,10 +306,11 @@ fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>, C: AsRef<[
             acc[..height].swap_with_slice(&mut scratch[..height]);
         }
 
-        // SIMD path using horizontal packing
-        // Pack coefficients: group WIDTH coefficients into each ExtensionPacking
+        // SIMD path using horizontal packing.
+        // Slice to matrix width to avoid packing alignment-padding coefficients.
         let w = F::Packing::WIDTH;
-        let packed_coeffs: Vec<EF::ExtensionPacking> = coeffs
+        let active_coeffs = &coeffs[..matrix.width()];
+        let packed_coeffs: Vec<EF::ExtensionPacking> = active_coeffs
             .chunks(w)
             .map(|chunk| {
                 if chunk.len() == w {

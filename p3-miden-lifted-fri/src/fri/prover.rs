@@ -11,7 +11,7 @@ use p3_maybe_rayon::prelude::*;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_miden_transcript::ProverChannel;
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
-use tracing::debug_span;
+use tracing::{debug_span, info_span};
 
 use crate::fri::FriParams;
 
@@ -123,6 +123,7 @@ where
 
         let mut folded_evals = evals;
         while domain_size > final_domain_size {
+            let round = folded_trees.len();
             // ─────────────────────────────────────────────────────────────────────
             // Reshape into matrix and wrap with FlatMatrixView for commitment
             // ─────────────────────────────────────────────────────────────────────
@@ -135,7 +136,8 @@ where
             // `build_aligned_tree` because each round commits a single matrix, so there
             // is no multi-matrix row interleaving that would require padding to the hash
             // rate boundary.
-            let tree = lmcs.build_tree(alloc::vec![flat_view]);
+            let tree = info_span!("FRI round commit", round, domain_size)
+                .in_scope(|| lmcs.build_tree(alloc::vec![flat_view]));
             let commitment = tree.root();
             channel.send_commitment(commitment.clone());
 
@@ -151,7 +153,8 @@ where
             // Get the underlying EF matrix from the FlatMatrixView via Deref for folding.
             let flat_view_ref = &tree.leaves()[0];
             let ef_matrix: &RowMajorMatrix<EF> = flat_view_ref.deref();
-            folded_evals = params.fold.fold_matrix(ef_matrix.as_view(), &s_invs, beta);
+            folded_evals = info_span!("FRI fold", round, domain_size)
+                .in_scope(|| params.fold.fold_matrix(ef_matrix.as_view(), &s_invs, beta));
             // No bit-reversal needed: folded evals maintain bit-reversed order
             // because s_invs are already bit-reversed to match.
 

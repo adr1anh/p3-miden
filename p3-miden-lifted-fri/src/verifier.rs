@@ -58,6 +58,8 @@ where
     L: Lmcs<F = F>,
     Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
+    const { assert!(N > 0, "at least one evaluation point required") };
+
     // Validate we have commitments
     if commitments.is_empty() {
         return Err(PcsError::NoCommitments);
@@ -128,6 +130,8 @@ where
     L: Lmcs<F = F>,
     Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
+    const { assert!(N > 0, "at least one evaluation point required") };
+
     let evals = verify_with_channel(
         params,
         lmcs,
