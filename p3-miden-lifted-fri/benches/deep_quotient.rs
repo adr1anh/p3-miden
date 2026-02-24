@@ -31,7 +31,7 @@ use p3_miden_lifted_fri::deep::PointQuotients;
 use p3_miden_lifted_fri::utils::bit_reversed_coset_points;
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use utils::LmcsScenario;
 
 /// Log blowup factor for LDE.

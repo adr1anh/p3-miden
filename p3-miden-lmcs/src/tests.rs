@@ -10,11 +10,9 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript};
-use p3_symmetric::Hash;
 use p3_util::log2_strict_usize;
-use rand::Rng;
-use rand::SeedableRng;
 use rand::rngs::SmallRng;
+use rand::{RngExt, SeedableRng};
 
 use crate::utils::{RowList, aligned_len};
 use crate::{
@@ -180,7 +178,7 @@ fn lmcs_duplicate_indices_roundtrip() {
     }
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
+    let batch = BatchProof::<F, Commitment>::read_from_channel(
         &widths,
         log_max_height,
         &indices,
@@ -337,7 +335,7 @@ fn batch_proof_handles_empty_or_oob() {
     let transcript = prover_channel.into_data();
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
+    let batch = BatchProof::<F, Commitment>::read_from_channel(
         &widths,
         log_max_height,
         &[],
@@ -350,7 +348,7 @@ fn batch_proof_handles_empty_or_oob() {
     assert!(proofs.is_empty());
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
+    let batch = BatchProof::<F, Commitment>::read_from_channel(
         &[],
         log_max_height,
         &[0],
@@ -372,7 +370,7 @@ fn batch_proof_handles_empty_or_oob() {
     // Out-of-range indices are not rejected at parse time; they produce proofs that
     // fail verification. Here we just confirm parsing succeeds (verification tested elsewhere).
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    let _ = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
+    let _ = BatchProof::<F, Commitment>::read_from_channel(
         &widths,
         log_max_height,
         &[tree.height()],

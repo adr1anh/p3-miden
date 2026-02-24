@@ -2,8 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_air::{
-    Air, AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder,
-    PermutationAirBuilder,
+    Air, AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder,
 };
 use p3_field::{ExtensionField, Field};
 use p3_matrix::dense::RowMajorMatrix;
@@ -285,18 +284,16 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
         self.base_constraints.push(x.into());
     }
+
+    fn preprocessed(&self) -> Option<Self::M> {
+        Some(self.preprocessed.clone())
+    }
 }
 
 impl<F: Field, EF: ExtensionField<F>> AirBuilderWithPublicValues for SymbolicAirBuilder<F, EF> {
     type PublicVar = SymbolicVariable<F>;
     fn public_values(&self) -> &[Self::PublicVar] {
         &self.public_values
-    }
-}
-
-impl<F: Field, EF: ExtensionField<F>> PairBuilder for SymbolicAirBuilder<F, EF> {
-    fn preprocessed(&self) -> Self::M {
-        self.preprocessed.clone()
     }
 }
 

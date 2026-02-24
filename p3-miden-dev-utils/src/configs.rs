@@ -250,7 +250,7 @@ macro_rules! impl_poseidon2_config {
 
             fn mmcs() -> Self::Mmcs {
                 let perm = create_perm();
-                Self::Mmcs::new(MmcsSponge::new(perm.clone()), Compress::new(perm))
+                Self::Mmcs::new(MmcsSponge::new(perm.clone()), Compress::new(perm), 0)
             }
         }
 
@@ -342,6 +342,7 @@ macro_rules! impl_keccak_config {
                 Self::Mmcs::new(
                     SerializingHasher::new(inner.clone()),
                     KeccakCompress::new(inner),
+                    0,
                 )
             }
         }

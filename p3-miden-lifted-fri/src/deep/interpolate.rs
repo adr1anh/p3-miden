@@ -241,7 +241,7 @@ mod tests {
     use p3_util::reverse_slice_index_bits;
     use rand::distr::StandardUniform;
     use rand::prelude::SmallRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     use super::PointQuotients;
     use crate::tests::{EF, F};

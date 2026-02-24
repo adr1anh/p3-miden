@@ -88,7 +88,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
     ) -> Result<Self, TranscriptError>
     where
         F: Copy,
-        C: Copy + PartialEq,
+        C: Clone + PartialEq,
         Ch: VerifierChannel<F = F, Commitment = C>,
     {
         // Collect and sort indices to match prover's write order (BTreeSet iteration).
@@ -110,7 +110,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         let siblings: BTreeMap<(usize, usize), C> =
             required_siblings(openings.keys().copied(), log_max_height)
                 .into_iter()
-                .map(|key| Ok((key, *channel.receive_hint_commitment()?)))
+                .map(|key| Ok((key, channel.receive_hint_commitment()?.clone())))
                 .collect::<Result<_, TranscriptError>>()?;
 
         Ok(Self { openings, siblings })
@@ -131,7 +131,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
     ) -> Option<BTreeMap<usize, Proof<F, C, SALT_ELEMS>>>
     where
         F: Copy,
-        C: Copy + PartialEq,
+        C: Clone + PartialEq,
         L: Lmcs<F = F, Commitment = C>,
     {
         let mut proofs: BTreeMap<usize, Proof<F, C, SALT_ELEMS>> = BTreeMap::new();
@@ -163,7 +163,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
 
             // Reject if two openings claim different data for the same leaf.
             if tree
-                .insert((0, index), leaf_hash)
+                .insert((0, index), leaf_hash.clone())
                 .is_some_and(|existing_hash| existing_hash != leaf_hash)
             {
                 return None;
@@ -172,14 +172,14 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
 
         // Preload hinted siblings so combining pairs can assume adjacency.
         for (depth, index) in required_siblings(self.openings.keys().copied(), log_max_height) {
-            tree.insert((depth, index), *self.siblings.get(&(depth, index))?);
+            tree.insert((depth, index), self.siblings.get(&(depth, index))?.clone());
         }
 
         for current_depth in 0..log_max_height {
             // BTreeMap ordering yields left-to-right pairing at this depth.
             let nodes_at_depth: Vec<(usize, C)> = tree
                 .range((current_depth, 0)..=(current_depth, usize::MAX))
-                .map(|(&(_, idx), hash)| (idx, *hash))
+                .map(|(&(_, idx), hash)| (idx, hash.clone()))
                 .collect();
 
             let mut nodes_iter = nodes_at_depth.into_iter().peekable();
@@ -210,7 +210,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
             let mut current_index = index;
             for current_depth in 0..log_max_height {
                 let sibling_index = current_index ^ 1;
-                let sibling_hash = tree.get(&(current_depth, sibling_index)).copied()?;
+                let sibling_hash = tree.get(&(current_depth, sibling_index)).cloned()?;
                 proof.siblings.push(sibling_hash);
                 current_index >>= 1;
             }
@@ -270,7 +270,7 @@ mod tests {
 
     use p3_matrix::dense::RowMajorMatrix;
     use p3_miden_transcript::{VerifierChannel, VerifierTranscript};
-    use p3_symmetric::Hash;
+    use p3_symmetric::MerkleCap;
     use p3_util::log2_strict_usize;
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
@@ -301,7 +301,7 @@ mod tests {
                 p3_miden_dev_utils::configs::baby_bear_poseidon2::test_challenger(),
                 &transcript,
             );
-            let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
+            let batch = BatchProof::<F, MerkleCap<F, [F; DIGEST]>>::read_from_channel(
                 &widths,
                 log_max_height,
                 indices,

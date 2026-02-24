@@ -60,6 +60,9 @@ const NUM_QUERIES: usize = 30;
 /// Log degree of final polynomial.
 const LOG_FINAL_DEGREE: usize = 8;
 
+/// Maximum log arity for FRI.
+const MAX_LOG_ARITY: usize = 1;
+
 // =============================================================================
 // Scenario-specific benchmark runner
 // =============================================================================
@@ -115,6 +118,7 @@ macro_rules! bench_scenario {
                     let fri_params = FriParameters {
                         log_blowup: LOG_BLOWUP,
                         log_final_poly_len: LOG_FINAL_DEGREE,
+                        max_log_arity: MAX_LOG_ARITY,
                         num_queries: NUM_QUERIES,
                         commit_proof_of_work_bits: 0,
                         query_proof_of_work_bits: 0,
@@ -146,7 +150,7 @@ macro_rules! bench_scenario {
                         b.iter(|| {
                             let mut challenger = base_challenger.clone();
                             for (commitment, _) in &commits_and_data {
-                                challenger.observe(*commitment);
+                                challenger.observe(commitment.clone());
                             }
                             let z1: EF = challenger.sample_algebra_element();
                             let z2: EF = challenger.sample_algebra_element();

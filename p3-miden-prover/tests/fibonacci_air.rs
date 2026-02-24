@@ -132,7 +132,7 @@ fn test_fibonacci_impl(a: u64, b: u64, n: usize, x: u64, log_final_poly_len: usi
     let perm = Perm::new_from_rng_128(&mut rng);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
-    let val_mmcs = ValMmcs::new(hash, compress);
+    let val_mmcs = ValMmcs::new(hash, compress, 0);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
     let trace = generate_fibonacci_trace::<Val>(a, b, n);
@@ -189,7 +189,7 @@ fn test_incorrect_fibonacci_value() {
     let perm = Perm::new_from_rng_128(&mut rng);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
-    let val_mmcs = ValMmcs::new(hash, compress);
+    let val_mmcs = ValMmcs::new(hash, compress, 0);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
     let fri_params = create_test_fri_params(challenge_mmcs, 1);

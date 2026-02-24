@@ -20,7 +20,7 @@ use p3_miden_lifted_prover::{
 use p3_miden_lifted_verifier::{AirInstance, StarkConfig, VerifierTranscript};
 use p3_util::log2_strict_usize;
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use tracing::info_span;
 
 // Trace S: 2^15 rows → floor(32768/24) = 1365 hashes.

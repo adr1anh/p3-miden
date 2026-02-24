@@ -8,7 +8,7 @@ use p3_field::PackedValue;
 use p3_matrix::Matrix;
 use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_miden_transcript::VerifierChannel;
-use p3_symmetric::{Hash, PseudoCompressionFunction};
+use p3_symmetric::{Hash, MerkleCap, PseudoCompressionFunction};
 
 use crate::utils::RowList;
 use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsError, OpenedRows};
@@ -86,7 +86,7 @@ where
         + Sync,
 {
     type F = PF::Value;
-    type Commitment = Hash<PF::Value, PD::Value, DIGEST>;
+    type Commitment = MerkleCap<PF::Value, [PD::Value; DIGEST]>;
     type BatchProof = BatchProof<PF::Value, Self::Commitment, SALT_ELEMS>;
     type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, SALT_ELEMS>;
 
@@ -138,13 +138,15 @@ where
             self.sponge.absorb_into(&mut state, row.iter().cloned());
         }
         let digest: [PD::Value; DIGEST] = self.sponge.squeeze(&state);
-        Hash::<PF::Value, PD::Value, DIGEST>::from(digest)
+        MerkleCap::from(Hash::<PF::Value, PD::Value, DIGEST>::from(digest))
     }
 
     fn compress(&self, left: Self::Commitment, right: Self::Commitment) -> Self::Commitment {
-        let left_digest: [PD::Value; DIGEST] = left.into();
-        let right_digest: [PD::Value; DIGEST] = right.into();
-        Hash::from(self.compress.compress([left_digest, right_digest]))
+        let left_digest: [PD::Value; DIGEST] = left.roots()[0];
+        let right_digest: [PD::Value; DIGEST] = right.roots()[0];
+        MerkleCap::from(Hash::from(
+            self.compress.compress([left_digest, right_digest]),
+        ))
     }
 
     /// Verify a batch opening from transcript hints.
@@ -226,7 +228,7 @@ where
             // the other accumulates the next level's nodes (parents). After each level, we swap them.
             let mut children: Vec<(usize, Self::Commitment)> = openings_by_index
                 .iter()
-                .map(|(&index, (_, hash))| (index, *hash))
+                .map(|(&index, (_, hash))| (index, hash.clone()))
                 .collect();
             let mut parents = Vec::new();
 
@@ -241,16 +243,16 @@ where
                     let sibling_position = child_position ^ 1;
                     let sibling_hash =
                         match children_iter.next_if(|(pos, _)| *pos == sibling_position) {
-                            Some((_, hash)) => *hash,
-                            None => *channel.receive_hint_commitment()?,
+                            Some((_, hash)) => hash.clone(),
+                            None => channel.receive_hint_commitment()?.clone(),
                         };
 
                     // Determine left/right ordering: left child has even position (bit 0 = 0).
                     let child_is_left = child_position & 1 == 0;
                     let (left_hash, right_hash) = if child_is_left {
-                        (*child_hash, sibling_hash)
+                        (child_hash.clone(), sibling_hash)
                     } else {
-                        (sibling_hash, *child_hash)
+                        (sibling_hash, child_hash.clone())
                     };
 
                     let parent_hash = self.compress(left_hash, right_hash);
@@ -266,7 +268,7 @@ where
             // If any of the indices were out of bounds, the final index would not be 0.
             // If no indices were provided, children is empty.
             match children.as_slice() {
-                [(0, root)] => *root,
+                [(0, root)] => root.clone(),
                 _ => return Err(LmcsError::InvalidProof),
             }
         };

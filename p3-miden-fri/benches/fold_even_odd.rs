@@ -9,7 +9,7 @@ use p3_miden_fri::{FriFoldingStrategy, TwoAdicFriFolding};
 use p3_util::pretty_name;
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 fn bench<F: TwoAdicField, EF: ExtensionField<F>>(c: &mut Criterion, log_sizes: &[usize])
 where

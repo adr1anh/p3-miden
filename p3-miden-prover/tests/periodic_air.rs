@@ -169,7 +169,7 @@ fn test_fibonacci_periodic_impl(a: u64, b: u64, n: usize, x: u64, log_final_poly
     let perm = Perm::new_from_rng_128(&mut rng);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
-    let val_mmcs = ValMmcs::new(hash, compress);
+    let val_mmcs = ValMmcs::new(hash, compress, 0);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
     let trace = generate_fibonacci_periodic_trace::<Val>(a, b, n);
@@ -225,7 +225,7 @@ fn test_fibonacci_periodic_wrong_selector() {
     let perm = Perm::new_from_rng_128(&mut rng);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
-    let val_mmcs = ValMmcs::new(hash, compress);
+    let val_mmcs = ValMmcs::new(hash, compress, 0);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
 

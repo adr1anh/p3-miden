@@ -186,7 +186,7 @@ pub mod tests {
     use p3_util::reverse_slice_index_bits;
     use rand::distr::{Distribution, StandardUniform};
     use rand::prelude::SmallRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     use super::*;
     pub(super) use crate::tests::{EF, F};

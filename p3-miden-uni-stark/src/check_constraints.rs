@@ -1,4 +1,4 @@
-use p3_air::{AirBuilder, AirBuilderWithPublicValues, PairBuilder};
+use p3_air::{AirBuilder, AirBuilderWithPublicValues};
 use p3_field::Field;
 use p3_matrix::stack::ViewPair;
 
@@ -141,6 +141,10 @@ where
             self.row_index, x, y
         );
     }
+
+    fn preprocessed(&self) -> Option<Self::M> {
+        self.preprocessed
+    }
 }
 
 impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
@@ -148,13 +152,6 @@ impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
 
     fn public_values(&self) -> &[Self::F] {
         self.public_values
-    }
-}
-
-impl<'a, F: Field> PairBuilder for DebugConstraintBuilder<'a, F> {
-    fn preprocessed(&self) -> Self::M {
-        self.preprocessed
-            .expect("DebugConstraintBuilder requires preprocessed columns when used as PairBuilder")
     }
 }
 

@@ -17,7 +17,7 @@ use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_maybe_rayon::prelude::*;
 use p3_miden_lifted_air::{
     AirBuilder, AirBuilderWithPublicValues, ConstraintLayout, ExtensionBuilder, LiftedAir,
-    LiftedAirBuilder, PairBuilder, PeriodicAirBuilder, PermutationAirBuilder,
+    LiftedAirBuilder, PeriodicAirBuilder, PermutationAirBuilder,
 };
 use p3_miden_lifted_stark::{LiftedCoset, Selectors};
 
@@ -346,6 +346,11 @@ where
         self.base_constraints.extend(expr_array);
         self.constraint_index += N;
     }
+
+    #[inline]
+    fn preprocessed(&self) -> Option<Self::M> {
+        None
+    }
 }
 
 impl<'a, F, EF, P, PE> AirBuilderWithPublicValues for ProverConstraintFolder<'a, F, EF, P, PE>
@@ -360,18 +365,6 @@ where
     #[inline]
     fn public_values(&self) -> &[Self::PublicVar] {
         self.public_values
-    }
-}
-
-impl<'a, F, EF, P, PE> PairBuilder for ProverConstraintFolder<'a, F, EF, P, PE>
-where
-    F: Field,
-    EF: ExtensionField<F>,
-    P: PackedField<Scalar = F>,
-    PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
-{
-    fn preprocessed(&self) -> Self::M {
-        panic!("preprocessed trace not supported in this prototype")
     }
 }
 

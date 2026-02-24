@@ -160,7 +160,7 @@ mod tests {
     use p3_util::reverse_slice_index_bits;
     use rand::distr::StandardUniform;
     use rand::prelude::SmallRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     use super::ifft8;
     use crate::fri::fold::tests::{EF, F};

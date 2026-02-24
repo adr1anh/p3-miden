@@ -31,7 +31,7 @@ use p3_miden_lmcs::LmcsConfig;
 use p3_symmetric::PaddingFreeSponge;
 use p3_util::log2_strict_usize;
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 // =============================================================================
 // Types
@@ -89,7 +89,7 @@ fn lifted_config() -> LiftedConfig {
 fn workspace_pcs() -> WorkspacePcs {
     let (perm, _, compress) = bb::test_components();
     let mmcs_sponge = MmcsSponge::new(perm);
-    let mmcs = ValMmcs::new(mmcs_sponge, compress);
+    let mmcs = ValMmcs::new(mmcs_sponge, compress, 0);
     let challenge_mmcs = ChallengeMmcs::new(mmcs.clone());
     let fri_params = p3_miden_fri::FriParameters {
         log_blowup: LOG_BLOWUP,

@@ -45,7 +45,7 @@ impl<F, C, Ch> ProverTranscript<F, C, Ch> {
 /// Prover-side channel interface for transcript operations.
 pub trait ProverChannel {
     type F: Field;
-    type Commitment: Copy;
+    type Commitment: Clone;
 
     fn send_field_slice(&mut self, values: &[Self::F]);
 
@@ -100,7 +100,7 @@ pub trait ProverChannel {
 impl<F, C, Ch> ProverChannel for ProverTranscript<F, C, Ch>
 where
     F: Field,
-    C: Copy,
+    C: Clone,
     Ch: CanObserve<F> + CanObserve<C> + GrindingChallenger<Witness = F>,
 {
     type F = F;

@@ -10,7 +10,7 @@ use tracing::instrument;
 
 use crate::{
     Air, AirBuilder, AirBuilderWithPublicValues, Entry, ExtensionBuilder, LiftedAir,
-    LiftedAirBuilder, PairBuilder, PeriodicAirBuilder, PermutationAirBuilder, SymbolicExpression,
+    LiftedAirBuilder, PeriodicAirBuilder, PermutationAirBuilder, SymbolicExpression,
     SymbolicVariable,
 };
 
@@ -382,6 +382,10 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
         SymbolicExpression::IsLastRow
     }
 
+    fn preprocessed(&self) -> Option<Self::M> {
+        Some(self.preprocessed.clone())
+    }
+
     /// # Panics
     /// This function panics if `size` is not `2`.
     fn is_transition_window(&self, size: usize) -> Self::Expr {
@@ -395,12 +399,6 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
         self.base_constraints.push(x.into());
         self.constraint_types.push(ConstraintType::Base);
-    }
-}
-
-impl<F: Field, EF: ExtensionField<F>> PairBuilder for SymbolicAirBuilder<F, EF> {
-    fn preprocessed(&self) -> Self::M {
-        self.preprocessed.clone()
     }
 }
 
@@ -468,7 +466,7 @@ mod tests {
     use p3_matrix::Matrix;
 
     use super::*;
-    use crate::{AirWithPeriodicColumns, BaseAir, PairBuilder, PeriodicAirBuilder};
+    use crate::{AirWithPeriodicColumns, BaseAir, PeriodicAirBuilder};
 
     type EF = BinomialExtensionField<BabyBear, 4>;
 
@@ -593,7 +591,7 @@ mod tests {
                     self.assert_with_condition(builder, expr);
                 }
                 VariableKind::Preprocessed => {
-                    let prep = builder.preprocessed();
+                    let prep = builder.preprocessed().expect("Preprocessed is empty?");
                     let local = prep.row_slice(0).expect("matrix has rows");
                     let mut expr: SymbolicExpression<BabyBear> = local[0].into();
                     for _ in 1..self.exponent {

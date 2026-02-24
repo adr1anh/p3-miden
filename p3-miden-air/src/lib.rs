@@ -48,7 +48,7 @@ pub use filtered_builder::FilteredMidenAirBuilder;
 // Re-export for convenience
 pub use p3_air::{
     Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, BaseAirWithPublicValues,
-    ExtensionBuilder, FilteredAirBuilder, PairBuilder, PermutationAirBuilder,
+    ExtensionBuilder, FilteredAirBuilder, PermutationAirBuilder,
 };
 pub use p3_field::{Algebra, ExtensionField, Field, PrimeCharacteristicRing};
 pub use p3_matrix;

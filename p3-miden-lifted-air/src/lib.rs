@@ -23,7 +23,7 @@ pub use periodic::{AirWithPeriodicColumns, PeriodicAirBuilder};
 // Re-export upstream traits for convenience so users don't need to depend on p3-air directly.
 pub use p3_air::{
     Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, BaseAirWithPublicValues,
-    ExtensionBuilder, FilteredAirBuilder, PairBuilder, PermutationAirBuilder,
+    ExtensionBuilder, FilteredAirBuilder, PermutationAirBuilder,
 };
 
 // Re-export key symbolic types at crate root for ergonomic imports.

@@ -9,7 +9,7 @@ use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_util::reverse_bits_len;
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 use super::DeepParams;
 use super::prover::DeepPoly;
@@ -69,7 +69,7 @@ fn deep_quotient_end_to_end() {
     let transcript = prover_channel.into_data();
 
     // Create commitments slice for multi-commitment API (single commitment in this case)
-    let commitments = vec![(commitment, widths)];
+    let commitments = vec![(commitment.clone(), widths)];
 
     // Step 4: Verifier constructs DeepOracle with same transcript state
     let mut verifier_channel = verifier_channel_with_commitment(&transcript, &commitment);

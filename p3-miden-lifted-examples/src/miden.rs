@@ -130,7 +130,7 @@ where
     rand::distr::StandardUniform: rand::distr::Distribution<F>,
 {
     use rand::rngs::SmallRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     let height = 1usize << log_height;
     let mut values = F::zero_vec(height * width);

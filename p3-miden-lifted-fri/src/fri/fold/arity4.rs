@@ -131,7 +131,7 @@ mod tests {
     use p3_matrix::dense::RowMajorMatrix;
     use rand::distr::StandardUniform;
     use rand::prelude::SmallRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     use super::ifft4;
     use crate::fri::fold::tests::{EF, F};

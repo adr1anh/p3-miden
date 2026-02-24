@@ -33,8 +33,8 @@ fn get_ldt_for_testing<R: Rng>(
     let perm = Perm::new_from_rng_128(rng);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
-    let input_mmcs = ValMmcs::new(hash.clone(), compress.clone());
-    let fri_mmcs = ChallengeMmcs::new(ValMmcs::new(hash, compress));
+    let input_mmcs = ValMmcs::new(hash.clone(), compress.clone(), 0);
+    let fri_mmcs = ChallengeMmcs::new(ValMmcs::new(hash, compress, 0));
     let fri_params = FriParameters {
         log_blowup: 1,
         log_final_poly_len,
@@ -100,7 +100,7 @@ fn do_test_fri_ldt<R: Rng>(
             >>::commit(&pcs, evaluations);
 
         // Observe the commitment.
-        challenger.observe(commitment);
+        challenger.observe(commitment.clone());
 
         // Sample the challenge point zeta which all polynomials
         // will be opened at.
@@ -126,7 +126,7 @@ fn do_test_fri_ldt<R: Rng>(
         // as the prover.
         let mut challenger = Challenger::new(perm);
         challenger.observe_slice(&val_sizes);
-        challenger.observe(commitment);
+        challenger.observe(commitment.clone());
 
         // Sample the opening point.
         let zeta = challenger.sample_algebra_element();

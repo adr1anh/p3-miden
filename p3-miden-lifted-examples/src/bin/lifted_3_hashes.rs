@@ -34,7 +34,7 @@ use p3_miden_lifted_verifier::{AirInstance, StarkConfig, VerifierTranscript};
 use p3_poseidon2_air::RoundConstants;
 use p3_util::log2_strict_usize;
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use tracing::info_span;
 use tracing_forest::ForestLayer;
 use tracing_subscriber::Layer as _;

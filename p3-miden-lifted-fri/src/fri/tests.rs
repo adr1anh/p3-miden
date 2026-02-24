@@ -13,7 +13,7 @@ use p3_miden_transcript::{VerifierChannel, VerifierTranscript};
 use p3_util::{log2_strict_usize, reverse_bits_len};
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 use super::prover::FriPolys;
 use super::verifier::FriOracle;

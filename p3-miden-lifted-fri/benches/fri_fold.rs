@@ -25,7 +25,7 @@ use p3_miden_dev_utils::{BENCH_SEED, BenchScenario, LOG_HEIGHTS, PARALLEL_STR, c
 use p3_miden_lifted_fri::fri::FriFold;
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 /// Target number of rows after all folding rounds.
 const TARGET: usize = 8;

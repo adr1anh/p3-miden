@@ -25,7 +25,7 @@ use p3_miden_fri::{FriFoldingStrategy, TwoAdicFriFolding};
 use p3_miden_lifted_fri::fri::FriFold;
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 /// Benchmark FRI fold comparison for a specific field scenario.
 fn bench_scenario<S: BenchScenario>(c: &mut Criterion)

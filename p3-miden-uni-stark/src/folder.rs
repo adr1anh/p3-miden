@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use p3_air::{AirBuilder, AirBuilderWithPublicValues, PairBuilder};
+use p3_air::{AirBuilder, AirBuilderWithPublicValues};
 use p3_field::{BasedVectorSpace, PackedField};
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::ViewPair;
@@ -112,6 +112,11 @@ impl<'a, SC: StarkGenericConfig> AirBuilder for ProverConstraintFolder<'a, SC> {
         });
         self.constraint_index += N;
     }
+
+    #[inline]
+    fn preprocessed(&self) -> Option<Self::M> {
+        self.preprocessed
+    }
 }
 
 impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverConstraintFolder<'_, SC> {
@@ -120,14 +125,6 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverConstraintFold
     #[inline]
     fn public_values(&self) -> &[Self::F] {
         self.public_values
-    }
-}
-
-impl<'a, SC: StarkGenericConfig> PairBuilder for ProverConstraintFolder<'a, SC> {
-    #[inline]
-    fn preprocessed(&self) -> Self::M {
-        self.preprocessed
-            .expect("Air does not provide preprocessed columns, hence can not be consumed")
     }
 }
 
@@ -165,6 +162,10 @@ impl<'a, SC: StarkGenericConfig> AirBuilder for VerifierConstraintFolder<'a, SC>
         self.accumulator *= self.alpha;
         self.accumulator += x.into();
     }
+
+    fn preprocessed(&self) -> Option<Self::M> {
+        self.preprocessed
+    }
 }
 
 impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for VerifierConstraintFolder<'_, SC> {
@@ -172,12 +173,5 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for VerifierConstraintFo
 
     fn public_values(&self) -> &[Self::F] {
         self.public_values
-    }
-}
-
-impl<'a, SC: StarkGenericConfig> PairBuilder for VerifierConstraintFolder<'a, SC> {
-    fn preprocessed(&self) -> Self::M {
-        self.preprocessed
-            .expect("Air does not provide preprocessed columns, hence can not be consumed")
     }
 }

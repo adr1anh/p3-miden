@@ -217,7 +217,7 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     let perm = Perm::new_from_rng_128(&mut rng);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
-    let val_mmcs = ValMmcs::new(hash, compress);
+    let val_mmcs = ValMmcs::new(hash, compress, 0);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
     let trace = generate_trace_rows::<Val>(0, 1, n);
@@ -270,7 +270,7 @@ fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
     let perm = Perm::new_from_rng_128(&mut rng);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
-    let val_mmcs = ValMmcs::new(hash, compress);
+    let val_mmcs = ValMmcs::new(hash, compress, 0);
     let challenge_mmcs = ChallengeMmcs5::new(val_mmcs.clone());
     let dft = Dft::default();
     let trace = generate_trace_rows::<Val>(0, 1, n);
@@ -299,7 +299,7 @@ fn test_incorrect_public_value() {
     let perm = Perm::new_from_rng_128(&mut rng);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
-    let val_mmcs = ValMmcs::new(hash, compress);
+    let val_mmcs = ValMmcs::new(hash, compress, 0);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
     let fri_params = create_test_fri_params(challenge_mmcs, 1);

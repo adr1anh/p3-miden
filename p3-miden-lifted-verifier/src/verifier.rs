@@ -115,7 +115,7 @@ where
     EF: ExtensionField<F>,
     A: LiftedAir<F, EF>,
     L: Lmcs<F = F>,
-    L::Commitment: Copy,
+    L::Commitment: Clone,
     Dft: TwoAdicSubgroupDft<F>,
     Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
@@ -161,7 +161,7 @@ where
     EF: ExtensionField<F>,
     A: LiftedAir<F, EF>,
     L: Lmcs<F = F>,
-    L::Commitment: Copy,
+    L::Commitment: Clone,
     Dft: TwoAdicSubgroupDft<F>,
     Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
@@ -193,7 +193,7 @@ where
     let max_lde_coset = LiftedCoset::unlifted(log_max_trace_height, log_blowup);
 
     // 1. Receive main trace commitment
-    let main_commit = *channel.receive_commitment()?;
+    let main_commit = channel.receive_commitment()?.clone();
 
     // 2. Sample randomness for aux traces
     let max_num_randomness = instances
@@ -208,7 +208,7 @@ where
 
     // 3. Receive aux trace commitment (only when AIRs have aux columns)
     let aux_commit = if has_aux {
-        Some(*channel.receive_commitment()?)
+        Some(channel.receive_commitment()?.clone())
     } else {
         None
     };
@@ -218,7 +218,7 @@ where
     let beta: EF = channel.sample_algebra_element::<EF>();
 
     // 5. Receive quotient commitment
-    let quotient_commit = *channel.receive_commitment()?;
+    let quotient_commit = channel.receive_commitment()?.clone();
 
     // 6. Sample OOD point (outside max trace domain H and max LDE coset gK)
     let zeta: EF = loop {

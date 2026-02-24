@@ -14,7 +14,7 @@ use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierChannel, Ver
 use p3_util::log2_strict_usize;
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngExt, SeedableRng};
 
 use crate::deep::DeepParams;
 use crate::fri::{FriFold, FriParams};
@@ -41,7 +41,7 @@ pub fn prover_channel() -> TestProverChannel {
 
 pub fn prover_channel_with_commitment(commitment: &TestCommitment) -> TestProverChannel {
     let mut challenger = test_challenger();
-    challenger.observe(*commitment);
+    challenger.observe(commitment.clone());
     ProverTranscript::new(challenger)
 }
 
@@ -54,7 +54,7 @@ pub fn verifier_channel_with_commitment<'a>(
     commitment: &TestCommitment,
 ) -> TestVerifierChannel<'a> {
     let mut challenger = test_challenger();
-    challenger.observe(*commitment);
+    challenger.observe(commitment.clone());
     VerifierTranscript::from_data(challenger, data)
 }
 
@@ -104,7 +104,7 @@ fn run_pcs_case(params: &PcsParams, trees: Vec<TestTree>, seed: u64) -> Result<(
     // Prover: observe all commitments before opening.
     let mut challenger = test_challenger();
     for (c, _) in &commitments {
-        challenger.observe(*c);
+        challenger.observe(c.clone());
     }
     let mut prover_channel = ProverTranscript::new(challenger);
 
@@ -121,7 +121,7 @@ fn run_pcs_case(params: &PcsParams, trees: Vec<TestTree>, seed: u64) -> Result<(
     // Verifier: observe commitments in the same order.
     let mut challenger = test_challenger();
     for (c, _) in &commitments {
-        challenger.observe(*c);
+        challenger.observe(c.clone());
     }
     let mut verifier_channel = VerifierTranscript::from_data(challenger, &transcript);
 

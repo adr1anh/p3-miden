@@ -10,7 +10,7 @@ use p3_miden_dev_utils::configs::baby_bear_poseidon2::{
     Compress, DIGEST, F, P, Sponge, WIDTH, test_challenger, test_components,
 };
 use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
-use p3_symmetric::Hash;
+use p3_symmetric::MerkleCap;
 use p3_util::log2_strict_usize;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -89,7 +89,7 @@ fn extract_proofs_roundtrip() {
         let transcript = prover_channel.into_data();
 
         let mut verifier_channel = VerifierTranscript::from_data(test_challenger(), &transcript);
-        let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
+        let batch = BatchProof::<F, MerkleCap<F, [F; DIGEST]>>::read_from_channel(
             &widths,
             log_max_height,
             indices,

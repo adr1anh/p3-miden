@@ -1,6 +1,6 @@
 use core::borrow::Borrow;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PairBuilder};
+use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
@@ -52,13 +52,15 @@ impl<F: PrimeField64> BaseAir<F> for MulFibPAir {
     }
 }
 
-impl<AB: AirBuilderWithPublicValues + PairBuilder> Air<AB> for MulFibPAir
+impl<AB: AirBuilderWithPublicValues> Air<AB> for MulFibPAir
 where
     AB::F: PrimeField64,
 {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
-        let preprocessed = builder.preprocessed();
+        let preprocessed = builder
+            .preprocessed()
+            .expect("MulFibPAir requires preprocessed columns");
 
         let local_slice = main.row_slice(0).expect("Matrix is empty?");
         let next_slice = main.row_slice(1).expect("Matrix only has 1 row?");
@@ -186,7 +188,7 @@ fn setup_test_config() -> MyConfig {
     let perm = Perm::new_from_rng_128(&mut rng);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
-    let val_mmcs = ValMmcs::new(hash, compress);
+    let val_mmcs = ValMmcs::new(hash, compress, 0);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let fri_params = create_test_fri_params(challenge_mmcs, 2);
     let pcs = Pcs::new(Dft::default(), val_mmcs, fri_params);

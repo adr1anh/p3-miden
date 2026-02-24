@@ -11,7 +11,7 @@ use p3_miden_fri::{FriParameters, TwoAdicFriPcs};
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngExt, SeedableRng};
 
 fn seeded_rng() -> impl Rng {
     SmallRng::seed_from_u64(0)
@@ -190,7 +190,7 @@ mod babybear_fri_pcs {
         let hash = MyHash::new(perm.clone());
         let compress = MyCompress::new(perm.clone());
 
-        let val_mmcs = ValMmcs::new(hash, compress);
+        let val_mmcs = ValMmcs::new(hash, compress, 0);
         let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
 
         let fri_params = FriParameters {

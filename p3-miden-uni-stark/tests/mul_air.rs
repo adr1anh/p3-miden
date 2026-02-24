@@ -23,7 +23,7 @@ use p3_symmetric::{
 use p3_uni_stark::{StarkConfig, StarkGenericConfig, Val, prove, verify};
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 /// How many `a * b = c` operations to do per row in the AIR.
 const REPETITIONS: usize = 20; // This should be < 255 so it can fit into a u8.
@@ -201,7 +201,7 @@ fn do_test_bb_twoadic(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
 
     type ValMmcs =
         MerkleTreeMmcs<<Val as Field>::Packing, <Val as Field>::Packing, MyHash, MyCompress, 8>;
-    let val_mmcs = ValMmcs::new(hash, compress);
+    let val_mmcs = ValMmcs::new(hash, compress, 0);
 
     type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
@@ -214,6 +214,7 @@ fn do_test_bb_twoadic(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
     let fri_params = FriParameters {
         log_blowup,
         log_final_poly_len: 3,
+        max_log_arity: 1,
         num_queries: 40,
         commit_proof_of_work_bits: 0,
         query_proof_of_work_bits: 8,
@@ -264,7 +265,7 @@ fn prove_bb_twoadic_deg2_zk() -> Result<(), impl Debug> {
         4,
     >;
 
-    let val_mmcs = ValMmcs::new(hash, compress, rng);
+    let val_mmcs = ValMmcs::new(hash, compress, 0, rng);
 
     type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
@@ -316,7 +317,7 @@ fn do_test_m31_circle(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
     let compress = MyCompress::new(byte_hash);
 
     type ValMmcs = MerkleTreeMmcs<Val, u8, FieldHash, MyCompress, 32>;
-    let val_mmcs = ValMmcs::new(field_hash, compress);
+    let val_mmcs = ValMmcs::new(field_hash, compress, 0);
 
     type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
@@ -326,6 +327,7 @@ fn do_test_m31_circle(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
     let fri_params = FriParameters {
         log_blowup,
         log_final_poly_len: 0,
+        max_log_arity: 1,
         num_queries: 40,
         commit_proof_of_work_bits: 0,
         query_proof_of_work_bits: 8,

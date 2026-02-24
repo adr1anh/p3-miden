@@ -15,6 +15,7 @@ use p3_matrix::horizontally_truncated::HorizontallyTruncated;
 use p3_matrix::row_index_mapped::RowIndexMappedView;
 use p3_util::zip_eq::zip_eq;
 use rand::Rng;
+use rand::RngExt;
 use rand::distr::{Distribution, StandardUniform};
 use tracing::{info_span, instrument};
 
