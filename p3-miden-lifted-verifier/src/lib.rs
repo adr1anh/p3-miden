@@ -8,10 +8,11 @@ mod periodic;
 mod proof;
 mod verifier;
 
+pub use p3_miden_lifted_fri::PcsTranscript;
 pub use p3_miden_lifted_stark::{
     AirInstance, DeepParams, FriFold, FriParams, Lmcs, LmcsConfig, PcsParams, StarkConfig,
     TranscriptData,
 };
 pub use p3_miden_transcript::{VerifierChannel, VerifierTranscript};
-pub use proof::Proof;
+pub use proof::StarkTranscript;
 pub use verifier::{VerifierError, verify_multi, verify_single};
