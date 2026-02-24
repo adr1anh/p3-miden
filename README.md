@@ -1,61 +1,74 @@
 # Miden Plonky3
 
-Miden-specific [Plonky3](https://github.com/Plonky3/Plonky3) crates for the Miden VM STARK prover.
+Miden-specific [Plonky3](https://github.com/Plonky3/Plonky3) crates.
 
-## Crates
+The current focus of this workspace is a *lifted STARK* prover/verifier stack:
+multi-trace proofs where traces of different heights are presented to the PCS
+and verifier as a single uniform-height object via virtual lifting.
 
-| Crate | Based On | Purpose |
-|-------|----------|---------|
-| `p3-miden-air` | `p3-air` | AIR traits supporting auxiliary and periodic columns |
-| `p3-miden-lmcs` | - | Lifted Matrix Commitment Scheme for uniform-height commitments |
-| `p3-miden-lifted-fri` | - | Lifted FRI PCS (DEEP quotient + FRI over LMCS) |
-| `p3-miden-transcript` | - | Transcript channels for Fiat-Shamir protocols |
-| `p3-miden-stateful-hasher` | `p3-symmetric` | Stateful sponge-like hashers for incremental hashing |
-| `p3-miden-uni-stark` | `p3-uni-stark` | Extended `Entry` enum with `Aux` and `Periodic` variants |
-| `p3-miden-fri` | `p3-fri` | Miden FRI implementation with configurable folding factors |
-| `p3-miden-prover` | - | Miden STARK prover combining the above crates |
+## Lifted STARK Stack
 
-## Modifications
+```text
+p3-miden-lifted-{prover,verifier}
+└── p3-miden-lifted-stark
+    ├── p3-miden-lifted-fri   (PCS: DEEP + FRI)
+    │   └── p3-miden-lmcs     (Merkle commitments with lifting)
+    ├── p3-miden-lifted-air   (AIR traits + symbolic analysis)
+    └── p3-miden-transcript   (Fiat-Shamir channels)
+```
 
-### p3-miden-air & p3-miden-uni-stark
-- Extends `Entry` enum with `Aux` (auxiliary trace columns) and `Periodic` (periodic columns) variants
-- Required for Miden's permutation arguments and periodic column constraints
+## Workspace Crates
 
-### p3-miden-fri
-- Supports higher folding factors for Miden's FRI implementation
-- Configurable folding strategy for future transition to lifted FRI
+| Crate | Purpose |
+|------|---------|
+| `p3-miden-lifted-prover` | Lifted STARK prover (`prove_single`, `prove_multi`) |
+| `p3-miden-lifted-verifier` | Lifted STARK verifier (`verify_single`, `verify_multi`) |
+| `p3-miden-lifted-stark` | Shared types (`StarkConfig`, `LiftedCoset`, `Selectors`, instances/witnesses) |
+| `p3-miden-lifted-air` | Lifted AIR traits and symbolic constraint analysis |
+| `p3-miden-lifted-fri` | PCS: DEEP quotient + FRI over LMCS commitments |
+| `p3-miden-lmcs` | Lifted Matrix Commitment Scheme (uniform-height view) |
+| `p3-miden-transcript` | Transcript channels (`ProverTranscript`, `VerifierTranscript`) |
+| `p3-miden-stateful-hasher` | Stateful hashers used by LMCS |
+| `p3-miden-lifted-examples` | Example AIRs + benchmark binaries |
+| `p3-miden-air` | Miden AIR traits (aux + periodic columns) |
+| `p3-miden-prover` | Non-lifted prover (reference / legacy) |
+| `p3-miden-uni-stark` | Non-lifted verifier/types (reference / legacy) |
+| `p3-miden-fri` | Non-lifted FRI implementation |
 
-### p3-miden-prover
-- Orchestrates proof generation with auxiliary trace support
-- Includes LogUp argument implementation for permutation checks
-- Constraint folding for auxiliary constraints
+## Docs
 
-### p3-miden-stateful-hasher
-- `StatefulHasher` trait for incremental hashing with serializable state
-- Field-native sponge and serializing sponge implementations
-- Re-exports upstream `p3-symmetric` types for convenience
+- `docs/faq.md` (architecture Q&A)
+- `docs/lifting.md` (math background for lifting)
+- `SECURITY.md` (audit/review guide; transcript and composition notes)
 
-### p3-miden-lmcs
-- Lifted Matrix Commitment Scheme for matrices of varying heights
-- Virtual upsampling to uniform height via row repetition in bit-reversed order
-- Batch openings with canonical sibling emission
+## Where To Start (Code)
 
-### p3-miden-transcript
-- `ProverTranscript` and `VerifierTranscript` for Fiat-Shamir channels
-- Separate streams for field elements, commitments, and hints
-- Proof-of-work witness handling
+- Protocol flow: `p3-miden-lifted-prover/src/prover.rs` and `p3-miden-lifted-verifier/src/verifier.rs`
+- PCS layer: `p3-miden-lifted-fri/src/prover.rs` and `p3-miden-lifted-fri/src/verifier.rs`
+- Commitment layer: `p3-miden-lmcs/src/lmcs.rs` and `p3-miden-lmcs/src/lifted_tree.rs`
+- Math background: `docs/lifting.md`
 
-### p3-miden-lifted-fri
-- Lifted Merkle tree commitments for matrices of varying heights via upsampling
-- DEEP quotient construction for batching polynomial evaluation claims
-- FRI protocol with configurable arity-2, arity-4, and arity-8 folding
-- Complete PCS (Polynomial Commitment Scheme) combining DEEP and FRI
+## Build / Test
 
-## Upstream Compatibility
+```bash
+make check
+make test
+make test-parallel
+make lint
+make doc
+```
 
-Core Plonky3 crates remain unchanged from upstream:
-`p3-field`, `p3-matrix`, `p3-commit`, `p3-challenger`, `p3-symmetric`, `p3-merkle-tree`, `p3-dft`, `p3-interpolation`, `p3-util`
+## Run An Example
+
+```bash
+cargo run -p p3-miden-lifted-examples --release --bin lifted_keccak
+```
+
+## Security Disclaimer
+
+This code is research/prototype quality and has not been independently audited.
+Do not treat any default parameters as production-ready.
 
 ## License
 
-This project is dual-licensed under [MIT](LICENSE-MIT) and [Apache-2.0](LICENSE-APACHE).
+Dual-licensed under [MIT](LICENSE-MIT) and [Apache-2.0](LICENSE-APACHE).

@@ -4,7 +4,9 @@ End-to-end proving for the lifted STARK protocol using LMCS commitments
 and the lifted FRI PCS. Supports multiple traces of different heights
 (power-of-two, ascending order) via virtual lifting.
 
-## Entry points
+Protocol-level overview lives in `p3-miden-lifted-stark/README.md`.
+
+## Entry Points
 
 | Item | Purpose |
 |------|---------|
@@ -31,8 +33,8 @@ do not want them duplicated inside the proof. If you do not bind public inputs i
 Fiat-Shamir, the sampled challenges are independent of them.
 
 Ergonomic recommendation: pre-seed the challenger (domain separator + AIR/version tag +
-statement data) *before* constructing `ProverTranscript`, so you can bind without
-bloating the proof.
+statement metadata + public inputs) *before* constructing `ProverTranscript`, so you can
+bind without bloating the proof.
 
 ## Multi-trace ordering
 

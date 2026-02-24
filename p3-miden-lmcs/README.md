@@ -1,131 +1,138 @@
 # p3-miden-lmcs
 
-Lifted Matrix Commitment Scheme (LMCS) for committing to multiple evaluation
-matrices with power-of-two heights, using a uniform lifted view in bit-reversed
-order.
+Lifted Matrix Commitment Scheme (LMCS): a Merkle commitment scheme for *multiple
+evaluation matrices* of different (power-of-two) heights, presented to the
+verifier as a single uniform-height object.
 
-## Overview
+LMCS is the commitment layer used by `p3-miden-lifted-fri` and the lifted STARK
+prover/verifier crates in this workspace.
 
-- Commit to matrices of different heights via virtual upsampling to a shared maximal height.
-- Hash rows with a configurable stateful hasher; internal nodes use a 2-to-1
-  compression function.
-- Support batch openings with canonical sibling ordering in proofs.
+## Notation
 
-## Motivation
+- `N`: maximum (lifted) height among all matrices committed together.
+- `n`: height of a particular matrix.
+- `r = N / n`: lift ratio (a power of two).
+- `i`: a *tree index* in `0..N` (LMCS leaf index).
+- **Bit-reversed order**: row `i` corresponds to the coset point `g * omega^{bitrev(i)}`.
 
-Standard STARK proofs involve multiple evaluation matrices with different heights,
-particularly in multi-AIR designs where each AIR may have a different trace length.
-This heterogeneity complicates
-PCS integration: the verifier must track per-matrix heights, the DEEP quotient must
-handle different lifting factors, and recursive verifiers need height-dependent code paths.
+## What LMCS Gives You
 
-LMCS provides a **uniform-height view** by virtually upsampling shorter matrices to
-the maximum height. This simplifies downstream logic:
-- The PCS treats all matrices as having the same height.
-- DEEP batching applies the same domain points to all matrices.
-- Recursive verifiers avoid height-dependent branching.
-- Switching to alternative polynomial commitment schemes (e.g., STIR or WHIR) becomes easier.
+- Commit to several matrices at once, even when their heights differ.
+- Open many leaf indices in one batch.
+- A uniform-height view: shorter matrices are virtually upsampled (row
+  repetition) so downstream code can avoid height-dependent branching.
 
-## Upsampling & Commitment Sketch
+## Model: Bit-Reversed Rows + Virtual Upsampling
 
-Let a polynomial f be evaluated over a coset gK with |K| = n, stored in
-bit-reversed order. Let N = r · n be the max height over all matrices in the same commitment group. **Upsampling** repeats each
-row r times in the bit-reversed layout, which corresponds to evaluating the
-**lifted** polynomial f'(X) = f(X^r) over a larger coset of size N. The
-commitment is the Merkle root of leaf hashes. Each leaf is computed by
-sequentially absorbing the upsampled rows of all matrices into a
-`StatefulHasher` instance, then squeezing:
+LMCS is designed for matrices that store evaluations in **bit-reversed order**
+over a two-adic coset.
 
+If a matrix has height `n` and the maximum height in the group is `N = r * n`
+(with `r` a power of two), LMCS conceptually commits to the *lifted* matrix of
+height `N` obtained by repeating each row `r` times in bit-reversed layout.
+
+For evaluation vectors, this corresponds to committing to the lifted polynomial
+`f'(X) = f(X^r)` over the larger domain.
+
+## Worked Example (Two Heights)
+
+Suppose you commit to two matrices `A` and `B`:
+
+- `A` has height `n = 4`.
+- `B` has height `N = 8` (so `B` is already max height).
+
+Then `r = N / n = 2`, and LMCS conceptually lifts `A` to height 8 by repeating
+each row twice in *tree index order*:
+
+```text
+i:      0  1  2  3  4  5  6  7
+A row:  0  0  1  1  2  2  3  3        (row_A(i) = A[i >> 1])
+B row:  0  1  2  3  4  5  6  7
 ```
-leaf(i) = squeeze(absorb(row_0(i) || row_1(i) || ... || row_{t-1}(i) || salt?))
+
+All hashing and openings are defined on this uniform-height view.
+
+## Leaf Hashing (Commitment Preimage)
+
+For each leaf index `i` (in the lifted, max-height tree), LMCS hashes the
+concatenation of all lifted rows at that index, in **matrix order**:
+
+```text
+leaf(i) = squeeze( absorb( row_0(i) || row_1(i) || ... || row_{t-1}(i) || salt? ) )
 ```
 
-where row_j(i) is the upsampled row for matrix j at leaf index i.
+- Rows are absorbed left-to-right.
+- Matrices must be supplied **sorted by height** (shortest to tallest).
+- Optional salt (hiding LMCS) is absorbed after all matrix rows.
 
-**Absorption order**: Matrices are absorbed in their declared order (shortest to
-tallest). Within each matrix, the row's field elements are absorbed left-to-right.
-When alignment is enabled, each row is zero-padded to the aligned width before
-absorbing the next matrix's row. An optional salt is absorbed after all rows.
-This ordering is binding: reordering matrices or columns produces a different
-commitment.
+Reordering matrices or columns changes the commitment.
 
-## Alignment
+## Alignment (Transcript Formatting)
 
-When using sponge-based hashers, leaf hashing absorbs field elements up to the
-sponge rate before each permutation. **Alignment** ensures that each row
-contributes a fixed number of permutations, with implicit zero-padding for any
-remainder.
+For sponge-style hashers, absorbing a row may implicitly pad with zeros up to the
+sponge rate. LMCS exposes this as an *alignment* parameter.
 
-`build_aligned_tree` records the aligned widths so that verifiers know how many
-elements to read per row. Benefits:
-- Fixed permutation count per leaf simplifies parsing.
-- No special end-of-row handling; padding is implicit in the sponge.
-- Easier to reason about hashing costs.
+- `build_tree`: no padding in transcript hints (alignment = 1).
+- `build_aligned_tree`: transcript hints pad each opened row to the hasher
+  alignment; the aligned widths are recorded on the tree.
 
-For non-aligned trees (via `build_tree`), rows are absorbed directly without
-padding; verifiers must use the original widths.
+Important: LMCS does **not** enforce that padded values are zero; padding is a
+formatting convention. If your protocol needs "padding must be zero", it must
+constrain that elsewhere.
 
-## Protocol Contract (High Level)
+Alignment has two distinct roles:
 
-**What LMCS proves**:
-- Opened rows are consistent with some committed leaf preimages under the
-  configured hash and compression functions.
-- Openings refer to the lifted, uniform-height view of the input matrices.
+- **Hash semantics**: sponge-style hashers may *implicitly* pad absorbed inputs.
+- **Hint formatting**: `build_aligned_tree` pads *opened rows* in transcript hints
+  so verifiers can parse fixed-size chunks.
 
-**What LMCS does not prove**:
-- It does not prove a matrix "really had height n" beyond the supplied
-  dimensions; lifting is indistinguishable from explicit repetition.
-- It does not enforce periodicity or other structure; upstream protocols must.
+## What LMCS Proves (And Doesn't)
 
-**Trusted inputs / statement data**:
-- `widths` (matrix widths, in commitment order).
-- `log_max_height` (tree height / max domain size).
-- Matrix ordering; permutation changes the commitment.
+LMCS proves:
 
-## Entry Points
+- Opened rows are consistent with the committed Merkle root under the configured
+  hash/compression functions.
+
+LMCS does not prove:
+
+- Any semantic statement about the *original* heights beyond the statement data
+  the caller supplies (lifting is indistinguishable from explicit repetition).
+- Periodicity or any AIR-specific structure.
+
+## API Entry Points
 
 | Item | Purpose |
 |------|---------|
-| `LmcsConfig` / `HidingLmcsConfig` | Build non-hiding or salted commitments |
-| `Lmcs::build_tree` | Build a commitment tree with no transcript padding |
-| `Lmcs::build_aligned_tree` | Build a tree using the hasher alignment for transcript padding |
-| `LmcsTree::prove_batch` | Prove openings at multiple indices |
-| `Lmcs::open_batch` | Verify batch openings |
-| `BatchProof` / `Proof` | Parsing helpers for export (see below) |
+| `LmcsConfig` / `HidingLmcsConfig` | Configure primitives and build trees |
+| `Lmcs::build_tree` | Build a tree (no transcript padding) |
+| `Lmcs::build_aligned_tree` | Build a tree (alignment-aware hint padding) |
+| `LmcsTree::prove_batch` | Write a batch opening (hints) |
+| `Lmcs::open_batch` | Verify a batch opening (reads hints) |
+| `BatchProof` / `Proof` | Parse/export helpers (not production verification) |
 
-### A Note on Proof Types
+## Invariants (Caller Responsibility)
 
-`BatchProof` and `Proof` are **parsing helpers** for exporting and debugging
-proofs. They reconstruct the Merkle path structure from raw channel data but
-do **not** validate proofs themselves.
+- Matrix heights are powers of two.
+- Matrices are supplied in ascending height order.
+- `widths` / `log_max_height` provided to verification match the committed tree.
+- Query indices are in `0..2^log_max_height`.
 
-Production verification uses `LmcsConfig::open_batch`, which parses and verifies
-directly from the channel without constructing intermediate `BatchProof` objects.
-
-## Assumptions & Invariants
-
-- Matrices are sorted by height (shortest to tallest).
-- `widths` and `log_max_height` are statement data chosen by the protocol.
-- Evaluation rows are in bit-reversed order.
-- Query indices are in range of the max height.
-- Duplicate indices are coalesced in the transcript (sorted tree index order); verifiers
-  return the same opening for each occurrence.
-- If `build_aligned_tree` is used, alignment padding (as recorded on the tree) must be
-  included in absorbed rows; LMCS does not enforce zero-padding.
-- Hash and compression functions are collision-resistant.
+If these invariants do not hold, verification should fail via parse error,
+`InvalidProof`, or root mismatch; it must not silently accept.
 
 ## Code Map
 
 | Path | Purpose |
 |------|---------|
-| `src/lmcs.rs` | Public API and verification |
-| `src/lifted_tree.rs` | Tree construction and lifting |
-| `src/utils.rs` | Leaf hashing helpers |
+| `p3-miden-lmcs/src/lmcs.rs` | `LmcsConfig` implementation; `open_batch` |
+| `p3-miden-lmcs/src/lifted_tree.rs` | Tree construction + proving |
+| `p3-miden-lmcs/src/proof.rs` | `BatchProof` / `Proof` parsing helpers |
+| `p3-miden-lmcs/src/utils.rs` | Row hashing + width/alignment helpers |
 
 ## Security
 
-Audits should start with `SECURITY.md` at the workspace root for canonical proof
-parsing, lifting correctness, and critical paths.
+Start with `SECURITY.md` at the workspace root for trust boundaries, canonical
+hint parsing, and composition notes.
 
 ## License
 

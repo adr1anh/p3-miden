@@ -4,7 +4,9 @@ End-to-end verification for the lifted STARK protocol using LMCS
 commitments and the lifted FRI PCS. Supports multiple traces of different
 heights (power-of-two, ascending order) via virtual lifting.
 
-## Entry points
+Protocol-level overview lives in `p3-miden-lifted-stark/README.md`.
+
+## Entry Points
 
 | Item | Purpose |
 |------|---------|
@@ -33,7 +35,8 @@ do not want them duplicated inside the proof.
 
 If your application treats any of these inputs as untrusted, you must authenticate
 them by binding them into the Fiat-Shamir challenger state (domain separation +
-AIR/version tag + public inputs), in the same way on both prover and verifier.
+AIR/version tag + statement metadata + public inputs), in the same way on both prover
+and verifier.
 
 ## Transcript boundaries
 

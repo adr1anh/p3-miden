@@ -3,6 +3,9 @@
 Multi-trace STARK prover and verifier using LMCS commitments, DEEP quotient
 batching, and lifted FRI for low-degree testing.
 
+This README is protocol-level documentation (intended for maintainers and
+reviewers). Per-crate API details live in the individual crate READMEs.
+
 ## Overview
 
 The lifted STARK protocol is split across three crates:
@@ -26,6 +29,31 @@ p3-miden-lifted-{prover,verifier}
 The system supports **multiple traces of different heights** (power-of-two,
 ascending order). Shorter traces are virtually lifted to the maximum height
 via LMCS upsampling, so the PCS and verifier operate on a single uniform view.
+
+## Notation
+
+- `N = 2^n`: maximum trace height across all traces in a proof.
+- `n_j`: height of trace `j`.
+- `r_j = N / n_j`: lift ratio (a power of two).
+- `H`: two-adic subgroup of size `N` with generator `omega_H`.
+- `g`: multiplicative coset shift (`F::GENERATOR` by convention).
+- `D`: constraint degree blowup (here fixed at `D = 4`).
+- `gJ`: quotient-domain coset (size `N * D`).
+- `gK`: PCS/LDE coset (size `N * B`, where `B` is the FRI blowup).
+- `zeta`: global out-of-domain point sampled once.
+- `zeta_next = zeta * omega_H`: "next row" point for max height.
+
+When referring to LMCS, a *tree index* means a bit-reversed leaf index.
+
+## Liftable AIR Assumption
+
+LMCS makes shorter traces indistinguishable from explicit repetition at height
+`N`. This is safe only if the AIR constraints are compatible with that lifted
+view.
+
+Informally, an AIR is "liftable" if transition constraints do not rely on the
+wrap-around row (last -> first) unless that behavior is explicitly constrained.
+See `docs/lifting.md` for a deeper discussion and sufficient conditions.
 
 ## Protocol Summary
 
@@ -54,7 +82,7 @@ via LMCS upsampling, so the PCS and verifier operate on a single uniform view.
 
 1. **Receive commitments** — Main, auxiliary, and quotient roots from transcript.
 2. **Re-derive challenges** — Same `alpha`, `beta`, `zeta` via Fiat-Shamir.
-3. **Verify PCS openings** — At `[zeta, zeta * g_max]`.
+3. **Verify PCS openings** — At `[zeta, zeta_next]` where `zeta_next = zeta * omega_H`.
 4. **Reconstruct Q(zeta)** — Barycentric interpolation over the D quotient
    chunks.
 5. **Evaluate constraints at OOD** — For each AIR at the lifted OOD point
@@ -106,9 +134,11 @@ divisibility by `Z_H`.
 ### Vanishing Division
 
 After accumulation, the combined numerator is divided by `Z_H(x) = x^N - 1`
-once on the full quotient domain. Z_H has only `2^rate_bits` distinct values
-on the coset, so batch inverse computes only those distinct inverses and
-accesses them via modular indexing.
+once on the full quotient domain.
+
+On the quotient coset `gJ` (where `|J| = N * D`), the values `x^N` range over a
+size-`D` subgroup, so `Z_H(x)` takes only `D` distinct values. The prover can
+batch-invert those `D` values once and index them by `i mod D`.
 
 ### Quotient Decomposition
 
@@ -124,8 +154,8 @@ verifier reconstructs `Q(zeta)` from `q_t(zeta)` via barycentric
 interpolation:
 
 ```
-Q(zeta) = sum_t w_t * q_t(zeta) / sum_t w_t
-    where w_t = omega^t / (u - omega^t),  u = (zeta/g)^N
+Q(zeta) = (sum_t w_t * q_t(zeta)) / (sum_t w_t)
+    where w_t = omega_S^t / (u - omega_S^t),  u = (zeta/g)^N
 ```
 
 ### Virtual OOD Point
@@ -144,8 +174,8 @@ at `y_j`, and the opened trace values already correspond to `p_j(y_j)`.
 - **Fused quotient pipeline** — iDFT, coefficient scaling by `(omega^t)^{-k}`,
   flatten to base field, zero-pad, forward DFT — all in one pass, no redundant
   coset operations.
-- **Periodic vanishing exploit** — Z_H has only `2^rate_bits` distinct values
-  on the quotient coset; batch inverse computes those once.
+- **Periodic vanishing exploit** — On the quotient coset `gJ`, `Z_H(x)` takes
+  only `D` distinct values; batch inverse computes those once.
 - **Zero-copy quotient domain** — `split_rows().bit_reverse_rows()` gives a
   natural-order view of committed LDE data without copying.
 - **Efficient periodic columns** — Only `max_period * blowup` LDE values
@@ -161,10 +191,10 @@ at `y_j`, and the opened trace values already correspond to `p_j(y_j)`.
 |------|-------|---------|
 | `prove_single` | `lifted-prover` | Prove a single-AIR STARK |
 | `prove_multi` | `lifted-prover` | Prove a multi-trace STARK (ascending heights) |
-| `AirWithTrace` | `lifted-prover` | Bundle an AIR with its trace and public values |
+| `AirWitness` | `lifted-prover` | Prover witness (trace + public values) |
 | `verify_single` | `lifted-verifier` | Verify a single-AIR proof |
 | `verify_multi` | `lifted-verifier` | Verify a multi-trace proof |
-| `AirWithLogHeight` | `lifted-verifier` | Bundle an AIR with its log height and public values |
+| `AirInstance` | `lifted-verifier` | Verifier instance (log height + public values) |
 | `Proof` | `lifted-verifier` | Raw transcript data (the proof artifact) |
 | `StarkConfig` | `lifted-stark` | PCS params + LMCS + DFT configuration |
 | `LiftedCoset` | `lifted-stark` | Domain operations: selectors, vanishing, coset shifts |
