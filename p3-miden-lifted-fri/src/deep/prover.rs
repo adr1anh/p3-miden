@@ -190,7 +190,6 @@ impl<EF> DeepPoly<EF> {
         // The column reduction and quotient assembly are fused: the `neg_f_reduced`
         // vector is consumed in-place to produce `deep_evals`, avoiding a separate
         // full-domain allocation and improving cache locality.
-        let point_coeffs: [EF; N] = core::array::from_fn(|j| challenge_points.exp_u64(j as u64));
 
         let deep_evals = info_span!("DEEP reduce + assemble").in_scope(|| {
             let mut neg_column_coeffs_iter = neg_column_coeffs.iter();
@@ -210,6 +209,10 @@ impl<EF> DeepPoly<EF> {
                     acc
                 })
                 .unwrap_or_else(|| EF::zero_vec(n));
+
+            // Pre-compute βʲ for all N points
+            let point_coeffs: [EF; N] =
+                core::array::from_fn(|j| challenge_points.exp_u64(j as u64));
 
             // Transform neg_f_reduced in-place into deep_evals.
             // Q(x) = Σⱼ βʲ · q_j(x) · (f_reduced(zⱼ) + neg_f_reduced(x))

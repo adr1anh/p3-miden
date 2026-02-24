@@ -37,9 +37,6 @@ pub mod deep;
 /// FRI protocol for low-degree testing.
 pub mod fri;
 
-/// LDE + LMCS helpers for lifted commitments.
-pub mod lde;
-
 mod params;
 mod proof;
 pub mod prover;
