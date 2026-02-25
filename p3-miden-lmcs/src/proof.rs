@@ -148,12 +148,12 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
                 }
             }
 
-            let leaf_hash = lmcs.hash(
-                opening
-                    .rows
-                    .iter_rows()
-                    .chain(core::iter::once(opening.salt.as_slice())),
-            );
+            let rows_iter = opening.rows.iter_rows();
+            let leaf_hash = if SALT_ELEMS > 0 {
+                lmcs.hash(rows_iter.chain([opening.salt.as_slice()]))
+            } else {
+                lmcs.hash(rows_iter)
+            };
 
             proofs.entry(index).or_insert_with(|| Proof {
                 rows: opening.rows.clone(),

@@ -62,6 +62,7 @@ p3-mersenne-31 = { default-features = false, version = "0.4.2" }
 p3-poseidon = { default-features = false, version = "0.4.2" }
 p3-poseidon2 = { default-features = false, version = "0.4.2" }
 p3-poseidon2-air = { default-features = false, version = "0.4.2" }
+p3-blake3 = { default-features = false, version = "0.4.2" }
 p3-blake3-air = { default-features = false, version = "0.4.2" }
 p3-symmetric = { default-features = false, version = "0.4.2" }
 p3-uni-stark = { default-features = false, version = "0.4.2" }
