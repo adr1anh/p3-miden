@@ -206,22 +206,20 @@ where
 /// When an EF polynomial is committed, it becomes DIM base field polynomials.
 /// Opening at EF point z gives DIM EF values (F-polys evaluated at EF point).
 /// Reconstruct each EF element: ef_i = Σ_j basis_j * row[i*DIM + j]
-pub fn row_to_packed_ext<F, EF, I>(row: I) -> Result<Vec<EF>, VerifierError>
+pub fn row_to_packed_ext<F, EF>(row: &[EF]) -> Result<Vec<EF>, VerifierError>
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
-    I: IntoIterator<Item = EF>,
 {
-    let evals: Vec<EF> = row.into_iter().collect();
-    if !evals.len().is_multiple_of(EF::DIMENSION) {
+    if !row.len().is_multiple_of(EF::DIMENSION) {
         return Err(VerifierError::InvalidAuxShape);
     }
-    let num_elements = evals.len() / EF::DIMENSION;
+    let num_elements = row.len() / EF::DIMENSION;
     Ok((0..num_elements)
         .map(|i| {
             let start = i * EF::DIMENSION;
             (0..EF::DIMENSION)
-                .map(|j| EF::ith_basis_element(j).unwrap() * evals[start + j])
+                .map(|j| EF::ith_basis_element(j).unwrap() * row[start + j])
                 .sum()
         })
         .collect())

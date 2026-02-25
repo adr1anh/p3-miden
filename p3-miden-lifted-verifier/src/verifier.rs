@@ -56,7 +56,7 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::LiftedAir;
 use p3_miden_lifted_fri::verifier::{PcsError, verify_with_channel as verify_pcs_with_channel};
 use p3_miden_lmcs::Lmcs;
-use p3_miden_lmcs::utils::aligned_len;
+use p3_miden_lmcs::utils::aligned_widths;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use thiserror::Error;
 
@@ -231,29 +231,30 @@ where
     let h = F::two_adic_generator(log_max_trace_height);
     let zeta_next = zeta * h;
 
-    // 7. Build commitment widths for PCS verification
-    // Each commitment group has one matrix per AIR instance (except quotient: single matrix)
-    let main_widths: Vec<usize> = instances
+    // 7. Widths per commitment group (unpadded data widths).
+    let main_widths: Vec<usize> = instances.iter().map(|(air, _)| air.width()).collect();
+    let aux_widths: Vec<usize> = instances
         .iter()
-        .map(|(air, _)| aligned_len(air.width(), alignment))
+        .map(|(air, _)| air.aux_width() * EF::DIMENSION)
         .collect();
-    let quotient_width = aligned_len(constraint_degree * EF::DIMENSION, alignment);
+    let quotient_widths: Vec<usize> = vec![constraint_degree * EF::DIMENSION];
 
+    // Build commitments with aligned widths for PCS verification.
     let commitments = match aux_commit {
-        Some(aux_commit) => {
-            let aux_committed_widths: Vec<usize> = instances
-                .iter()
-                .map(|(air, _)| aligned_len(air.aux_width() * EF::DIMENSION, alignment))
-                .collect();
-            vec![
-                (main_commit, main_widths),
-                (aux_commit, aux_committed_widths),
-                (quotient_commit, vec![quotient_width]),
-            ]
-        }
+        Some(aux_commit) => vec![
+            (main_commit, aligned_widths(main_widths.clone(), alignment)),
+            (aux_commit, aligned_widths(aux_widths.clone(), alignment)),
+            (
+                quotient_commit,
+                aligned_widths(quotient_widths.clone(), alignment),
+            ),
+        ],
         None => vec![
-            (main_commit, main_widths),
-            (quotient_commit, vec![quotient_width]),
+            (main_commit, aligned_widths(main_widths.clone(), alignment)),
+            (
+                quotient_commit,
+                aligned_widths(quotient_widths.clone(), alignment),
+            ),
         ],
     };
 
@@ -277,17 +278,6 @@ where
         (None, &group_evals[1])
     };
 
-    let main_rows_local: Vec<&[EF]> = main_evals.point(0).iter_rows().collect();
-    let main_rows_next: Vec<&[EF]> = main_evals.point(1).iter_rows().collect();
-    let aux_rows_local: Option<Vec<&[EF]>> =
-        aux_evals.map(|aux| aux.point(0).iter_rows().collect());
-    let aux_rows_next: Option<Vec<&[EF]>> = aux_evals.map(|aux| aux.point(1).iter_rows().collect());
-
-    // Quotient: single matrix, reconstruct Q(ζ) using max coset
-    let quotient_row = quotient_evals.point(0).iter_rows().next().unwrap();
-    let quotient_chunks = row_to_packed_ext::<F, EF, _>(quotient_row.iter().copied())?;
-    let quotient_zeta = reconstruct_quotient::<F, EF>(zeta, &max_lde_coset, &quotient_chunks);
-
     // 10. Per-AIR constraint evaluation and beta accumulation
     let mut accumulated = EF::ZERO;
 
@@ -302,28 +292,20 @@ where
 
         // Extract main trace opened values, truncating alignment padding.
         let main_width = air.width();
-        let main_local: Vec<EF> = main_rows_local[j]
-            .iter()
-            .copied()
-            .take(main_width)
-            .collect();
-        let main_next: Vec<EF> = main_rows_next[j].iter().copied().take(main_width).collect();
+        let main_local = &main_evals.point(0).row(j)[..main_width];
+        let main_next = &main_evals.point(1).row(j)[..main_width];
 
         // Extract aux trace opened values (reconstitute EF from base field components),
         // truncating alignment padding.
         let aux_ef_width = air.aux_width();
-        let (aux_local, aux_next) = match (&aux_rows_local, &aux_rows_next) {
-            (Some(local_rows), Some(next_rows)) => {
-                let aux_base_width = aux_ef_width * EF::DIMENSION;
-                let local = row_to_packed_ext::<F, EF, _>(
-                    local_rows[j].iter().copied().take(aux_base_width),
-                )?;
-                let next = row_to_packed_ext::<F, EF, _>(
-                    next_rows[j].iter().copied().take(aux_base_width),
-                )?;
+        let (aux_local, aux_next) = match aux_evals {
+            Some(aux) => {
+                let bw = aux_ef_width * EF::DIMENSION;
+                let local = row_to_packed_ext::<F, EF>(&aux.point(0).row(j)[..bw])?;
+                let next = row_to_packed_ext::<F, EF>(&aux.point(1).row(j)[..bw])?;
                 (local, next)
             }
-            _ => (vec![], vec![]),
+            None => (vec![], vec![]),
         };
 
         // Selectors at virtual point y_j (relative to this trace's domain)
@@ -361,7 +343,11 @@ where
         accumulated = accumulated * beta + folder.accumulator;
     }
 
-    // 11. Check quotient identity: accumulated == Q(ζ) * Z_{H_max}(ζ)
+    // 11. Reconstruct Q(ζ) and check quotient identity Q(ζ) * Z_{H_max}(ζ)
+    let qw = constraint_degree * EF::DIMENSION;
+    let quotient_chunks = row_to_packed_ext::<F, EF>(&quotient_evals.point(0).row(0)[..qw])?;
+    let quotient_zeta = reconstruct_quotient::<F, EF>(zeta, &max_lde_coset, &quotient_chunks);
+
     let vanishing = zeta.exp_u64(max_trace_height as u64) - EF::ONE;
     if accumulated != quotient_zeta * vanishing {
         return Err(VerifierError::ConstraintMismatch);
