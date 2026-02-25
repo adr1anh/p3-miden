@@ -10,7 +10,7 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 use p3_miden_stateful_hasher::StatefulHasher;
 use p3_miden_transcript::ProverChannel;
-use p3_symmetric::{Hash, MerkleCap, PseudoCompressionFunction};
+use p3_symmetric::{Hash, PseudoCompressionFunction};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
 use tracing::{debug_span, info_span};
@@ -99,15 +99,14 @@ pub struct LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS
 }
 
 impl<F, D, M, const DIGEST_ELEMS: usize, const SALT_ELEMS: usize>
-    LmcsTree<F, MerkleCap<F, [D; DIGEST_ELEMS]>, M>
-    for LiftedMerkleTree<F, D, M, DIGEST_ELEMS, SALT_ELEMS>
+    LmcsTree<F, Hash<F, D, DIGEST_ELEMS>, M> for LiftedMerkleTree<F, D, M, DIGEST_ELEMS, SALT_ELEMS>
 where
     F: Copy + Default + PartialEq + Send + Sync,
     D: Copy + Default + PartialEq + Send + Sync,
     M: Matrix<F>,
 {
-    fn root(&self) -> MerkleCap<F, [D; DIGEST_ELEMS]> {
-        MerkleCap::from(Hash::from(self.digest_layers.last().unwrap()[0]))
+    fn root(&self) -> Hash<F, D, DIGEST_ELEMS> {
+        Hash::from(self.digest_layers.last().unwrap()[0])
     }
 
     fn height(&self) -> usize {
@@ -146,7 +145,7 @@ where
     /// Leaf openings are written in **sorted tree index order** (ascending, deduplicated).
     fn prove_batch<Ch>(&self, indices: impl IntoIterator<Item = usize>, channel: &mut Ch)
     where
-        Ch: ProverChannel<F = F, Commitment = MerkleCap<F, [D; DIGEST_ELEMS]>>,
+        Ch: ProverChannel<F = F, Commitment = Hash<F, D, DIGEST_ELEMS>>,
     {
         use alloc::collections::BTreeSet;
 
@@ -203,13 +202,9 @@ where
 
                 // Add sibling hash if exactly one child is known
                 if have_left && !have_right {
-                    channel.hint_commitment(MerkleCap::from(Hash::from(
-                        self.digest_layers[layer_idx][right_pos],
-                    )));
+                    channel.hint_commitment(Hash::from(self.digest_layers[layer_idx][right_pos]));
                 } else if !have_left && have_right {
-                    channel.hint_commitment(MerkleCap::from(Hash::from(
-                        self.digest_layers[layer_idx][left_pos],
-                    )));
+                    channel.hint_commitment(Hash::from(self.digest_layers[layer_idx][left_pos]));
                 }
             }
 
@@ -316,10 +311,7 @@ where
     ///
     /// Rows are padded to `alignment` and LMCS does not enforce that padding is zero.
     /// Panics if `index` is out of range for the tree height.
-    pub fn single_proof(
-        &self,
-        index: usize,
-    ) -> Proof<F, MerkleCap<F, [D; DIGEST_ELEMS]>, SALT_ELEMS> {
+    pub fn single_proof(&self, index: usize) -> Proof<F, Hash<F, D, DIGEST_ELEMS>, SALT_ELEMS> {
         let mut siblings = Vec::with_capacity(self.digest_layers.len().saturating_sub(1));
         let mut layer_index = index;
         for layer in &self.digest_layers {
@@ -327,7 +319,7 @@ where
                 break;
             }
             let sibling = layer[layer_index ^ 1];
-            siblings.push(MerkleCap::from(Hash::from(sibling)));
+            siblings.push(Hash::from(sibling));
             layer_index >>= 1;
         }
 

@@ -69,7 +69,7 @@ fn deep_quotient_end_to_end() {
     let transcript = prover_channel.into_data();
 
     // Create commitments slice for multi-commitment API (single commitment in this case)
-    let commitments = vec![(commitment.clone(), widths)];
+    let commitments = vec![(commitment, widths)];
 
     // Step 4: Verifier constructs DeepOracle with same transcript state
     let mut verifier_channel = verifier_channel_with_commitment(&transcript, &commitment);

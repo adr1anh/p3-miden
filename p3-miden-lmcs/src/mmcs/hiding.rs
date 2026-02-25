@@ -53,7 +53,7 @@ where
         inputs: Vec<M>,
     ) -> (Self::Commitment, Self::ProverData<M>) {
         let tree = self.build_tree(inputs);
-        (tree.root(), tree)
+        (MerkleCap::from(tree.root()), tree)
     }
 
     fn open_batch<M: Matrix<PF::Value>>(
@@ -63,11 +63,11 @@ where
     ) -> BatchOpening<PF::Value, Self> {
         let BatchOpening {
             opened_values,
-            opening_proof,
+            opening_proof: (salt, siblings_cap),
         } = Mmcs::open_batch(&self.inner, index, tree);
         BatchOpening {
             opened_values,
-            opening_proof,
+            opening_proof: (salt, siblings_cap),
         }
     }
 

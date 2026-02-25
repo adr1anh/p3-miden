@@ -270,7 +270,7 @@ mod tests {
 
     use p3_matrix::dense::RowMajorMatrix;
     use p3_miden_transcript::{VerifierChannel, VerifierTranscript};
-    use p3_symmetric::MerkleCap;
+    use p3_symmetric::Hash;
     use p3_util::log2_strict_usize;
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
@@ -301,7 +301,7 @@ mod tests {
                 p3_miden_dev_utils::configs::baby_bear_poseidon2::test_challenger(),
                 &transcript,
             );
-            let batch = BatchProof::<F, MerkleCap<F, [F; DIGEST]>>::read_from_channel(
+            let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
                 &widths,
                 log_max_height,
                 indices,
@@ -332,7 +332,7 @@ mod tests {
             for &idx in indices {
                 let proof = proofs.get(&idx).expect("proof for index");
                 let expected = tree.single_proof(idx);
-                assert_eq!(*proof, expected, "single_proof mismatch at index {idx}");
+                assert_eq!(proof, &expected, "single_proof mismatch at index {idx}");
             }
         };
 

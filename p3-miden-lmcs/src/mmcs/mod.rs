@@ -29,7 +29,7 @@ use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::PackedValue;
 use p3_matrix::{Dimensions, Matrix};
 use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
-use p3_symmetric::{MerkleCap, PseudoCompressionFunction};
+use p3_symmetric::{Hash, MerkleCap, PseudoCompressionFunction};
 use p3_util::log2_ceil_usize;
 use serde::{Deserialize, Serialize};
 
@@ -68,7 +68,7 @@ where
         inputs: Vec<M>,
     ) -> (Self::Commitment, Self::ProverData<M>) {
         let tree = self.build_tree(inputs);
-        (tree.root(), tree)
+        (MerkleCap::from(tree.root()), tree)
     }
 
     fn open_batch<M: Matrix<PF::Value>>(
@@ -88,9 +88,10 @@ where
             siblings,
         } = tree.single_proof(index);
 
-        // Convert RowList to Vec<Vec<F>> at the Mmcs trait boundary.
+        let siblings_cap: Vec<Self::Commitment> =
+            siblings.into_iter().map(MerkleCap::from).collect();
         let rows_vec: Vec<Vec<PF::Value>> = rows.iter_rows().map(|r| r.to_vec()).collect();
-        BatchOpening::new(rows_vec, (salt, siblings))
+        BatchOpening::new(rows_vec, (salt, siblings_cap))
     }
 
     fn get_matrices<'a, M: Matrix<PF::Value>>(&self, tree: &'a Self::ProverData<M>) -> Vec<&'a M> {
@@ -147,16 +148,17 @@ where
             return Err(LmcsError::InvalidProof);
         }
 
-        let computed_commitment = {
+        let computed_commitment: Hash<PF::Value, PD::Value, DIGEST_ELEMS> = {
             let mut current = leaf_hash;
             let mut pos = index;
 
-            for sibling_hash in siblings {
+            for sibling_cap in siblings {
+                let sibling_hash = Hash::from(sibling_cap.roots()[0]);
                 let is_left = pos & 1 == 0;
                 current = if is_left {
-                    self.compress(current.clone(), sibling_hash.clone())
+                    self.compress(current, sibling_hash)
                 } else {
-                    self.compress(sibling_hash.clone(), current.clone())
+                    self.compress(sibling_hash, current)
                 };
                 pos >>= 1;
             }
@@ -164,7 +166,7 @@ where
             current
         };
 
-        if computed_commitment != *commitment {
+        if MerkleCap::from(computed_commitment) != *commitment {
             return Err(LmcsError::RootMismatch);
         }
 

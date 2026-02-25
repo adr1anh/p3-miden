@@ -7,7 +7,7 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_miden_transcript::VerifierChannel;
-use p3_symmetric::{MerkleCap, PseudoCompressionFunction};
+use p3_symmetric::{Hash, PseudoCompressionFunction};
 use rand::Rng;
 use rand::distr::{Distribution, StandardUniform};
 
@@ -104,7 +104,7 @@ where
         + Sync,
 {
     type F = PF::Value;
-    type Commitment = MerkleCap<PF::Value, [PD::Value; DIGEST]>;
+    type Commitment = Hash<PF::Value, PD::Value, DIGEST>;
     type BatchProof = BatchProof<PF::Value, Self::Commitment, SALT>;
     type Tree<M: Matrix<PF::Value>> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST, SALT>;
 
