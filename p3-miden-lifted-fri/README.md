@@ -22,6 +22,20 @@ This PCS is used by the lifted STARK prover/verifier crates in this workspace.
 The implementation is generic over `N`. The common STARK instantiation uses
 `N = 2` (an out-of-domain point `zeta` and `zeta_next = zeta * omega_H`).
 
+## Math Sketch
+
+Given evaluation claims f_i(z_j), DEEP forms a quotient polynomial
+
+```
+Q(X) = ∑_i ∑_j α^i · β^j · (f_i(X) - f_i(z_j)) / (X - z_j)
+```
+
+so Q is low-degree iff all claims are consistent. Evaluations are stored in
+bit-reversed order. **Lifting** treats shorter matrices as evaluations of
+f_i(X^r) on the LDE domain (r = lde_height / height_i), achieved via
+**upsampling** (row repetition in bit-reversed order). FRI then repeatedly
+folds evaluations by the chosen arity to test low degree.
+
 ## Protocol Shape (Fiat-Shamir)
 
 At a high level:
@@ -131,8 +145,26 @@ FRI round commitments commit a *single* matrix per round and therefore use
 |--------|---------|
 | `p3-miden-lifted-fri/src/deep/` | DEEP quotient construction and verification |
 | `p3-miden-lifted-fri/src/fri/` | FRI commit/query phases and folding |
-| `p3-miden-lifted-fri/src/lde.rs` | LDE + LMCS helpers used by the lifted STARK |
 | `p3-miden-lifted-fri/src/utils.rs` | Bit-reversal + Horner helpers |
+
+## Transcript Types
+
+`PcsTranscript`, `DeepTranscript`, `FriTranscript` are export/debug views
+that reconstruct the full prover-verifier interaction (including challenges
+and PoW witnesses) without re-running verification. They validate parsing
+shape only — they do **not** guarantee proof validity. Production
+verification uses the channel directly.
+
+## Optimizations
+
+- **Aligned openings**: rows are padded to a multiple of the sponge rate,
+  ensuring a fixed number of permutations per leaf hash. Simplifies verifier
+  parsing.
+- **Uniform opening points**: all matrices (regardless of original height) are
+  opened at the same domain points. DEEP batching uses a single set of
+  z-values; no per-matrix domain reconstruction.
+- **Recursive verifier benefits**: uniform height eliminates branching on
+  matrix dimensions. The verifier logic is a single code path.
 
 ## Tests
 

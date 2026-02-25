@@ -7,6 +7,14 @@ verifier as a single uniform-height object.
 LMCS is the commitment layer used by `p3-miden-lifted-fri` and the lifted STARK
 prover/verifier crates in this workspace.
 
+## Motivation
+
+In multi-AIR designs, traces have different heights. Without lifting, the PCS
+must track per-matrix heights, DEEP batching needs per-matrix domain logic, and
+recursive verifiers require height-dependent branching. LMCS provides a
+uniform-height view that eliminates all of this, and makes it easier to swap in
+alternative polynomial commitment schemes (e.g. STIR or WHIR) downstream.
+
 ## Notation
 
 - `N`: maximum (lifted) height among all matrices committed together.
