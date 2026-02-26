@@ -128,11 +128,12 @@ where
             }
         }
 
-        let leaf_hash = self.hash(
-            rows.iter()
-                .map(|row| row.as_slice())
-                .chain(core::iter::once(salt.as_slice())),
-        );
+        let rows_iter = rows.iter().map(|row| row.as_slice());
+        let leaf_hash = if SALT_ELEMS > 0 {
+            self.hash(rows_iter.chain([salt.as_slice()]))
+        } else {
+            self.hash(rows_iter)
+        };
 
         let max_height = dimensions
             .iter()

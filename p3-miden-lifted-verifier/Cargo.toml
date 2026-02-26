@@ -20,7 +20,6 @@ p3-miden-lmcs.workspace = true
 p3-miden-transcript.workspace = true
 p3-util.workspace = true
 
-serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

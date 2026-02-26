@@ -40,6 +40,7 @@ paste = { version = "1.0", default-features = false }
 p3-air = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "832f992e" }
 p3-baby-bear = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "832f992e" }
 p3-batch-stark = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "832f992e" }
+p3-blake3 = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "832f992e" }
 p3-bn254 = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "832f992e" }
 p3-challenger = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "832f992e" }
 p3-circle = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "832f992e" }

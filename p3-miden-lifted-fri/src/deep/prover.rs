@@ -155,7 +155,7 @@ impl<EF> DeepPoly<EF> {
             .collect();
 
         // Align each matrix width so padding is explicit in the transcript.
-        let aligned_widths = aligned_widths(widths.iter().copied(), alignment);
+        let aligned_widths = aligned_widths(widths, alignment);
 
         // Compute explicit coefficients for -f_reduced(X) = -Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X).
         //
@@ -358,7 +358,7 @@ mod tests {
         let c: EF = EF::from_u64(2);
         let alignment = 3;
         let widths = [2usize, 3];
-        let aligned_widths = aligned_widths(widths, alignment);
+        let aligned_widths = aligned_widths(widths.to_vec(), alignment);
         let rows: Vec<Vec<F>> = vec![
             vec![F::from_u64(1), F::from_u64(2)],
             vec![F::from_u64(3), F::from_u64(4), F::from_u64(5)],
@@ -390,7 +390,7 @@ mod tests {
         let c: EF = EF::from_u64(7);
         let alignment = 4;
         let widths = [3usize, 5, 2];
-        let aligned_widths = aligned_widths(widths, alignment);
+        let aligned_widths = aligned_widths(widths.to_vec(), alignment);
 
         let mut neg_powers_iter = c
             .shifted_powers(EF::NEG_ONE)

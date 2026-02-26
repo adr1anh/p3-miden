@@ -218,7 +218,8 @@ where
 
     fn widths(&self) -> Vec<usize> {
         let alignment = self.alignment;
-        aligned_widths(self.leaves.iter().map(|m| m.width()), alignment)
+        let widths = self.leaves.iter().map(|m| m.width()).collect();
+        aligned_widths(widths, alignment)
     }
 }
 
