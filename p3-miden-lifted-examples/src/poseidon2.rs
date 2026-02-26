@@ -5,7 +5,7 @@
 
 use alloc::vec::Vec;
 
-use p3_air::{Air, BaseAir, BaseAirWithPublicValues};
+use p3_air::{Air, BaseAir};
 use p3_baby_bear::{BabyBear, GenericPoseidon2LinearLayersBabyBear};
 use p3_field::Field;
 use p3_matrix::dense::RowMajorMatrix;
@@ -56,8 +56,6 @@ impl<F> BaseAir<F> for LiftedPoseidon2Air {
         NUM_POSEIDON2_COLS
     }
 }
-
-impl<F> BaseAirWithPublicValues<F> for LiftedPoseidon2Air {}
 
 impl<F: Field> AirWithPeriodicColumns<F> for LiftedPoseidon2Air {
     fn periodic_columns(&self) -> &[Vec<F>] {

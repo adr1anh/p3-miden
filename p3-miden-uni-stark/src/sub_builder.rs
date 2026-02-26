@@ -49,6 +49,7 @@ impl<AB: AirBuilder, SubAir: BaseAir<AB::F>, F> AirBuilder for SubAirBuilder<'_,
     type Expr = AB::Expr;
     type Var = AB::Var;
     type M = HorizontallyTruncated<Self::Var, AB::M>;
+    type PublicVar = AB::PublicVar;
 
     fn main(&self) -> Self::M {
         let matrix = self.inner.main();

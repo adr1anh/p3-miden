@@ -1,6 +1,6 @@
 //! The `LiftedAirBuilder` super-trait for constraint evaluation builders.
 
-use p3_air::{AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder};
+use p3_air::{AirBuilder, ExtensionBuilder, PermutationAirBuilder};
 
 use crate::PeriodicAirBuilder;
 
@@ -10,11 +10,7 @@ use crate::PeriodicAirBuilder;
 /// The only Miden-specific addition is [`LiftedAirBuilder::aux_values`], which provides auxiliary boundary
 /// values for the lifting protocol.
 pub trait LiftedAirBuilder:
-    AirBuilder
-    + AirBuilderWithPublicValues
-    + ExtensionBuilder
-    + PermutationAirBuilder
-    + PeriodicAirBuilder
+    AirBuilder + ExtensionBuilder + PermutationAirBuilder + PeriodicAirBuilder
 {
     /// Auxiliary boundary values (extension field) carried in the proof.
     fn aux_values(&self) -> &[Self::VarEF] {

@@ -6,7 +6,7 @@
 
 use alloc::vec::Vec;
 
-use p3_air::{AirBuilder, BaseAir, BaseAirWithPublicValues};
+use p3_air::{AirBuilder, BaseAir};
 use p3_field::{Field, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -70,8 +70,6 @@ impl<F> BaseAir<F> for DummyMidenAir {
         self.width
     }
 }
-
-impl<F> BaseAirWithPublicValues<F> for DummyMidenAir {}
 
 impl<F: Field> AirWithPeriodicColumns<F> for DummyMidenAir {
     fn periodic_columns(&self) -> &[Vec<F>] {

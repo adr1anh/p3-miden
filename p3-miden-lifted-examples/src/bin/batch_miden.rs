@@ -9,7 +9,7 @@
 //!   cargo run -p p3-miden-lifted-examples --release --features parallel --bin batch_miden
 //! ```
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PermutationAirBuilder};
+use p3_air::{Air, AirBuilder, BaseAir, PermutationAirBuilder};
 use p3_batch_stark::{ProverData, StarkInstance, prove_batch, verify_batch};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
@@ -86,7 +86,7 @@ impl<AB: AirBuilder> Air<AB> for MidenWithLookups {
 
     fn get_lookups(&mut self) -> Vec<Lookup<AB::F>>
     where
-        AB: AirBuilderWithPublicValues + PermutationAirBuilder,
+        AB: AirBuilder + PermutationAirBuilder,
     {
         self.num_lookups = 0;
 

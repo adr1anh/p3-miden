@@ -1,9 +1,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_air::{
-    Air, AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder,
-};
+use p3_air::{Air, AirBuilder, ExtensionBuilder, PermutationAirBuilder};
 use p3_field::{ExtensionField, Field};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_ceil_usize;
@@ -258,6 +256,7 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
     type Expr = SymbolicExpression<F>;
     type Var = SymbolicVariable<F>;
     type M = RowMajorMatrix<Self::Var>;
+    type PublicVar = SymbolicVariable<F>;
 
     fn main(&self) -> Self::M {
         self.main.clone()
@@ -269,6 +268,10 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
 
     fn is_last_row(&self) -> Self::Expr {
         SymbolicExpression::IsLastRow
+    }
+
+    fn public_values(&self) -> &[Self::PublicVar] {
+        &self.public_values
     }
 
     /// # Panics
@@ -287,13 +290,6 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
 
     fn preprocessed(&self) -> Option<Self::M> {
         Some(self.preprocessed.clone())
-    }
-}
-
-impl<F: Field, EF: ExtensionField<F>> AirBuilderWithPublicValues for SymbolicAirBuilder<F, EF> {
-    type PublicVar = SymbolicVariable<F>;
-    fn public_values(&self) -> &[Self::PublicVar] {
-        &self.public_values
     }
 }
 

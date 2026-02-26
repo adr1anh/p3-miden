@@ -5,8 +5,7 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_air::{
-    AirBuilder, AirWithPeriodicColumns, BaseAir, BaseAirWithPublicValues, ExtensionBuilder,
-    LiftedAir, LiftedAirBuilder,
+    AirBuilder, AirWithPeriodicColumns, BaseAir, ExtensionBuilder, LiftedAir, LiftedAirBuilder,
 };
 use p3_miden_lifted_prover::prove_single;
 use p3_miden_lifted_verifier::{VerifierError, verify_single};
@@ -45,9 +44,7 @@ impl BaseAir<bb::F> for TinyAir {
     fn width(&self) -> usize {
         1
     }
-}
 
-impl BaseAirWithPublicValues<bb::F> for TinyAir {
     fn num_public_values(&self) -> usize {
         1
     }

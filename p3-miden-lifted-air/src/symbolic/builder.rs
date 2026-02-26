@@ -9,9 +9,8 @@ use p3_matrix::dense::RowMajorMatrix;
 use tracing::instrument;
 
 use crate::{
-    Air, AirBuilder, AirBuilderWithPublicValues, Entry, ExtensionBuilder, LiftedAir,
-    LiftedAirBuilder, PeriodicAirBuilder, PermutationAirBuilder, SymbolicExpression,
-    SymbolicVariable,
+    Air, AirBuilder, Entry, ExtensionBuilder, LiftedAir, LiftedAirBuilder, PeriodicAirBuilder,
+    PermutationAirBuilder, SymbolicExpression, SymbolicVariable,
 };
 
 /// Compute the maximum constraint degree of base field constraints.
@@ -369,6 +368,7 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
     type Expr = SymbolicExpression<F>;
     type Var = SymbolicVariable<F>;
     type M = RowMajorMatrix<Self::Var>;
+    type PublicVar = SymbolicVariable<F>;
 
     fn main(&self) -> Self::M {
         self.main.clone()
@@ -386,6 +386,10 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
         Some(self.preprocessed.clone())
     }
 
+    fn public_values(&self) -> &[Self::PublicVar] {
+        &self.public_values
+    }
+
     /// # Panics
     /// This function panics if `size` is not `2`.
     fn is_transition_window(&self, size: usize) -> Self::Expr {
@@ -399,13 +403,6 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
         self.base_constraints.push(x.into());
         self.constraint_types.push(ConstraintType::Base);
-    }
-}
-
-impl<F: Field, EF: ExtensionField<F>> AirBuilderWithPublicValues for SymbolicAirBuilder<F, EF> {
-    type PublicVar = SymbolicVariable<F>;
-    fn public_values(&self) -> &[Self::PublicVar] {
-        &self.public_values
     }
 }
 

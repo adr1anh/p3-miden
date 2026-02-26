@@ -11,8 +11,7 @@ use core::marker::PhantomData;
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::{
-    AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, LiftedAirBuilder, PeriodicAirBuilder,
-    PermutationAirBuilder,
+    AirBuilder, ExtensionBuilder, LiftedAirBuilder, PeriodicAirBuilder, PermutationAirBuilder,
 };
 use p3_miden_lifted_stark::{LiftedCoset, Selectors};
 use p3_util::log2_strict_usize;
@@ -54,6 +53,7 @@ where
     type Expr = EF;
     type Var = EF;
     type M = RowMajorMatrix<EF>;
+    type PublicVar = EF;
 
     fn main(&self) -> Self::M {
         self.main.clone()
@@ -82,14 +82,6 @@ where
     fn preprocessed(&self) -> Option<Self::M> {
         None
     }
-}
-
-impl<'a, F, EF> AirBuilderWithPublicValues for ConstraintFolder<'a, F, EF>
-where
-    F: Field,
-    EF: ExtensionField<F>,
-{
-    type PublicVar = EF;
 
     fn public_values(&self) -> &[Self::PublicVar] {
         self.public_values

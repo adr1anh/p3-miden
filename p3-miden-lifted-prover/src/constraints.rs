@@ -16,8 +16,8 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_maybe_rayon::prelude::*;
 use p3_miden_lifted_air::{
-    AirBuilder, AirBuilderWithPublicValues, ConstraintLayout, ExtensionBuilder, LiftedAir,
-    LiftedAirBuilder, PeriodicAirBuilder, PermutationAirBuilder,
+    AirBuilder, ConstraintLayout, ExtensionBuilder, LiftedAir, LiftedAirBuilder,
+    PeriodicAirBuilder, PermutationAirBuilder,
 };
 use p3_miden_lifted_stark::{LiftedCoset, Selectors};
 
@@ -309,6 +309,7 @@ where
     type Expr = P;
     type Var = P;
     type M = RowMajorMatrixView<'a, P>;
+    type PublicVar = F;
 
     #[inline]
     fn main(&self) -> Self::M {
@@ -351,16 +352,6 @@ where
     fn preprocessed(&self) -> Option<Self::M> {
         None
     }
-}
-
-impl<'a, F, EF, P, PE> AirBuilderWithPublicValues for ProverConstraintFolder<'a, F, EF, P, PE>
-where
-    F: Field,
-    EF: ExtensionField<F>,
-    P: PackedField<Scalar = F>,
-    PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
-{
-    type PublicVar = F;
 
     #[inline]
     fn public_values(&self) -> &[Self::PublicVar] {

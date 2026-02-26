@@ -1,6 +1,6 @@
 //! The `LiftedAir` super-trait for AIR definitions in the lifted STARK system.
 
-use p3_air::{BaseAir, BaseAirWithPublicValues};
+use p3_air::BaseAir;
 use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -16,9 +16,7 @@ use crate::{AirWithPeriodicColumns, LiftedAirBuilder, SymbolicAirBuilder};
 /// # Type Parameters
 /// - `F`: Base field
 /// - `EF`: Extension field (for aux trace challenges)
-pub trait LiftedAir<F: Field, EF>:
-    Sync + BaseAir<F> + BaseAirWithPublicValues<F> + AirWithPeriodicColumns<F>
-{
+pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F> {
     /// Number of extension-field challenges required for the auxiliary trace.
     fn num_randomness(&self) -> usize {
         0

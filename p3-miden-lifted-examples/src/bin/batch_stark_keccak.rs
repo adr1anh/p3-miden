@@ -10,7 +10,7 @@
 //! cargo run -p p3-miden-lifted-examples --release --bin batch_stark_keccak
 //! ```
 
-use p3_air::{Air, AirBuilder, BaseAir};
+use p3_air::{Air, AirBuilder, BaseAir, PermutationAirBuilder};
 use p3_baby_bear::BabyBear;
 use p3_batch_stark::{ProverData, StarkInstance, prove_batch, verify_batch};
 use p3_challenger::DuplexChallenger;
@@ -85,7 +85,7 @@ impl<AB: AirBuilder> Air<AB> for KeccakWithLookup {
 
     fn get_lookups(&mut self) -> Vec<Lookup<AB::F>>
     where
-        AB: p3_air::AirBuilderWithPublicValues + p3_air::PermutationAirBuilder,
+        AB: AirBuilder + PermutationAirBuilder,
     {
         self.num_lookups = 0;
 

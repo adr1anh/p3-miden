@@ -1,4 +1,4 @@
-use p3_air::{AirBuilder, AirBuilderWithPublicValues};
+use p3_air::AirBuilder;
 use p3_field::Field;
 use p3_matrix::stack::ViewPair;
 
@@ -100,6 +100,7 @@ where
     type Expr = F;
     type Var = F;
     type M = ViewPair<'a, F>;
+    type PublicVar = Self::F;
 
     fn main(&self) -> Self::M {
         self.main
@@ -145,10 +146,6 @@ where
     fn preprocessed(&self) -> Option<Self::M> {
         self.preprocessed
     }
-}
-
-impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
-    type PublicVar = Self::F;
 
     fn public_values(&self) -> &[Self::F] {
         self.public_values
@@ -160,7 +157,7 @@ impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
 mod tests {
     use alloc::vec;
 
-    use p3_air::{BaseAir, BaseAirWithPublicValues};
+    use p3_air::BaseAir;
     use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
 
@@ -180,8 +177,6 @@ mod tests {
             W
         }
     }
-
-    impl<F: Field, const W: usize> BaseAirWithPublicValues<F> for RowLogicAir<W> {}
 
     impl<F: Field, const W: usize> Air<DebugConstraintBuilder<'_, F>> for RowLogicAir<W> {
         fn eval(&self, builder: &mut DebugConstraintBuilder<'_, F>) {

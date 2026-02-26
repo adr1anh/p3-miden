@@ -12,7 +12,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_air::{BaseAir, BaseAirWithPublicValues};
+use p3_air::BaseAir;
 use p3_baby_bear::BabyBear;
 use p3_dft::Radix2DitParallel;
 use p3_field::Field;
@@ -77,8 +77,6 @@ impl BaseAir<Val> for HashAir {
         }
     }
 }
-
-impl BaseAirWithPublicValues<Val> for HashAir {}
 
 impl AirWithPeriodicColumns<Val> for HashAir {
     fn periodic_columns(&self) -> &[Vec<Val>] {

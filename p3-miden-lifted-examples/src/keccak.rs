@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use p3_air::{Air, BaseAir, BaseAirWithPublicValues};
+use p3_air::{Air, BaseAir};
 use p3_field::{Field, PrimeField64};
 use p3_keccak_air::{KeccakAir, NUM_KECCAK_COLS, NUM_ROUNDS};
 use p3_matrix::dense::RowMajorMatrix;
@@ -24,8 +24,6 @@ impl<F> BaseAir<F> for LiftedKeccakAir {
         NUM_KECCAK_COLS
     }
 }
-
-impl<F> BaseAirWithPublicValues<F> for LiftedKeccakAir {}
 
 impl<F: Field> AirWithPeriodicColumns<F> for LiftedKeccakAir {
     fn periodic_columns(&self) -> &[Vec<F>] {
