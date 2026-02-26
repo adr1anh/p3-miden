@@ -1,7 +1,7 @@
 //! Shared instance types for the lifted STARK prover and verifier.
 //!
-//! - [`AirWitness`]: Prover witness — trace + public values
-//! - [`AirInstance`]: Verifier instance — log trace height + public values
+//! - [`AirWitness`]: Prover witness (trace + public values)
+//! - [`AirInstance`]: Verifier instance (log trace height + public values)
 //! - [`validate_instances`]: Shared validation for a slice of instances
 
 use p3_field::Field;
@@ -84,6 +84,12 @@ pub enum ValidationError {
 }
 
 /// Validate that instances are non-empty and sorted by ascending log height.
+///
+/// Ascending height order is a prover optimization: the prover commits each trace's
+/// LDE on its original (smaller) coset rather than the full lifted domain, avoiding
+/// unnecessary hashing of repeated rows. Cyclic extension only grows the accumulator
+/// (it never shrinks it), so the ordering also ensures that the prover and verifier
+/// assign the same `beta` powers to each trace's contribution.
 pub fn validate_instances<F>(instances: &[AirInstance<'_, F>]) -> Result<(), ValidationError> {
     if instances.is_empty() {
         return Err(ValidationError::Empty);

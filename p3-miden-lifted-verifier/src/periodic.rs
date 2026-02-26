@@ -51,6 +51,14 @@ impl<F: TwoAdicField> PeriodicPolys<F> {
     /// # Arguments
     /// - `trace_height`: Height of the trace
     /// - `zeta`: The OOD evaluation point
+    ///
+    /// The evaluation point is `zeta^{n/p}` rather than `zeta` directly. A periodic
+    /// column with period p is a polynomial P(X) of degree < p defined on the subgroup of
+    /// order p. At trace row i, the value is P(ωₙⁱ) = P(ωₚ^{i mod p}).
+    /// Since ωₙ^{n/p} = ωₚ, the map X → X^{n/p} collapses the trace domain H
+    /// (order n) onto the periodic subgroup (order p). So evaluating P at zeta^{n/p} gives
+    /// the same result as evaluating the periodic extension of P at zeta on the full trace
+    /// domain.
     pub fn eval_at<EF>(&self, trace_height: usize, zeta: EF) -> Vec<EF>
     where
         EF: ExtensionField<F>,

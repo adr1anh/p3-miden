@@ -21,7 +21,7 @@ use crate::fri::prover::FriPolys;
 /// # Preconditions
 /// - `eval_points` must lie outside both the trace-domain subgroup `H` and the
 ///   LDE evaluation coset `gK` used by the PCS. If a point lies in either set,
-///   denominators `(z_j - X)` in the DEEP quotient become zero for some domain element,
+///   denominators `(zⱼ − X)` in the DEEP quotient become zero for some domain element,
 ///   making the quotient undefined.
 /// - All trace trees must be built at the same LDE height `2^log_lde_height`.
 ///   Multiple LDE heights are not supported yet and will panic.
@@ -62,7 +62,7 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
         "mixed LDE heights are not supported yet",
     );
     // ─────────────────────────────────────────────────────────────────────────
-    // Construct DEEP quotient (observes evals, grinds, samples α and β)
+    // Construct DEEP quotient (observes evals, grinds, samples alpha and beta)
     // ─────────────────────────────────────────────────────────────────────────
     let deep_poly = info_span!("DEEP quotient").in_scope(|| {
         DeepPoly::from_trees::<L, M, N, Ch>(

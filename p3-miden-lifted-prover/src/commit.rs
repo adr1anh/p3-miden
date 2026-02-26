@@ -24,9 +24,12 @@ use p3_miden_lifted_stark::LiftedCoset;
 
 /// Committed polynomial evaluations with domain metadata.
 ///
-/// Wraps an LMCS tree and stores the blowup factor used during commitment.
-/// This enables reconstructing domain information for each committed matrix
-/// without re-deriving it from the configuration.
+/// Wraps an LMCS tree and stores the blowup used for the LDE.
+///
+/// We keep `log_blowup` here (instead of threading it through every call) so we can
+/// recover per-matrix domain information (trace height, lift ratio, coset shift) from
+/// just the committed matrices. This is especially useful when committing multiple
+/// traces of different heights into one tree.
 ///
 /// # Type Parameters
 ///
@@ -39,8 +42,11 @@ use p3_miden_lifted_stark::LiftedCoset;
 /// ```ignore
 /// let committed = commit_traces(config, traces);
 /// let root = committed.root();
-/// let view = committed.quotient_domain_natural(0, constraint_degree);
+/// let view = committed.evals_on_quotient_domain(0, constraint_degree);
 /// ```
+///
+/// Storing the blowup also avoids re-deriving `trace_height = lde_height / blowup` for each
+/// matrix, which is needed for quotient-domain views and lifting shifts.
 pub struct Committed<F, M, L>
 where
     F: TwoAdicField,
@@ -90,13 +96,13 @@ where
         log2_strict_usize(self.tree.height())
     }
 
-    /// Get the domain information for the matrix at index `i`.
+    /// Returns the [`LiftedCoset`] the `m`-th matrix was committed on.
     ///
     /// # Panics
     ///
-    /// Panics if `i >= num_matrices()`.
-    fn domain(&self, i: usize) -> LiftedCoset {
-        let matrix = &self.tree.leaves()[i];
+    /// Panics if `m >= num_matrices()`.
+    fn lifted_coset(&self, m: usize) -> LiftedCoset {
+        let matrix = &self.tree.leaves()[m];
         let log_lde_height = log2_strict_usize(matrix.height());
         let log_trace_height = log_lde_height - self.log_blowup;
         let log_max_trace_height = self.log_max_lde_height() - self.log_blowup;
@@ -110,22 +116,27 @@ where
     F: TwoAdicField,
     L: Lmcs<F = F>,
 {
-    /// Truncate matrix `i` to the quotient domain and return in natural order.
+    /// Return a zero-copy view of matrix `m` on the quotient evaluation domain.
     ///
-    /// The quotient domain has size `trace_height × constraint_degree`. This is
-    /// the first `N × D` rows of the LDE in bit-reversed storage, wrapped for
-    /// natural-order access. Zero-copy.
+    /// This returns evaluations over the quotient coset `gJ ⊆ gK`.
+    ///
+    /// The tree commits to LDE evaluations on `gK` (size `N·B`). Constraint numerators are
+    /// evaluated point-wise on the smaller quotient domain `gJ` (size `N·D`), and for the
+    /// protocol we only need those `N·D` points as long as `B ≥ D`.
+    ///
+    /// In bit-reversed row order, `gJ` appears as the first `N·D` rows, so this is a
+    /// zero-copy prefix view followed by `bit_reverse_rows()` to expose natural order.
     ///
     /// # Panics
     ///
-    /// Panics if `i >= num_matrices()`.
-    pub fn quotient_domain_natural(
+    /// Panics if `m >= num_matrices()`.
+    pub fn evals_on_quotient_domain(
         &self,
-        i: usize,
+        m: usize,
         constraint_degree: usize,
     ) -> BitReversedMatrixView<RowMajorMatrixView<'_, F>> {
-        let quotient_height = self.domain(i).trace_height() * constraint_degree;
-        self.tree.leaves()[i]
+        let quotient_height = self.lifted_coset(m).trace_height() * constraint_degree;
+        self.tree.leaves()[m]
             .split_rows(quotient_height)
             .0
             .bit_reverse_rows()
@@ -144,7 +155,7 @@ where
 /// Returns a [`Committed`] wrapper providing:
 /// - Commitment root via [`Committed::root()`]
 /// - Underlying LMCS tree via [`Committed::tree()`]
-/// - Quotient domain views via [`Committed::quotient_domain_natural()`]
+/// - Quotient domain views via [`Committed::evals_on_quotient_domain()`]
 ///
 /// # Arguments
 /// - `config`: STARK configuration containing PCS params, LMCS, and DFT
@@ -154,6 +165,12 @@ where
 /// - If `traces` is empty
 /// - If trace heights are not powers of two
 /// - If traces are not sorted by height in ascending order
+///
+/// Lifting note: for a trace of height `n` embedded into a max height `n_max`, let
+/// `r = n_max / n`. The commitment should behave as if it contains evaluations of the
+/// lifted polynomial `f_lift(X) = f(Xʳ)` on the max LDE coset. This is achieved by
+/// evaluating the original trace on a *nested* coset with shift gʳ: the map
+/// `(g·ω)ʳ = gʳ·ωʳ` sends the max domain down to the smaller one.
 pub fn commit_traces<F, L, Dft>(
     config: &StarkConfig<L, Dft>,
     traces: Vec<RowMajorMatrix<F>>,

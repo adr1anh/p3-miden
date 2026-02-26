@@ -1,84 +1,50 @@
-//! # Barycentric Interpolation for Lifted Polynomials
+//! Barycentric interpolation for DEEP openings (with lifting).
 //!
-//! Evaluates `f(z)` from samples `{f(xᵢ)}` in O(d) time via the barycentric formula,
-//! versus O(d²) for naive Lagrange interpolation.
+//! The DEEP technique needs values `f(z)` for many committed polynomials `f` at a
+//! small number of out-of-domain (OOD) points `z`. Interpolating a degree-`< d`
+//! polynomial from `d` samples naively is `O(d²)`; barycentric interpolation makes
+//! it `O(d)` once we precompute the expensive inverses.
 //!
-//! ## Barycentric Formula
+//! # Notation
+//! - Domain points: `xᵢ = g·ωⁱ` for `i = 0..d−1` (a coset `gH` of size `d`).
+//! - OOD points: `zⱼ`, chosen so `zⱼ ≠ xᵢ` for all `i, j`.
+//! - Vanishing on `gH`: `V_{gH}(X) = (X/g)ᵈ − 1`.
 //!
-//! For a polynomial `f` of degree < d sampled on coset `gH` of order d:
-//!
-//! ```text
-//! f(z) = s(z) · Σᵢ wᵢ(z) · f(gHᵢ)
-//! ```
-//!
-//! where the **scaling factor** and **barycentric weights** are:
-//!
-//! ```text
-//! s_{gH}(z) = V_{gH}(z) / d = ((z/g)^d - 1) / d
-//! w_{gH,i}(z) = (gHᵢ) / (z - gHᵢ)
-//! ```
-//!
-//! Here `V_{gH}(X) = (X/g)^d - 1` is the vanishing polynomial of coset `gH`.
-//!
-//! ## The Point Quotient
-//!
-//! Since `wᵢ(z) = xᵢ · 1/(z - xᵢ)`, precomputing `qᵢ = 1/(z - xᵢ)` via batch inversion
-//! lets us both evaluate polynomials and construct DEEP quotients `(f(z) - f(X))/(z - X)`.
-//! Montgomery's trick computes all n inverses with 3n multiplications + 1 inversion.
-//!
-//! ## Lifting and Weight Folding
-//!
-//! For polynomials of varying degrees, we "lift" smaller polynomials to the largest
-//! domain. A degree-d' polynomial `f` lifts to `f'(X) = f(Xʳ)` on a domain of size
-//! r·d'. To evaluate `f` at point `z`, we equivalently evaluate `f'` at `z^{1/r}`—
-//! but since we want all evaluations at the *same* point z, we instead evaluate
-//! `f(zʳ)`, which equals `f'(z)`.
-//!
-//! ### Bit-Reversed Domain Structure
-//!
-//! In bit-reversed order, the coset `gH` satisfies:
-//! - **Adjacent negation**: `gH[2i+1] = -gH[2i]` — in bit-reversed order,
-//!   `bitrev(2i+1)` differs from `bitrev(2i)` only in the MSB, adding `n/2`
-//!   to the exponent, which maps `ω^k → ω^{k+n/2} = -ω^k`.
-//! - **Squaring gives prefix**: `(gH[2i])² = (gH)²[i]`
-//!
-//! This means lifted polynomial `f(X²)` has the same value at indices `2i` and `2i+1`.
-//!
-//! ### Weight Folding Derivation
-//!
-//! For the squared domain, adjacent weights combine:
+//! # Barycentric form
+//! For `deg(f) < d`:
 //!
 //! ```text
-//! w_{gH,2i}(z) + w_{gH,2i+1}(z)
-//!   = gH[2i]/(z - gH[2i]) + gH[2i+1]/(z - gH[2i+1])
-//!   = gH[2i]/(z - gH[2i]) + (-gH[2i])/(z + gH[2i])      [since gH[2i+1] = -gH[2i]]
-//!   = gH[2i] · (z + gH[2i] - z + gH[2i]) / (z² - gH[2i]²)
-//!   = 2·(gH[2i])² / (z² - (gH[2i])²)
-//!   = 2 · w_{(gH)²,i}(z²)
+//! f(z) = s(z) · Σᵢ wᵢ(z) · f(xᵢ)
+//! s(z) = V_{gH}(z) / d = ((z/g)ᵈ − 1) / d
+//! wᵢ(z) = xᵢ / (z − xᵢ)
 //! ```
 //!
-//! The factor of 2 cancels with the scaling factor:
+//! # Point quotients
+//! We precompute `qᵢ(zⱼ) = 1/(zⱼ − xᵢ)` for all domain points `xᵢ` and all
+//! opening points `zⱼ` using batch inversion (Montgomery's trick). This single
+//! table is reused for:
+//! - barycentric weights: `wᵢ(zⱼ) = xᵢ · qᵢ(zⱼ)`
+//! - DEEP quotients: `(f(zⱼ) − f(X)) / (zⱼ − X)`
 //!
-//! ```text
-//! s_{(gH)²}(z²) = ((z²/g²)^{d/2} - 1) / (d/2)
-//!              = ((z/g)^d - 1) / (d/2)
-//!              = 2 · s_{gH}(z)
-//! ```
+//! # Lifting and weight folding
+//! In lifted STARKs, different matrices correspond to polynomials on different
+//! (power-of-two) domain sizes. A polynomial on a smaller domain is embedded into
+//! the max domain by composing with an r-th power map: `f_lift(X) = f(Xʳ)`.
+//! The verifier always queries at `z`, so the prover reports `f(zʳ)` for that
+//! matrix; equivalently, it is evaluating `f_lift(z)`.
 //!
-//! Therefore: `s_{(gH)²}(z²) · w_{(gH)²,i}(z²) = s_{gH}(z) · [w_{gH,2i}(z) + w_{gH,2i+1}(z)]`
+//! To avoid recomputing barycentric weights for every height, we exploit the
+//! bit-reversed ordering used by commitments: on a two-adic coset, points come in
+//! adjacent `(+x, −x)` pairs. When lifting by a factor of 2, the lifted polynomial
+//! `f(X²)` takes the same value on each adjacent pair, so we can fold the barycentric
+//! sum by *summing the corresponding weights*. Repeating this `k` times handles lift
+//! factors `r = 2ᵏ`.
 //!
-//! This lets us fold weights iteratively: sum pairs to halve the domain size, with
-//! the 2× factors canceling at each step.
-//!
-//! ### Uniform Evaluation via Lifting
-//!
-//! The key insight: to make all evaluations "look" uniform at point z:
-//! - For a degree-d polynomial on full domain: evaluate at z directly
-//! - For a degree-d' polynomial (d' < d) with lift factor r = d/d': evaluate at zʳ
-//!
-//! From the verifier's perspective, evaluating `f(zʳ)` is equivalent to evaluating
-//! the lifted polynomial `f'(X) = f(Xʳ)` at z. This makes all polynomials appear
-//! to live on the same domain, simplifying the DEEP quotient construction.
+//! **Why weight summing is correct.** In bit-reversed order, `x_{2i+1} = −x_{2i}`.
+//! Adding the two barycentric weights gives
+//! `w_{2i} + w_{2i+1} = x/(z−x) + (−x)/(z+x) = 2x²/(z²−x²) = 2·w'ᵢ(z²)`,
+//! where `w'ᵢ` is the weight on the squared domain. The factor of 2 cancels with the
+//! halved scaling `s'(z²) = 2·s(z)`, so the interpolation identity is preserved.
 
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
@@ -95,12 +61,14 @@ use p3_miden_lmcs::RowList;
 
 use crate::utils::MatrixExt;
 
-/// Precomputed `1/(zⱼ - xᵢ)` for N evaluation points, enabling batched O(n) barycentric
-/// evaluation and DEEP quotient construction.
+/// Precomputed `1/(zⱼ − xᵢ)` for N evaluation points.
+///
+/// This enables batched `O(d)` barycentric evaluation and DEEP quotient construction
+/// without repeating inversions.
 pub struct PointQuotients<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> {
     /// The evaluation points `[z₀, z₁, ..., z_{N-1}]`.
     points: FieldArray<EF, N>,
-    /// `point_quotient[i][j] = 1/(zⱼ - xᵢ)` for domain point xᵢ and eval point zⱼ.
+    /// `point_quotient[i][j] = 1/(zⱼ − xᵢ)` for domain point xᵢ and eval point zⱼ.
     pub(super) point_quotient: Vec<FieldArray<EF, N>>,
     _marker: PhantomData<F>,
 }
@@ -109,7 +77,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
     /// Create precomputation for N evaluation points via batched inversion.
     ///
     /// Preconditions: all evaluation points must be outside the LDE evaluation coset
-    /// `gK` represented by `coset_points` (i.e., `z_j != x_i` for all i, j). Otherwise
+    /// `gK` represented by `coset_points` (i.e., `zⱼ ≠ xᵢ` for all i, j). Otherwise
     /// division by zero occurs in the barycentric weights and DEEP quotient.
     ///
     /// In the common case where the trace domain `H` is a sub-coset of `gK`, avoiding
@@ -140,12 +108,18 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
         }
     }
 
-    /// Evaluate all matrix columns at `[z₀ʳ, z₁ʳ, ..., z_{N-1}ʳ]` where `r = domain_size / matrix_height`.
+    /// Evaluate all matrix columns at `[z₀ʳ, z₁ʳ, …, z_{N−1}ʳ]`.
+    ///
+    /// Here `r = domain_size / matrix_height` is the lift factor for that matrix.
     ///
     /// Returns evaluations grouped by commitment: `groups[group_idx][matrix_idx][col_idx]`
     /// where each element is a `FieldArray<EF, N>` containing evaluations at all N points.
     /// This batches N evaluation points together, using `columnwise_dot_product_batched<N>`
     /// for better cache utilization than N separate calls.
+    ///
+    /// Implementation note: we compute barycentric weights for the maximum domain once,
+    /// then derive weights for smaller heights by folding (summing blocks). All heights
+    /// share the same precomputed point quotients `1/(zⱼ − xᵢ)`.
     pub fn batch_eval_lifted<M: Matrix<F>>(
         &self,
         matrices_groups: &[Vec<&M>],
@@ -161,7 +135,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
         let shift_inverse = shift.inverse();
 
         // Compute barycentric scaling factors for each point:
-        // s_j(z_j) = ((z_j/g)^d - 1) / d
+        // sⱼ(zⱼ) = ((zⱼ/g)ᵈ − 1) / d
         let barycentric_scalings = self.points.map(|point| {
             let z_over_shift = point * shift_inverse;
             let t = z_over_shift.exp_power_of_2(log_d) - EF::ONE;
@@ -174,7 +148,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
             .collect();
 
         // Compute barycentric weights for each point at each height:
-        // w_{i,j}(z_j) = x_i / (z_j - x_i) = x_i · point_quotient[i][j]
+        // wᵢⱼ(zⱼ) = xᵢ / (zⱼ − xᵢ) = xᵢ · point_quotient[i][j]
         // For smaller domains, sum chunks (weight folding).
         let barycentric_weights: LinearMap<usize, Vec<FieldArray<EF, N>>> =
             debug_span!("barycentric_weights", d).in_scope(|| {
@@ -203,7 +177,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
                 weights.into_iter().map(|w| (w.len(), w)).collect()
             });
 
-        // f(z_j^r) = s_j(z_j) · Σ w_{i,j}(z_j) · f(x_i)
+        // f(zⱼʳ) = sⱼ(zⱼ)·Σᵢ wᵢⱼ(zⱼ)·f(xᵢ)
         // For each group, evaluate at all N points using columnwise_dot_product_batched
         // Returns Vec<[EF; N]> where result[col][point] = eval of column col at point point
         let all_evals: Vec<Vec<FieldArray<EF, N>>> = matrices_groups

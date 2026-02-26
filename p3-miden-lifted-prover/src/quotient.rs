@@ -4,7 +4,7 @@
 //! divide, commit). This module provides the building blocks:
 //!
 //! - `cyclic_extend_and_scale`: Horner-style beta scaling + cyclic extension
-//! - `divide_by_vanishing_in_place`: Divide by Z_H on the quotient domain
+//! - `divide_by_vanishing_in_place`: Divide by Z_H on the quotient evaluation domain
 //! - [`commit_quotient`]: Decompose Q(gJ) into chunks and commit on gK
 
 use alloc::vec;
@@ -29,14 +29,18 @@ use crate::commit::Committed;
 // Accumulation
 // ============================================================================
 
-/// Cyclically extend the accumulator to `target_len` and scale every element by `beta`.
+/// Cyclically extend the accumulator to `target_len` and scale every element by `β`.
 ///
 /// On the first call (empty accumulator) this simply zero-fills to `target_len`.
-/// On subsequent calls it scales the existing buffer by `beta` (Horner folding)
+/// On subsequent calls it scales the existing buffer by `β` (Horner folding)
 /// then doubles via `extend_from_within` until it reaches `target_len`.
 ///
 /// Both `accumulator.len()` and `target_len` must be powers of two, and
-/// `target_len >= accumulator.len()`.
+/// `target_len ≥ accumulator.len()`.
+///
+/// Cyclic extension is valid because H_small is a subgroup of H_big, so
+/// evaluations repeat cyclically. The β scaling implements Horner folding for
+/// multi-trace accumulation: `acc = acc·β + Nⱼ`.
 pub(crate) fn cyclic_extend_and_scale<EF: Field>(
     accumulator: &mut Vec<EF>,
     target_len: usize,
@@ -60,24 +64,31 @@ pub(crate) fn cyclic_extend_and_scale<EF: Field>(
 
 /// Divide quotient numerator by vanishing polynomial in-place (natural order).
 ///
-/// Replaces each `numerator[i]` with `numerator[i] / Z_H(x_i)` where
-/// Z_H(x) = x^N - 1 and N is the trace height.
+/// Replaces each `numerator[i]` with `numerator[i] / Z_H(xᵢ)` where
+/// `Z_H(X) = Xᴺ − 1` and `N` is the trace height.
 ///
-/// Exploits periodicity: Z_H(x) has only 2^rate_bits distinct values on gJ,
-/// so we compute only the distinct inverse values and use modular indexing.
+/// This uses a periodicity trick: on the quotient evaluation coset `gJ` of size `N·D`,
+/// the values `Z_H(x)` take only `D` distinct values, so we can batch-invert those `D`
+/// values once and reuse them by modular indexing.
+///
+/// Note that here `coset.log_blowup()` is `log2(D)` because `coset` is the *quotient*
+/// domain (blowup = constraint degree), not the PCS/FRI blowup `B`.
 pub(crate) fn divide_by_vanishing_in_place<F, EF>(numerator: &mut [EF], coset: &LiftedCoset)
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
 {
-    let rate_bits = coset.log_blowup();
-    let num_distinct = 1 << rate_bits;
+    // D = constraint degree. On the quotient coset, log_blowup() = log₂(D).
+    let log_blowup = coset.log_blowup();
+    let num_distinct = 1 << log_blowup;
 
-    // Compute only the distinct inverse vanishing values (2^rate_bits of them)
-    // Z_H(x) = x^n - 1 has periodicity on the coset
+    // The D distinct values of Z_H on gJ:
+    // Z_H(g·ω_Jⁱ) = sᴺ·ω_Dⁱ − 1 where
+    // - s is the coset shift
+    // - ω_D is a D-th root of unity.
     let shift: F = coset.lde_shift();
     let s_pow_n = shift.exp_power_of_2(coset.log_trace_height);
-    let z_h_evals: Vec<F> = F::two_adic_generator(rate_bits)
+    let z_h_evals: Vec<F> = F::two_adic_generator(log_blowup)
         .powers()
         .take(num_distinct)
         .map(|x| s_pow_n * x - F::ONE)
@@ -97,39 +108,28 @@ where
 // Quotient decomposition + commitment
 // ============================================================================
 
-/// Commit quotient polynomial using the fused scaling pipeline.
+/// Commit the quotient polynomial by splitting across the `D` quotient cosets.
 ///
-/// Takes Q(gJ) evaluations in natural order, decomposes into D quotient
-/// components, and commits their LDE evaluations on gK.
+/// The quotient is naturally evaluated on the quotient evaluation coset `gJ` of size
+/// `N·D` (N = trace height, D = constraint degree). We view `J` as `D` disjoint
+/// `H`-cosets: `J = ⋃_{t=0..D−1} ω_Jᵗ·H`. Reshaping `Q(gJ)` into an `N×D`
+/// matrix makes column `t` the evaluations of a degree-`< N` polynomial qₜ on the
+/// coset `g·ω_Jᵗ·H`.
 ///
-/// `q_evals` is consumed, flattened to base field, and zero-padded to
-/// `N * B * D * EF::DIMENSION` base elements for the LDE. Callers that
-/// pre-allocate `q_evals` with capacity `N * B` (in EF elements) allow the
-/// flatten + resize to reuse the same allocation.
+/// We commit to all qₜ by LDE-extending them to the PCS domain `gK` (size `N·B`) and
+/// hashing the resulting matrix. Doing this efficiently is the point of the "fused
+/// scaling" trick used below:
+/// - an iDFT on each column yields coefficients multiplied by `(g·ω_Jᵗ)ᵏ`,
+/// - multiplying by `(ω_J⁻ᵏ)ᵗ` removes the t-dependent part, leaving a gᵏ
+///   factor baked into the coefficients,
+/// - with gᵏ baked in, a plain (unshifted) DFT evaluates directly on the shifted coset
+///   `gK` without running `D` separate coset DFTs.
 ///
-/// # Pipeline
-///
-/// 1. Reshape Q(gJ) as N×D matrix (column t = coset g·ω_J^t·H)
-/// 2. Batch iDFT over H
-/// 3. Fused scaling: multiply by (ω_J^t)^{-k} to bake g^k into coefficients
-/// 4. Flatten to base field (width D → D·`EF::DIMENSION`)
-/// 5. Zero-pad to N·B rows
-/// 6. Batch plain DFT on base field → evaluations on gK
-/// 7. Bit-reverse rows and commit via LMCS
-///
-/// # Arguments
-///
-/// - `config`: STARK configuration (provides DFT, LMCS, blowup)
-/// - `q_evals`: Q(gJ) evaluations in natural order, length N·D
-/// - `coset`: The [`LiftedCoset`] for the trace (provides trace height and blowup)
-///
-/// # Returns
-///
-/// A `Committed` wrapper around the quotient tree with base field matrix.
+/// `q_evals` is consumed and flattened to the base field for commitment.
 ///
 /// # Panics
 ///
-/// - If `q_evals.len()` is not divisible by the trace height
+/// - If `q_evals.len()` is not divisible by N
 /// - If blowup B < constraint degree D
 pub fn commit_quotient<F, EF, L, Dft>(
     config: &StarkConfig<L, Dft>,
@@ -157,29 +157,30 @@ where
     // ═══════════════════════════════════════════════════════════════════════
     // Step 0: Reshape to N × D matrix
     // ═══════════════════════════════════════════════════════════════════════
-    // Column t = evaluations on coset g·ω_J^t·H
-    // q_evals[r*D + t] = Q(g·ω_J^t·ω_H^r)
+    // q_evals[r·D + t] = Q(g·ω_Jᵗ·ω_Hʳ), so column t gives
+    // qₜ evaluated on the coset g·ω_Jᵗ·H.
     let m = RowMajorMatrix::new(q_evals, d);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Step 1: Batched iDFT over H (using algebra methods for EF)
+    // Step 1: Batched iDFT over H
     // ═══════════════════════════════════════════════════════════════════════
-    // Treats each column as evaluations on H (not the actual coset g·ω_J^t·H)
-    // Result: C0[k, t] = a_{t,k} · (g·ω_J^t)^k
+    // iDFT treats each column as evaluations on H (not the actual coset
+    // g·ω_Jᵗ·H), producing shifted coefficients:
+    //   c_hat[t, k] = a[t, k]·(g·ω_Jᵗ)ᵏ
+    // where a[t, k] are the true coefficients of qₜ.
     let mut coeffs = config.dft.idft_algebra_batch(m);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Step 2: Fused coefficient scaling
     // ═══════════════════════════════════════════════════════════════════════
-    // Multiply by (ω_J^t)^{-k} to get a_{t,k} · g^k
-    // This bakes the coset shift g^k into the coefficients
+    // Multiply c_hat[t, k] by (ω_Jᵗ)⁻ᵏ → a[t, k]·gᵏ.
+    // This removes the per-coset shift ω_Jᵗ while keeping gᵏ baked in.
     let omega_j_inv = F::two_adic_generator(coset.log_trace_height + log_d).inverse();
 
-    // Precompute ω_J^{-k} for k = 0..n with sequential multiplications
-    // (N base-field muls vs N exponentiations)
+    // Precompute ω_J⁻ᵏ for k = 0..N with sequential multiplications
     let row_bases: Vec<F> = omega_j_inv.powers().take(n).collect();
 
-    // Parallel row-first scaling: row k has d entries, column t gets scale (ω_J^{-k})^t
+    // Row k, column t: multiply by (ω_J⁻ᵏ)ᵗ
     coeffs
         .par_rows_mut()
         .zip(row_bases.par_iter())
@@ -190,21 +191,20 @@ where
         });
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Step 3: Flatten to base field, zero-pad, and DFT
+    // Step 3: Flatten EF → F, zero-pad to N·B rows
     // ═══════════════════════════════════════════════════════════════════════
-    // Flatten EF → F before the DFT rather than after: dft_algebra_batch
-    // internally does flatten → dft_batch → reconstitute, but we need base
-    // field for commitment anyway, so flattening first skips the reconstitute.
+    // We flatten before the DFT (rather than using dft_algebra_batch) because
+    // we need base field for commitment anyway — this skips the reconstitute.
     let base_width = d * EF::DIMENSION;
     let mut base_coeffs = <EF as BasedVectorSpace<F>>::flatten_to_base(coeffs.values);
     base_coeffs.resize(n * b * base_width, F::ZERO);
     let coeffs_padded = RowMajorMatrix::new(base_coeffs, base_width);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Step 4: Batched forward DFT (PLAIN, not coset) on base field
+    // Step 4: Plain DFT (not coset DFT) on base field
     // ═══════════════════════════════════════════════════════════════════════
-    // Because g^k is baked into coefficients, plain DFT gives evaluations on gK
-    // Result: E[i, t] = q_t(g·ω_K^i)
+    // Because gᵏ is baked into the coefficients, the plain DFT evaluates
+    // on gK directly: entry (i, t) gives qₜ(g·ω_Kⁱ).
     let lde = config.dft.dft_batch(coeffs_padded);
 
     // ═══════════════════════════════════════════════════════════════════════

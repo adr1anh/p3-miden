@@ -46,13 +46,13 @@ where
     pub randomness: Vec<EF>,
     /// Auxiliary trace commitment (present only when AIRs have aux columns).
     pub aux_commit: Option<L::Commitment>,
-    /// Constraint folding challenge α.
+    /// Constraint folding challenge alpha.
     pub alpha: EF,
-    /// AIR accumulation challenge β.
+    /// AIR accumulation challenge beta.
     pub beta: EF,
     /// Quotient polynomial commitment.
     pub quotient_commit: L::Commitment,
-    /// Out-of-domain evaluation point ζ.
+    /// Out-of-domain evaluation point z.
     pub zeta: EF,
     /// PCS sub-transcript (DEEP evals, FRI rounds, query openings).
     pub pcs_transcript: PcsTranscript<EF, L>,
@@ -70,9 +70,9 @@ where
     /// 1. Receive main trace commitment
     /// 2. Sample randomness for auxiliary traces
     /// 3. Receive auxiliary trace commitment (if present)
-    /// 4. Sample constraint folding α and accumulation β
+    /// 4. Sample constraint folding alpha and accumulation beta
     /// 5. Receive quotient commitment
-    /// 6. Sample OOD point ζ
+    /// 6. Sample OOD point z
     /// 7. Build commitment widths for PCS
     /// 8. Parse PCS sub-transcript via [`PcsTranscript::from_verifier_channel`]
     ///

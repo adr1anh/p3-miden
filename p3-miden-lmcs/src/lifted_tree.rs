@@ -30,8 +30,8 @@ use tracing::{debug_span, info_span};
 /// - **Matrices must be sorted by height** (shortest to tallest)
 /// - Uses incremental hashing via [`StatefulHasher`] instead of one-shot hashing
 ///
-/// The per-leaf row composition uses nearest-neighbor upsampling: each matrix `M_i` is virtually
-/// extended to height `N` (width unchanged) by repeating each row `r_i = N / n_i` times
+/// The per-leaf row composition uses nearest-neighbor upsampling: each matrix Mᵢ is virtually
+/// extended to height N (width unchanged) by repeating each row rᵢ = N/nᵢ times
 /// contiguously. For leaf index `j`, the sponge absorbs the `j`-th row from each lifted matrix
 /// in sequence. The sponge applies its own padding semantics during absorption; LMCS alignment
 /// only affects transcript hints.

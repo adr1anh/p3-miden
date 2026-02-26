@@ -24,7 +24,7 @@ use crate::fri::verifier::FriOracle;
 /// # Preconditions
 /// - `eval_points` must lie outside both the trace-domain subgroup `H` and the
 ///   LDE evaluation coset `gK` used by the PCS. If a point lies in either set,
-///   denominators `(z_j - X)` in the DEEP quotient become zero for some domain element,
+///   denominators `(zⱼ − X)` in the DEEP quotient become zero for some domain element,
 ///   making the quotient undefined.
 /// - All commitments are expected to be lifted to the same LDE height `2^log_lde_height`.
 ///
@@ -66,7 +66,7 @@ where
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Construct verifier's DEEP oracle (observes evals, checks PoW, samples α/β)
+    // Construct verifier's DEEP oracle (observes evals, checks PoW, samples alpha/beta)
     // ─────────────────────────────────────────────────────────────────────────
     let (deep_oracle, evals) = DeepOracle::<F, EF, L>::new(
         &params.deep,

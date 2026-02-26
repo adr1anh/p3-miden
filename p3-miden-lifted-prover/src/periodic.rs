@@ -23,6 +23,12 @@ use p3_util::log2_strict_usize;
 /// Stores precomputed LDE values as a row-major matrix in natural order. The key insight
 /// is that by repeating each column's values to the maximum period, we can use batch DFT
 /// methods and store only `max_period * blowup` rows instead of `trace_height * blowup`.
+///
+/// A periodic column of period `p` repeats every `p` rows on the trace domain, so its LDE
+/// repeats every `p * blowup` rows on the quotient/LDE domains. We therefore only need to
+/// store `p * blowup` rows for that column. To share one buffer across many periodic columns,
+/// we repeat each column up to `max_period` and LDE-extend once; columns with smaller periods
+/// are accessed via modular indexing.
 #[derive(Clone, Debug)]
 pub struct PeriodicLde<F: TwoAdicField> {
     /// LDE values in natural order (height = max_period * blowup).
@@ -77,10 +83,11 @@ impl<F: TwoAdicField> PeriodicLde<F> {
         }
         let repeated_matrix = RowMajorMatrix::new(repeated_values, num_columns);
 
-        // Step 3: Compute shift for max_period coset: g^r × (trace_height / max_period)
-        // The coset shift is g^r. For a periodic column with period p,
-        // we need shift (g^r)^(trace_height / p) = g^(r * trace_height / p).
-        // Since lde_shift = g^r and trace_height = 2^log_trace_height:
+        // Step 3: Compute the coset shift for the max-period subgroup.
+        //
+        // Periodic polynomials are naturally defined on a subgroup of order `max_period`.
+        // We derive the corresponding coset shift by taking the lifted coset shift
+        // gʳ and mapping from trace height down to `max_period` via a power-of-two ratio.
         let log_ratio = coset.log_trace_height - log_max_period;
         let period_shift: F = coset.lde_shift::<F>().exp_power_of_2(log_ratio);
 

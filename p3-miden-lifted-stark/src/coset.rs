@@ -16,15 +16,15 @@ use crate::selectors::Selectors;
 
 /// Lifted coset for polynomial evaluation.
 ///
-/// Represents a coset (gK)^r where:
+/// Represents a coset (gK)ʳ where:
 /// - K is the evaluation domain of size 2^log_lde_height
 /// - r = 2^log_lift_ratio is the lift factor (row repetition)
-/// - The shift is g^r where g = F::GENERATOR
+/// - The shift is gʳ where g = F::GENERATOR
 ///
 /// Key relationships:
 /// - log_blowup = log_lde_height - log_trace_height
 /// - log_lift_ratio = log_max_lde_height - log_lde_height
-/// - lde_shift = g^r = F::GENERATOR.exp_power_of_2(log_lift_ratio)
+/// - lde_shift = gʳ = F::GENERATOR.exp_power_of_2(log_lift_ratio)
 ///
 /// # Invariants
 ///
@@ -106,9 +106,13 @@ impl LiftedCoset {
 
     /// Compute the coset shift for this matrix's LDE domain.
     ///
-    /// For a matrix with lift ratio `r = 2^log_lift_ratio`, the coset shift is
-    /// `g^r` where `g` is the field generator. This places the LDE on the
-    /// nested coset `(gK)^r` within the max LDE domain.
+    /// For a matrix with lift ratio `r = 2^log_lift_ratio`, the coset shift is gʳ
+    /// where g is the field generator.
+    ///
+    /// Why gʳ: lifting embeds a smaller-domain polynomial into the max domain by
+    /// composition `p_lift(X) = p(Xʳ)`. Evaluating `p_lift` on the max coset `g·K_max`
+    /// corresponds to evaluating `p` on the nested coset `gʳ·K`, because
+    /// `(g·ω)ʳ = gʳ·ωʳ` and ωʳ ranges over K when ω ranges over `K_max`.
     #[inline]
     pub fn lde_shift<F: TwoAdicField>(&self) -> F {
         F::GENERATOR.exp_power_of_2(self.log_lift_ratio())
@@ -142,11 +146,19 @@ impl LiftedCoset {
 
     /// Derive the quotient domain coset from this LDE coset.
     ///
-    /// For constraint evaluation, we need a coset of size trace_height × constraint_degree.
-    /// This transforms (gK)^r into (gJ)^r while preserving the lift ratio.
+    /// For constraint evaluation, we need a coset of size `trace_height * constraint_degree`.
+    /// This transforms (gK)ʳ into (gJ)ʳ while preserving the lift ratio.
     ///
     /// # Panics
     /// Panics if log_constraint_degree > log_blowup.
+    ///
+    /// The quotient domain is a strict subset of the committed LDE domain.
+    ///
+    /// If the constraint degree is `D`, the resulting quotient polynomial has degree
+    /// `< N * (D - 1)`, so `N * D` evaluation points suffice for commitment and for the
+    /// verifier's reconstruction. The PCS uses a larger blowup `B`, so the committed
+    /// LDE domain `gK` has `N * B` points, but constraint evaluation only needs the
+    /// sub-coset `gJ` of size `N * D` (with `D <= B`).
     pub fn quotient_domain(&self, log_constraint_degree: usize) -> Self {
         let log_blowup = self.log_blowup();
         assert!(
@@ -163,32 +175,45 @@ impl LiftedCoset {
 
     // ============ Selector computation ============
 
-    /// Compute selectors for evaluation over this coset in natural order (prover).
+    /// Compute selectors for evaluation over this coset in natural order.
     ///
-    /// Returns is_first_row, is_last_row, is_transition for each point
-    /// in the coset (gK)^r. The trace domain H has size 2^log_trace_height.
+    /// Returns is_first_row, is_last_row, is_transition for each point in the coset
+    /// (gK)ʳ. The trace domain H has size `2^log_trace_height`.
+    ///
+    /// Selectors use unnormalized Lagrange basis polynomials. The is_first_row selector
+    /// is `L₀(x) = Z_H(x) / (x − 1)`, which equals 0 on all of H except the first row.
+    /// When multiplied by a constraint C(x), it enforces C only at the first row:
+    /// `L₀(x)·C(x)` vanishes on H iff `C(1) = 0`. Similarly,
+    /// `is_last_row = Z_H(x) / (x − ω⁻¹)`.
+    ///
+    /// The is_transition selector is `(x − ω⁻¹)`, which is nonzero everywhere except the
+    /// last row, enforcing transition constraints on all consecutive row pairs.
+    /// These are "unnormalized" because we omit the constant factor 1/N that would make
+    /// them evaluate to exactly 1 at their target row. This is fine because both prover
+    /// and verifier evaluate the same unnormalized form: multiplying all boundary constraints
+    /// by a common nonzero constant does not affect whether the quotient is a polynomial.
     pub fn selectors<F: TwoAdicField>(&self) -> Selectors<Vec<F>> {
         let shift: F = self.lde_shift();
         let coset_size = self.lde_height();
-        let rate_bits = self.log_blowup();
+        let log_blowup = self.log_blowup();
 
-        // Z_H(x) = x^n - 1 evaluated at coset points.
-        // Periodic with 2^rate_bits distinct values; expand to full coset size for zip.
+        // Z_H(x) = xⁿ − 1 evaluated at coset points.
+        // Periodic with 2^log_blowup distinct values; expand to full coset size for zip.
         let s_pow_n = shift.exp_power_of_2(self.log_trace_height);
-        let z_h_periodic: Vec<F> = F::two_adic_generator(rate_bits)
+        let z_h_periodic: Vec<F> = F::two_adic_generator(log_blowup)
             .shifted_powers(s_pow_n)
-            .take(1 << rate_bits)
+            .take(1 << log_blowup)
             .map(|x| x - F::ONE)
             .collect();
         let period = z_h_periodic.len();
 
-        // Coset points in natural order: shift · ω_J^i
+        // Coset points in natural order: shift·ω_Jⁱ
         let omega_j = F::two_adic_generator(self.log_lde_height);
         let xs: Vec<F> = omega_j.shifted_powers(shift).collect_n(coset_size);
 
         let omega_h_inv = F::two_adic_generator(self.log_trace_height).inverse();
 
-        // Unnormalized Lagrange selector: sel_i = Z_H(x_i) / (x_i - basis_point)
+        // Unnormalized Lagrange selector: selᵢ = Z_H(xᵢ) / (xᵢ − basis_point)
         // Uses modular indexing into z_h_periodic to avoid a full-size allocation.
         let single_point_selector = |basis_point: F| -> Vec<F> {
             let denoms: Vec<F> = xs.par_iter().map(|&x| x - basis_point).collect();
@@ -209,11 +234,20 @@ impl LiftedCoset {
     /// Compute selectors at an out-of-domain point (verifier).
     ///
     /// # Formulas (unnormalized)
-    /// - `is_first_row = Z_H(z) / (z - 1)`
-    /// - `is_last_row = Z_H(z) / (z - ω^{-1})`
-    /// - `is_transition = z - ω^{-1}`
+    /// - `is_first_row = Z_H(z) / (z − 1)`
+    /// - `is_last_row = Z_H(z) / (z − ω⁻¹)`
+    /// - `is_transition = z − ω⁻¹`
     ///
-    /// where `Z_H(z) = z^n - 1` is the vanishing polynomial of the trace domain.
+    /// where `Z_H(z) = zⁿ − 1` is the vanishing polynomial of the trace domain.
+    ///
+    /// The verifier evaluates selectors at the OOD point z rather than across the trace.
+    /// This is enough because the prover commits to the quotient polynomial using DEEP+FRI.
+    /// At the random point z, the verifier checks that
+    ///
+    /// `Q(z)·Z_H(z) = Σₖ α^{K−1−k}·Cₖ(z)`.
+    ///
+    /// Each Cₖ already incorporates its selector (via `when_first_row`, `when_transition`,
+    /// etc.), so the selector values at z are baked into the constraint evaluations.
     pub fn selectors_at<F, EF>(&self, zeta: EF) -> Selectors<EF>
     where
         F: TwoAdicField,
@@ -234,7 +268,7 @@ impl LiftedCoset {
 
     /// Compute inverse vanishing at an out-of-domain point (verifier).
     ///
-    /// Returns 1/Z_H(zeta) where Z_H(z) = z^n - 1.
+    /// Returns `1 / Z_H(zeta)` where `Z_H(z) = zⁿ − 1`.
     pub fn inv_vanishing_at<F, EF>(&self, zeta: EF) -> EF
     where
         F: TwoAdicField,

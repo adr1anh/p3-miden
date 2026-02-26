@@ -135,14 +135,15 @@ where
 /// protocol:
 ///
 /// 1. Receive commitments and sample challenges in the same order as the prover
-/// 2. For each AIR, evaluate constraints at the lifted OOD point `y_j = ζ^{r_j}`
-/// 3. Accumulate folded constraints with beta: `acc = acc * β + folded_j`
-/// 4. Check quotient identity: `acc == Q(ζ) * Z_{H_max}(ζ)`
+/// 2. For each AIR, evaluate constraints at the lifted OOD point yⱼ = z^{rⱼ}
+/// 3. Accumulate folded constraints with β: acc = acc·β + foldedⱼ
+/// 4. Check quotient identity: `acc == Q(z) * Z_{H_max}(z)`
 ///
-/// Lifting ensures correctness: for a trace of height `n_j` lifted by factor `r_j`,
-/// the committed polynomial is `p(X^{r_j})`, so the PCS opening at `[ζ, ζ·h_max]`
-/// gives `[p(ζ^{r_j}), p(h_{n_j}·ζ^{r_j})]` — exactly the local/next pair in the
-/// original domain.
+/// Lifting ensures correctness: for a trace of height nⱼ lifted by factor rⱼ,
+/// the committed codeword corresponds to the lifted polynomial `p_lift(X) = p(X^{rⱼ})`.
+/// Opening at `[z, z * h_max]` therefore yields
+/// `[p(z^{r_j}), p(h_{n_j} * z^{r_j})]`, i.e. the local/next row pair for the original
+/// (unlifted) trace domain.
 ///
 /// # Arguments
 /// - `config`: STARK configuration (PCS params, LMCS, DFT)
@@ -286,8 +287,8 @@ where
         let n_j = 1usize << log_n_j;
         let log_lift_ratio = log_max_trace_height - log_n_j;
 
-        // Virtual evaluation point for lifted trace: y_j = ζ^{r_j}
-        // For unlifted traces (r_j = 1), y_j = ζ
+        // Virtual evaluation point for this (possibly lifted) trace: yⱼ = z^{rⱼ}.
+        // For unlifted traces (rⱼ = 1), yⱼ = z.
         let y_j = zeta.exp_power_of_2(log_lift_ratio);
 
         // Extract main trace opened values, truncating alignment padding.
@@ -308,11 +309,11 @@ where
             None => (vec![], vec![]),
         };
 
-        // Selectors at virtual point y_j (relative to this trace's domain)
+        // Selectors at the virtual point yⱼ (relative to this trace's domain).
         let coset_j = LiftedCoset::new(log_n_j, log_blowup, log_max_trace_height);
         let selectors = coset_j.selectors_at::<F, _>(y_j);
 
-        // Periodic values at virtual point y_j
+        // Periodic values at the virtual point yⱼ.
         let periodic_polys = PeriodicPolys::new(air.periodic_columns())
             .ok_or(VerifierError::InvalidPeriodicTable)?;
         let periodic_values = periodic_polys.eval_at::<EF>(n_j, y_j);
@@ -339,11 +340,11 @@ where
 
         air.eval(&mut folder);
 
-        // Accumulate: acc = acc * β + folded_j
+        // Accumulate: acc = acc * beta + folded_j
         accumulated = accumulated * beta + folder.accumulator;
     }
 
-    // 11. Reconstruct Q(ζ) and check quotient identity Q(ζ) * Z_{H_max}(ζ)
+    // 11. Reconstruct Q(z) and check quotient identity Q(z) * Z_{H_max}(z)
     let qw = constraint_degree * EF::DIMENSION;
     let quotient_chunks = row_to_packed_ext::<F, EF>(&quotient_evals.point(0).row(0)[..qw])?;
     let quotient_zeta = reconstruct_quotient::<F, EF>(zeta, &max_lde_coset, &quotient_chunks);

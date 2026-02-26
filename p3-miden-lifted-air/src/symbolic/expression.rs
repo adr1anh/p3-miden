@@ -85,14 +85,14 @@ pub enum SymbolicExpression<F> {
     /// - 1 on the first row,
     /// - 0 elsewhere.
     ///
-    /// Evaluates to `L_0(x)`, the Lagrange basis polynomial for index 0.
+    /// Evaluates to L₀(x), the Lagrange basis polynomial for index 0.
     IsFirstRow,
 
     /// Selector that is:
     /// - 1 on the last row,
     /// - 0 elsewhere.
     ///
-    /// Evaluates to `L_{n-1}(x)`, the Lagrange basis polynomial for the last index.
+    /// Evaluates to Lₙ₋₁(x), the Lagrange basis polynomial for the last index.
     IsLastRow,
 
     /// Selector that is:

@@ -88,8 +88,8 @@
 //!
 //! # Lifting by Upsampling
 //!
-//! When we have matrices with different heights `n_0 ≤ n_1 ≤ ... ≤ n_{t-1}` (each a power of two),
-//! we "lift" smaller matrices to the maximum height `N = n_{t-1}` using **nearest-neighbor
+//! When we have matrices with different heights n₀ ≤ n₁ ≤ … ≤ nₜ₋₁ (each a power of two),
+//! we "lift" smaller matrices to the maximum height N = nₜ₋₁ using **nearest-neighbor
 //! upsampling**: each row is repeated contiguously `r = N/n` times.
 //!
 //! For a matrix of height `n` lifted to `N`, the index map is: `i ↦ floor(i / r) = i >> log2(r)`
@@ -101,7 +101,7 @@
 //! # Why Upsampling for Bit-Reversed Data
 //!
 //! Given bit-reversed evaluations of `f(X)` over a coset `gK` where `|K| = n`, upsampling to
-//! height `N = n · r` (where `r = 2^k`) produces the bit-reversed evaluations of `f'(X) = f(X^r)`
+//! height `N = n · r` (where `r = 2^k`) produces the bit-reversed evaluations of `f'(X) = f(Xʳ)`
 //! over the coset `gK'` where `|K'| = N`.
 //!
 //! Mathematically, if the input contains `f(g·(ω_n)^{bitrev_n(j)})` at index `j`, then after
@@ -111,12 +111,12 @@
 //! upsampled[i] = f(g·(ω_n)^{bitrev_n(i >> k)}) = f'(g·(ω_N)^{bitrev_N(i)})
 //! ```
 //!
-//! where `f'(X) = f(X^r)`. This is exactly the bit-reversed evaluation of `f'` over `gK'`.
+//! where `f'(X) = f(Xʳ)`. This is exactly the bit-reversed evaluation of `f'` over `gK'`.
 //!
 //! # Opening Semantics
 //!
 //! When opening at index `i`, we retrieve the value at position `i` in the bit-reversed list.
-//! For the lifted polynomial `f'(X) = f(X^r)`, this gives `f'(g·(ω_N)^{bitrev_N(i)})`.
+//! For the lifted polynomial `f'(X) = f(Xʳ)`, this gives `f'(g·(ω_N)^{bitrev_N(i)})`.
 //!
 //! Equivalently, this is `f'(g·ξ^i)` where `ξ = (ω_N)^{bitrev_N(i)}` is the `i`-th element
 //! when iterating over `K'` in the order induced by bit-reversed indices.

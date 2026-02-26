@@ -204,15 +204,20 @@ where
 /// may have a different height that is a power of 2. The quotient numerators are
 /// accumulated using cyclic extension:
 ///
-/// 1. Compute numerator N_0 on the smallest quotient domain
-/// 2. For each subsequent trace j:
-///    - Extend accumulator to trace j's quotient domain size
-///    - Fold: `acc = acc * beta + N_j`
-/// 3. Divide by Z_H once on the largest quotient domain
+/// 1. Compute numerator N₀ on the smallest quotient domain.
+/// 2. For each subsequent trace `j`:
+///    - cyclically extend the accumulator to the new (larger) quotient domain,
+///    - fold with the random challenge β: acc = acc·β + Nⱼ.
+/// 3. Divide by `Z_H` once on the largest quotient domain.
+///
+/// The ordering is important: cyclic extension only grows the accumulator (it does not
+/// shrink), and both prover and verifier must assign the same powers of `beta` to each
+/// instance's contribution.
 ///
 /// # Arguments
 /// - `config`: STARK configuration (PCS params, LMCS, DFT)
-/// - `instances`: Pairs of (AIR, witness) sorted by trace height (ascending)
+/// - `instances`: Pairs of (AIR, witness) sorted by trace height (ascending).
+///   All AIRs must either all have auxiliary traces or none.
 /// - `channel`: Prover channel for transcript/proof I/O
 ///
 /// # Returns
@@ -352,11 +357,13 @@ where
             let this_quotient_coset = this_lde_coset.quotient_domain(log_constraint_degree);
             let this_quotient_height = this_quotient_coset.lde_height();
 
-            // Get views into committed LDEs for this trace
-            let main_on_gj = main_committed.quotient_domain_natural(i, constraint_degree);
+            // Truncate the committed LDE to the quotient evaluation domain gJ (size N·D).
+            // Since B ≥ D, the committed LDE on gK (size N·B) contains gJ as a prefix in
+            // bit-reversed storage, so this is a zero-copy view.
+            let main_on_gj = main_committed.evals_on_quotient_domain(i, constraint_degree);
             let aux_on_gj = aux_committed
                 .as_ref()
-                .map(|aux| aux.quotient_domain_natural(i, constraint_degree));
+                .map(|aux| aux.evals_on_quotient_domain(i, constraint_degree));
 
             // Build periodic LDE for this trace via coset method
             let periodic_lde = PeriodicLde::build(&this_quotient_coset, air.periodic_columns());

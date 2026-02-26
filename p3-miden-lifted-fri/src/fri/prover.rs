@@ -86,6 +86,10 @@ where
 {
     /// Execute the FRI commit phase.
     ///
+    /// Iteratively folds the polynomial by arity at each round — committing intermediate
+    /// evaluations and sampling a random challenge `beta` — until the degree is small enough to
+    /// send the polynomial directly. The query phase then spot-checks that each fold was
+    /// performed correctly.
     pub fn new<Ch>(params: &FriParams, lmcs: &L, evals: Vec<EF>, channel: &mut Ch) -> Self
     where
         Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F>,
@@ -101,8 +105,12 @@ where
         let final_domain_size = final_poly_degree << params.log_blowup;
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Precompute s⁻¹ for all cosets
+        // Precompute s_inv for all cosets
         // ─────────────────────────────────────────────────────────────────────────
+        // The fold performs an iFFT over the coset s * <omega>. This is equivalent to an
+        // iFFT on the subgroup <omega> after the variable substitution X -> s_inv * X,
+        // which is why s_inv appears as a twiddle factor in the fold formula.
+        //
         // Evaluations are in bit-reversed order: evals[i] = f(g^{bitrev(i)})
         // Row k contains [evals[k*arity], evals[k*arity+1], ...] which correspond
         // to evaluations at points forming a coset s·⟨ω⟩ where:
@@ -142,7 +150,7 @@ where
             channel.send_commitment(commitment.clone());
 
             // ─────────────────────────────────────────────────────────────────────
-            // Grind and sample folding challenge β
+            // Grind and sample folding challenge beta
             // ─────────────────────────────────────────────────────────────────────
             let _pow_witness = channel.grind(params.folding_pow_bits);
             let beta: EF = channel.sample_algebra_element();
@@ -193,6 +201,11 @@ where
         // 2. Convert from bit-reversed to standard order
         // 3. Apply inverse DFT to get coefficients
         // 4. Reverse to descending degree order for direct Horner evaluation
+        //
+        // The polynomial has degree < final_poly_degree, so it is determined by that many
+        // evaluations. In bit-reversed order, the first final_poly_degree entries form a
+        // valid sub-coset (the "squaring prefix" property), so iDFT on them recovers the
+        // polynomial exactly.
         folded_evals.truncate(final_poly_degree);
         reverse_slice_index_bits(&mut folded_evals);
 
@@ -212,6 +225,13 @@ where
     /// Stream all FRI query proofs into a transcript channel.
     ///
     /// `tree_indices` are bit-reversed tree positions (sorted, deduplicated).
+    ///
+    /// Indices shift by `log_arity` per round because each FRI folding round groups `arity`
+    /// consecutive bit-reversed indices into one coset, reducing the domain size by `arity`.
+    /// The committed matrix at round r has height `domain_size / arity^r`, so the tree index
+    /// for a query at round r is the original index right-shifted by `log_arity * r` bits —
+    /// the high bits select the coset (row), and the discarded low bits identify which
+    /// position within the coset the original query fell in.
     pub fn prove_queries<Ch>(
         &self,
         params: &FriParams,

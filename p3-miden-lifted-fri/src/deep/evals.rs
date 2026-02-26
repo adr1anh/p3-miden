@@ -6,15 +6,14 @@ use p3_miden_transcript::{TranscriptError, VerifierChannel};
 
 /// Out-of-domain (OOD) evaluations in point-major layout.
 ///
-/// In the DEEP technique, the prover evaluates committed polynomials at random
-/// challenge points z₀, z₁, ... outside the evaluation domain. These claimed
-/// evaluations let the verifier reduce polynomial identity checks to a single
-/// low-degree test (FRI), avoiding re-evaluation over the whole domain.
+/// DEEP asks the prover for evaluations of committed polynomials at a small set of
+/// random points `z₀, z₁, ...` that lie outside the evaluation domain. These claims
+/// are then folded into a single low-degree test (FRI).
 ///
-/// `points[point_idx]` is a `RowList<EF>` with one row per matrix (across all groups).
-/// Point-major layout matches the verifier's access pattern: it reduces all column
-/// evaluations for one point at a time via Horner, so `point(idx).iter_values()`
-/// yields exactly the values needed for each reduction step.
+/// `points[point_idx]` is a `RowList<EF>` with one row per committed matrix (across all
+/// commitment groups). Point-major layout matches the verifier's access pattern: it
+/// reduces all column values for one point at a time via Horner, so
+/// `point(idx).iter_values()` yields exactly the streaming order used by DEEP.
 #[derive(Clone, Debug)]
 pub struct DeepEvals<EF> {
     points: Vec<RowList<EF>>,
@@ -63,6 +62,10 @@ impl<EF: Field> DeepEvals<EF> {
     ///
     /// `group_sizes[g]` is the number of matrices in group `g`. The sum of all
     /// group sizes must equal the number of rows in each point's `RowList`.
+    ///
+    /// The PCS transcript returns evaluations as one flat stream. The STARK verifier
+    /// often wants the original grouping (e.g. main, aux, quotient), so this helper
+    /// recovers that structure.
     pub fn split_by_groups(self, group_sizes: &[usize]) -> Vec<Self> {
         assert_eq!(
             group_sizes.iter().sum::<usize>(),

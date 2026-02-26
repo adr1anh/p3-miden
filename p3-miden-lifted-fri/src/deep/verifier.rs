@@ -14,20 +14,23 @@ use thiserror::Error;
 
 /// Verifier's view of the DEEP quotient as a point-query oracle.
 ///
-/// Stores commitments and the prover's reduced claims `(zⱼ, f_reduced(zⱼ))`.
-/// At query time, verifies Merkle openings and reconstructs `Q(X)` at that point:
+/// The prover claims OOD evaluations for all committed columns at a small set of points
+/// `zⱼ`. The verifier uses a random `α` to reduce (batch) all columns into a single
+/// polynomial `f_red`, and a random `β` to combine multiple opening points into one
+/// DEEP quotient polynomial:
 ///
 /// ```text
-/// Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) / (zⱼ - X)
+/// Q(X) = Σⱼ βʲ · (f_red(zⱼ) − f_red(X)) / (zⱼ − X)
 /// ```
 ///
-/// where `f_reduced = Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ` batches all W polynomial columns.
+/// This oracle stores the commitments and the reduced OOD claims `(zⱼ, f_red(zⱼ))`.
+/// At query time it:
+/// - verifies Merkle openings for all committed matrices at the query index,
+/// - reduces the opened row to `f_red(X)` using Horner with the same `α`,
+/// - reconstructs `Q(X)` and returns it to the FRI verifier.
 ///
-/// From the verifier's perspective, all opened columns appear to have the same height—
-/// lifting is transparent. The prover evaluates `fᵢ(zʳ)` for degree-d polynomials
-/// (where r is the lift factor), but the verifier sees this as `fᵢ'(z)` where
-/// `fᵢ'(X) = fᵢ(Xʳ)` is the lifted polynomial on the full domain.
-///
+/// Lifting is transparent at this layer: the prover commits to lifted codewords, so
+/// every opened column is interpreted as a polynomial over the same max domain.
 pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
     /// Trace commitments with their widths (one per trace tree).
     ///
@@ -35,7 +38,7 @@ pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
     /// `build_aligned_tree` was used).
     commitments: Vec<(L::Commitment, Vec<usize>)>,
 
-    /// Log2 of the LDE domain height (tree has 2^log_lde_height leaves).
+    /// Log₂ of the LDE domain height (tree has 2^log_lde_height leaves).
     /// Verifier expects all commitments to be lifted to this same LDE height.
     log_lde_height: usize,
 
@@ -112,6 +115,13 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
     ///
     /// `tree_indices` are bit-reversed positions (sorted, deduplicated).
     /// Returns a map from tree index to DEEP evaluation at that point.
+    ///
+    /// The reduction to `f_red` must match the prover's exactly.
+    ///
+    /// In particular, the prover streams columns in a fixed commitment-group order
+    /// (e.g. main, aux, quotient). The verifier must iterate groups in the same order so
+    /// that `horner_acc` assigns the same `α` powers to the same columns; otherwise the
+    /// reconstructed `Q(X)` will not match the FRI-committed codeword.
     pub fn open_batch<Ch>(
         &self,
         lmcs: &L,

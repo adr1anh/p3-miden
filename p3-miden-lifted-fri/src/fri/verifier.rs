@@ -38,8 +38,10 @@ use crate::utils::horner;
 /// FRI low-degree test oracle.
 ///
 /// Created via [`FriOracle::new`], which samples folding challenges from
-/// the Fiat-Shamir transcript. The oracle tests that evaluations are close
-/// to a low-degree polynomial.
+/// the Fiat-Shamir transcript. The oracle verifies that evaluations are close
+/// to a low-degree polynomial by checking that each folding round was performed
+/// correctly via spot-check queries, and that the final (small) polynomial
+/// matches the prover's claim exactly.
 ///
 /// Uses a single base-field LMCS. Opened base field values are reconstructed
 /// to extension field for folding verification.
@@ -107,6 +109,10 @@ where
     ///
     /// Empty `evals` will fail at the first round's LMCS `open_batch` call,
     /// which rejects empty indices.
+    ///
+    /// For each query, the verifier opens the committed row and re-computes the fold
+    /// locally. A mismatch at any round indicates that the prover did not fold honestly.
+    /// After all rounds, the final polynomial is checked exactly against the prover's claim.
     pub fn test_low_degree<Ch>(
         &self,
         lmcs: &L,

@@ -154,7 +154,7 @@ Implementation-wise:
 - The quotient domain $gJ$ is the first $N D$ points of $gK$ under this ordering.
 - Therefore we obtain a zero-copy natural-order view of trace values on $gJ$ by
   truncating to $N D$ rows and bit-reversing. This is what
-  `Committed::quotient_domain_natural` encodes.
+  `Committed::evals_on_quotient_domain` encodes.
 
 ### Lifting numerators instead of re-evaluating constraints
 
