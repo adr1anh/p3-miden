@@ -248,19 +248,19 @@ impl LiftedCoset {
     ///
     /// Each Cₖ already incorporates its selector (via `when_first_row`, `when_transition`,
     /// etc.), so the selector values at z are baked into the constraint evaluations.
-    pub fn selectors_at<F, EF>(&self, zeta: EF) -> Selectors<EF>
+    pub fn selectors_at<F, EF>(&self, z: EF) -> Selectors<EF>
     where
         F: TwoAdicField,
         EF: ExtensionField<F>,
     {
-        let z_n = zeta.exp_power_of_2(self.log_trace_height);
+        let z_n = z.exp_power_of_2(self.log_trace_height);
         let vanishing = z_n - F::ONE;
         let omega_inv = F::two_adic_generator(self.log_trace_height).inverse();
 
         Selectors {
-            is_first_row: vanishing / (zeta - F::ONE),
-            is_last_row: vanishing / (zeta - omega_inv),
-            is_transition: zeta - omega_inv,
+            is_first_row: vanishing / (z - F::ONE),
+            is_last_row: vanishing / (z - omega_inv),
+            is_transition: z - omega_inv,
         }
     }
 
@@ -268,13 +268,13 @@ impl LiftedCoset {
 
     /// Compute inverse vanishing at an out-of-domain point (verifier).
     ///
-    /// Returns `1 / Z_H(zeta)` where `Z_H(z) = zⁿ − 1`.
-    pub fn inv_vanishing_at<F, EF>(&self, zeta: EF) -> EF
+    /// Returns `1 / Z_H(z)` where `Z_H(z) = zⁿ − 1`.
+    pub fn inv_vanishing_at<F, EF>(&self, z: EF) -> EF
     where
         F: TwoAdicField,
         EF: ExtensionField<F>,
     {
-        let z_n = zeta.exp_power_of_2(self.log_trace_height);
+        let z_n = z.exp_power_of_2(self.log_trace_height);
         (z_n - EF::ONE).inverse()
     }
 
@@ -282,30 +282,30 @@ impl LiftedCoset {
 
     /// Check if a point is in the trace domain H.
     ///
-    /// Returns true if `zeta^N == 1` where N is the trace height.
+    /// Returns true if `z^N == 1` where N is the trace height.
     /// Points in H cause division by zero in vanishing polynomial inversion.
     #[inline]
-    pub fn is_in_trace_domain<F, EF>(&self, zeta: EF) -> bool
+    pub fn is_in_trace_domain<F, EF>(&self, z: EF) -> bool
     where
         F: TwoAdicField,
         EF: ExtensionField<F>,
     {
-        zeta.exp_power_of_2(self.log_trace_height) == EF::ONE
+        z.exp_power_of_2(self.log_trace_height) == EF::ONE
     }
 
     /// Check if a point is in the LDE coset gK.
     ///
-    /// Returns true if `(zeta/g)^|K| == 1` where g is the generator shift
+    /// Returns true if `(z/g)^|K| == 1` where g is the generator shift
     /// and K is the LDE domain. Points in gK cause division by zero in DEEP quotients.
     #[inline]
-    pub fn is_in_lde_coset<F, EF>(&self, zeta: EF) -> bool
+    pub fn is_in_lde_coset<F, EF>(&self, z: EF) -> bool
     where
         F: TwoAdicField,
         EF: ExtensionField<F>,
     {
         let shift: F = self.lde_shift();
-        let zeta_over_shift = zeta * shift.inverse();
-        zeta_over_shift.exp_power_of_2(self.log_lde_height) == EF::ONE
+        let z_over_shift = z * shift.inverse();
+        z_over_shift.exp_power_of_2(self.log_lde_height) == EF::ONE
     }
 }
 

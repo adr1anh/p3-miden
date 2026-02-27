@@ -59,11 +59,11 @@ fn do_test_fri_pcs<Val, Challenge, Challenger, P>(
     assert_eq!(data_by_round.len(), num_rounds);
     p_challenger.observe_slice(&commits_by_round);
 
-    let zeta: Challenge = p_challenger.sample_algebra_element();
+    let z: Challenge = p_challenger.sample_algebra_element();
 
     let points_by_round = log_degrees_by_round
         .iter()
-        .map(|log_degrees| vec![vec![zeta]; log_degrees.len()])
+        .map(|log_degrees| vec![vec![z]; log_degrees.len()])
         .collect_vec();
     let data_and_points = data_by_round.iter().zip(points_by_round).collect();
     let (opening_by_round, proof) = pcs.open(data_and_points, &mut p_challenger);
@@ -72,8 +72,8 @@ fn do_test_fri_pcs<Val, Challenge, Challenger, P>(
     // Verify the proof.
     let mut v_challenger = challenger.clone();
     v_challenger.observe_slice(&commits_by_round);
-    let verifier_zeta: Challenge = v_challenger.sample_algebra_element();
-    assert_eq!(verifier_zeta, zeta);
+    let verifier_z: Challenge = v_challenger.sample_algebra_element();
+    assert_eq!(verifier_z, z);
 
     let commits_and_claims_by_round = izip!(
         commits_by_round,
@@ -84,7 +84,7 @@ fn do_test_fri_pcs<Val, Challenge, Challenger, P>(
         let claims = domains_and_polys
             .iter()
             .zip(openings)
-            .map(|((domain, _), mat_openings)| (*domain, vec![(zeta, mat_openings[0].clone())]))
+            .map(|((domain, _), mat_openings)| (*domain, vec![(z, mat_openings[0].clone())]))
             .collect_vec();
         (commit, claims)
     })

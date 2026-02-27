@@ -62,14 +62,14 @@ mod tests {
         let coset = LiftedCoset::unlifted(log_n, 0);
 
         // Sample a point outside the domain
-        let zeta = EF::from(F::from_u32(12345));
+        let z = EF::from(F::from_u32(12345));
 
-        let _sels = coset.selectors_at::<F, _>(zeta);
+        let _sels = coset.selectors_at::<F, _>(z);
 
         // Verify inv_vanishing * vanishing = 1
-        let inv_van = coset.inv_vanishing_at::<F, _>(zeta);
+        let inv_van = coset.inv_vanishing_at::<F, _>(z);
         let n = 1usize << log_n;
-        let vanishing = zeta.exp_u64(n as u64) - EF::ONE;
+        let vanishing = z.exp_u64(n as u64) - EF::ONE;
         assert_eq!(inv_van * vanishing, EF::ONE);
     }
 

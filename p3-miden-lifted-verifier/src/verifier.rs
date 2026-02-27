@@ -222,15 +222,16 @@ where
     let quotient_commit = *channel.receive_commitment()?;
 
     // 6. Sample OOD point (outside max trace domain H and max LDE coset gK)
-    let zeta: EF = loop {
-        let z: EF = channel.sample_algebra_element::<EF>();
-        if !max_lde_coset.is_in_trace_domain::<F, _>(z) && !max_lde_coset.is_in_lde_coset::<F, _>(z)
+    let z: EF = loop {
+        let candidate: EF = channel.sample_algebra_element::<EF>();
+        if !max_lde_coset.is_in_trace_domain::<F, _>(candidate)
+            && !max_lde_coset.is_in_lde_coset::<F, _>(candidate)
         {
-            break z;
+            break candidate;
         }
     };
     let h = F::two_adic_generator(log_max_trace_height);
-    let zeta_next = zeta * h;
+    let z_next = z * h;
 
     // 7. Widths per commitment group (unpadded data widths).
     let main_widths: Vec<usize> = instances.iter().map(|(air, _)| air.width()).collect();
@@ -265,7 +266,7 @@ where
         &config.lmcs,
         &commitments,
         log_lde_height,
-        [zeta, zeta_next],
+        [z, z_next],
         channel,
     )?;
 
@@ -289,7 +290,7 @@ where
 
         // Virtual evaluation point for this (possibly lifted) trace: yⱼ = z^{rⱼ}.
         // For unlifted traces (rⱼ = 1), yⱼ = z.
-        let y_j = zeta.exp_power_of_2(log_lift_ratio);
+        let y_j = z.exp_power_of_2(log_lift_ratio);
 
         // Extract main trace opened values, truncating alignment padding.
         let main_width = air.width();
@@ -347,10 +348,10 @@ where
     // 11. Reconstruct Q(z) and check quotient identity Q(z) * Z_{H_max}(z)
     let qw = constraint_degree * EF::DIMENSION;
     let quotient_chunks = row_to_packed_ext::<F, EF>(&quotient_evals.point(0).row(0)[..qw])?;
-    let quotient_zeta = reconstruct_quotient::<F, EF>(zeta, &max_lde_coset, &quotient_chunks);
+    let quotient_z = reconstruct_quotient::<F, EF>(z, &max_lde_coset, &quotient_chunks);
 
-    let vanishing = zeta.exp_u64(max_trace_height as u64) - EF::ONE;
-    if accumulated != quotient_zeta * vanishing {
+    let vanishing = z.exp_u64(max_trace_height as u64) - EF::ONE;
+    if accumulated != quotient_z * vanishing {
         return Err(VerifierError::ConstraintMismatch);
     }
 

@@ -413,15 +413,16 @@ where
     channel.send_commitment(quotient_committed.root());
 
     // 8. Sample OOD point (outside H and gK)
-    let zeta: EF = loop {
-        let z: EF = channel.sample_algebra_element::<EF>();
-        if !max_lde_coset.is_in_trace_domain::<F, _>(z) && !max_lde_coset.is_in_lde_coset::<F, _>(z)
+    let z: EF = loop {
+        let candidate: EF = channel.sample_algebra_element::<EF>();
+        if !max_lde_coset.is_in_trace_domain::<F, _>(candidate)
+            && !max_lde_coset.is_in_lde_coset::<F, _>(candidate)
         {
-            break z;
+            break candidate;
         }
     };
     let h = F::two_adic_generator(log_max_trace_height);
-    let zeta_next = zeta * h;
+    let z_next = z * h;
 
     // 9. Open via PCS
     let trees = match aux_committed {
@@ -434,7 +435,7 @@ where
             &config.pcs,
             &config.lmcs,
             log_lde_height,
-            [zeta, zeta_next],
+            [z, z_next],
             &trees,
             channel,
         )

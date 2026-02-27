@@ -53,7 +53,7 @@ where
     /// Quotient polynomial commitment.
     pub quotient_commit: L::Commitment,
     /// Out-of-domain evaluation point z.
-    pub zeta: EF,
+    pub z: EF,
     /// PCS sub-transcript (DEEP evals, FRI rounds, query openings).
     pub pcs_transcript: PcsTranscript<EF, L>,
 }
@@ -138,16 +138,16 @@ where
         let quotient_commit = *channel.receive_commitment()?;
 
         // 6. Sample OOD point (outside max trace domain H and max LDE coset gK)
-        let zeta: EF = loop {
-            let z: EF = channel.sample_algebra_element::<EF>();
-            if !max_lde_coset.is_in_trace_domain::<L::F, _>(z)
-                && !max_lde_coset.is_in_lde_coset::<L::F, _>(z)
+        let z: EF = loop {
+            let candidate: EF = channel.sample_algebra_element::<EF>();
+            if !max_lde_coset.is_in_trace_domain::<L::F, _>(candidate)
+                && !max_lde_coset.is_in_lde_coset::<L::F, _>(candidate)
             {
-                break z;
+                break candidate;
             }
         };
         let h = L::F::two_adic_generator(log_max_trace_height);
-        let zeta_next = zeta * h;
+        let z_next = z * h;
 
         // 7. Build commitment widths for PCS
         let main_widths: Vec<usize> = instances
@@ -180,7 +180,7 @@ where
             &config.lmcs,
             &commitments,
             log_lde_height,
-            [zeta, zeta_next],
+            [z, z_next],
             channel,
         )?;
 
@@ -191,7 +191,7 @@ where
             alpha,
             beta,
             quotient_commit,
-            zeta,
+            z,
             pcs_transcript,
         })
     }

@@ -162,7 +162,7 @@ at the outer protocol layer.
 ### Lifted STARK (`p3-miden-lifted-{prover,verifier}`)
 
 - [ ] Instances are provided in ascending height order; heights are powers of two.
-- [ ] The verifier's OOD evaluation point projection `y_j = zeta^{r_j}` matches
+- [ ] The verifier's OOD evaluation point projection `y_j = z^{r_j}` matches
       the prover's lifted commitment domains.
 - [ ] Quotient chunk reconstruction (`reconstruct_quotient`) matches the prover's
       quotient decomposition.
@@ -215,8 +215,8 @@ Lifting is the map `f(X) -> f(X^r)`.
 
 - LMCS upsampling in bit-reversed order corresponds to evaluating the lifted
   polynomial on the max domain.
-- Openings at a global point `zeta` implicitly provide openings at projected
-  points `y_j = zeta^{r_j}` for each smaller trace.
+- Openings at a global point `z` implicitly provide openings at projected
+  points `y_j = z^{r_j}` for each smaller trace.
 
 The lifted STARK verifier evaluates each AIR instance at its projected point.
 If the AIR is *liftable* (roughly: it does not depend on wrap-around "next row"

@@ -55,12 +55,12 @@ For `verify_multi`, instances must be provided in ascending trace height order
 3. Receive aux trace commitment.
 4. Sample constraint folding challenge `alpha` and cross-trace accumulator `beta`.
 5. Receive quotient commitment.
-6. Sample OOD point `zeta` (rejection-sampled outside trace domain), derive `zeta_next`.
-7. Verify PCS openings at `[zeta, zeta_next]` for main, aux, and quotient.
-8. Reconstruct `Q(zeta)` from the opened quotient chunks.
-9. For each trace instance j, set `y_j = zeta^{r_j}` and evaluate folded constraints at `y_j`.
+6. Sample OOD point `z` (rejection-sampled outside trace domain), derive `z_next`.
+7. Verify PCS openings at `[z, z_next]` for main, aux, and quotient.
+8. Reconstruct `Q(z)` from the opened quotient chunks.
+9. For each trace instance j, set `y_j = z^{r_j}` and evaluate folded constraints at `y_j`.
 10. Horner-accumulate across traces with `beta`.
-11. Check quotient identity: `accumulated == Q(zeta) * (zeta^N - 1)`.
+11. Check quotient identity: `accumulated == Q(z) * (z^N - 1)`.
 12. Ensure transcript is fully consumed.
 
 ## Mathematical background
@@ -119,47 +119,47 @@ Conceptually, each short trace is "stretched" to height $N$ by repeating it $r_j
 times. From the verifier's perspective every trace behaves like a single
 height-$N$ object:
 
-- there is one global out-of-domain point $\zeta$,
+- there is one global out-of-domain point $z$,
 - one global "next-row" multiplier $\omega_H$ (the generator of the max trace domain),
 - and each trace instance uses a different *projection* of that point.
 
-### How openings at $[\zeta,\ \zeta\cdot\omega_H]$ give per-trace local/next pairs
+### How openings at $[z,\ z\cdot\omega_H]$ give per-trace local/next pairs
 
-The verifier samples a single $\zeta$ outside both the max trace domain $H$ and the max
+The verifier samples a single $z$ outside both the max trace domain $H$ and the max
 LDE coset $gK$, and sets:
 
 $$
-\zeta_{\mathrm{next}} = \zeta \cdot \omega_H.
+z_{\mathrm{next}} = z \cdot \omega_H.
 $$
 
 For instance $j$, define the **virtual** evaluation point
 
 $$
-y_j := \pi_{r_j}(\zeta) = \zeta^{r_j}.
+y_j := \pi_{r_j}(z) = z^{r_j}.
 $$
 
 Then:
 
 $$
-t_j^*(\zeta) = t_j(\zeta^{r_j}) = t_j(y_j),
+t_j^*(z) = t_j(z^{r_j}) = t_j(y_j),
 $$
 
 and for the next-row point:
 
 $$
-t_j^*(\zeta_{\mathrm{next}})
-  = t_j\big((\zeta\cdot\omega_H)^{r_j}\big)
-  = t_j\big(\zeta^{r_j}\cdot\omega_H^{r_j}\big)
+t_j^*(z_{\mathrm{next}})
+  = t_j\big((z\cdot\omega_H)^{r_j}\big)
+  = t_j\big(z^{r_j}\cdot\omega_H^{r_j}\big)
   = t_j\big(y_j\cdot\omega_{H^{r_j}}\big).
 $$
 
 Since $\omega_{H^{r_j}} = \omega_H^{r_j}$ is the generator of the smaller trace domain,
-the pair opened at $[\zeta,\zeta_{\mathrm{next}}]$ is exactly the local/next pair needed
+the pair opened at $[z,z_{\mathrm{next}}]$ is exactly the local/next pair needed
 to evaluate AIR transition constraints for that trace.
 
-This is why verifier code computes `y_j = zeta^{r_j}` and evaluates selectors/periodics
+This is why verifier code computes `y_j = z^{r_j}` and evaluates selectors/periodics
 at $y_j$, while requesting PCS openings only at the global points
-$[\zeta,\zeta_{\mathrm{next}}]$.
+$[z,z_{\mathrm{next}}]$.
 
 ### Constraint folding at the lifted OOD point
 
@@ -200,19 +200,19 @@ $$
 $$
 
 Because lifting is composition by $X^{r_j}$, "evaluate then lift" matches
-"lift then evaluate": $N_j^*(\zeta) = N_j(\zeta^{r_j})$. The verifier's accumulation
-matches the prover's accumulation at the max point $\zeta$.
+"lift then evaluate": $N_j^*(z) = N_j(z^{r_j})$. The verifier's accumulation
+matches the prover's accumulation at the max point $z$.
 
-### Quotient reconstruction at $\zeta$
+### Quotient reconstruction at $z$
 
 The prover commits to a single quotient object representing $Q$ on the max quotient
 domain $gJ$, sent as $D$ "chunk" polynomials $q_0,\dots,q_{D-1}$ of degree $<N$.
 
-At verification time we open each $q_t$ at $\zeta$ and reconstruct $Q(\zeta)$ via the
+At verification time we open each $q_t$ at $z$ and reconstruct $Q(z)$ via the
 barycentric formula in `reconstruct_quotient`:
 
 - Let $\omega_S := \omega_J^N$ be the $D$-th root of unity.
-- Let $u := (\zeta/g)^N$.
+- Let $u := (z/g)^N$.
 - Define weights
 
 $$
@@ -222,7 +222,7 @@ $$
 Then:
 
 $$
-Q(\zeta) = \frac{\sum_{t=0}^{D-1} w_t\,q_t(\zeta)}{\sum_{t=0}^{D-1} w_t}.
+Q(z) = \frac{\sum_{t=0}^{D-1} w_t\,q_t(z)}{\sum_{t=0}^{D-1} w_t}.
 $$
 
 ### The quotient identity
@@ -230,11 +230,11 @@ $$
 After accumulating all folded constraint evaluations, the verifier checks:
 
 $$
-\mathrm{acc} = Q(\zeta)\cdot Z_H(\zeta),
+\mathrm{acc} = Q(z)\cdot Z_H(z),
 \qquad
-Z_H(\zeta) = \zeta^N - 1.
+Z_H(z) = z^N - 1.
 $$
 
 This is the lifted analogue of the classic STARK quotient identity. It works for
 mixed-height traces because each instance's constraints were evaluated at its projected
-point $y_j = \zeta^{r_j}$.
+point $y_j = z^{r_j}$.

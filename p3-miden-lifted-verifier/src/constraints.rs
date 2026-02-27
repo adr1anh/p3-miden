@@ -190,7 +190,7 @@ where
 /// wₜ = ωₛᵗ / (u − ωₛᵗ)
 /// Q(z) = (Σₜ wₜ·qₜ(z)) / (Σₜ wₜ)
 /// ```
-pub fn reconstruct_quotient<F, EF>(zeta: EF, coset: &LiftedCoset, chunks: &[EF]) -> EF
+pub fn reconstruct_quotient<F, EF>(z: EF, coset: &LiftedCoset, chunks: &[EF]) -> EF
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
@@ -200,7 +200,7 @@ where
     let omega_s = F::two_adic_generator(log_d);
 
     // u = (z/s)ᴺ where s = lde_shift
-    let u = (zeta * shift.inverse()).exp_power_of_2(coset.log_trace_height);
+    let u = (z * shift.inverse()).exp_power_of_2(coset.log_trace_height);
 
     // Compute weighted sum: Σₜ wₜ·qₜ(z) and Σₜ wₜ
     let mut numerator = EF::ZERO;

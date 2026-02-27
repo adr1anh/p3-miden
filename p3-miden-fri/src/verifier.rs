@@ -66,7 +66,7 @@ where
 {
     // Generate the Batch combination challenge
     // Soundness Error: `|f|/|EF|` where `|f|` is the number of different functions of the form
-    // `(f(zeta) - fi(x))/(zeta - x)` which need to be checked.
+    // `(f(z) - fi(x))/(z - x)` which need to be checked.
     // Explicitly, `|f|` is `commitments_with_opening_points.flatten().flatten().len()`
     // (i.e counting the number (point, claimed_evaluation) pairs).
     let alpha: Challenge = challenger.sample_algebra_element();
@@ -444,7 +444,7 @@ where
         }
 
         // `reduced_openings` would have a log_height = log_blowup entry only if there was a
-        // trace matrix of height 1. In this case `f` is constant, so `f(zeta) - f(x))/(zeta - x)`
+        // trace matrix of height 1. In this case `f` is constant, so `f(z) - f(x))/(z - x)`
         // must equal `0`.
         if let Some((_, ro)) = reduced_openings.get(&params.log_blowup)
             && !ro.is_zero()

@@ -52,8 +52,8 @@ For `prove_multi`, instances must be provided in ascending trace height order
 7. Lift and beta-accumulate numerators onto the max quotient domain.
 8. Divide by the max vanishing polynomial to obtain Q(gJ).
 9. Commit quotient chunks via fused iDFT + scaling + DFT pipeline.
-10. Sample OOD point `zeta` (rejection-sampled outside trace domain), derive `zeta_next`.
-11. Open via PCS at `[zeta, zeta_next]` for main, aux, and quotient trees.
+10. Sample OOD point `z` (rejection-sampled outside trace domain), derive `z_next`.
+11. Open via PCS at `[z, z_next]` for main, aux, and quotient trees.
 
 ## Mathematical background
 
@@ -230,4 +230,4 @@ The `commit_quotient` pipeline computes LDE commitments via fused scaling:
    factor baked into coefficients produces evaluations on $gK$.
 
 This avoids $D$ separate coset DFTs and aligns with how the verifier
-reconstructs $Q(\zeta)$ from the opened chunk values.
+reconstructs $Q(z)$ from the opened chunk values.

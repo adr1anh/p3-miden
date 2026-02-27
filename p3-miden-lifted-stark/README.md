@@ -40,8 +40,8 @@ via LMCS upsampling, so the PCS and verifier operate on a single uniform view.
 - `D`: constraint degree blowup (here fixed at `D = 4`).
 - `gJ`: quotient-domain coset (size `N * D`).
 - `gK`: PCS/LDE coset (size `N * B`, where `B` is the FRI blowup).
-- `zeta`: global out-of-domain point sampled once.
-- `zeta_next = zeta * omega_H`: "next row" point for max height.
+- `z`: global out-of-domain point sampled once.
+- `z_next = z * omega_H`: "next row" point for max height.
 
 When referring to LMCS, a *tree index* means a bit-reversed leaf index.
 
@@ -74,21 +74,21 @@ See `docs/lifting.md` for a deeper discussion and sufficient conditions.
    exploiting Z_H periodicity for batch inverse.
 7. **Commit quotient** — Decompose Q into D chunks via fused iDFT + coefficient
    scaling + flatten + DFT pipeline. Commit via LMCS.
-8. **Sample OOD point zeta** — Rejection-sampled to lie outside H and the LDE
+8. **Sample OOD point z** — Rejection-sampled to lie outside H and the LDE
    coset.
 9. **Open via PCS** — Delegate to `p3-miden-lifted-fri`.
 
 ### Verifier (`verify_multi`)
 
 1. **Receive commitments** — Main, auxiliary, and quotient roots from transcript.
-2. **Re-derive challenges** — Same `alpha`, `beta`, `zeta` via Fiat-Shamir.
-3. **Verify PCS openings** — At `[zeta, zeta_next]` where `zeta_next = zeta * omega_H`.
-4. **Reconstruct Q(zeta)** — Barycentric interpolation over the D quotient
+2. **Re-derive challenges** — Same `alpha`, `beta`, `z` via Fiat-Shamir.
+3. **Verify PCS openings** — At `[z, z_next]` where `z_next = z * omega_H`.
+4. **Reconstruct Q(z)** — Barycentric interpolation over the D quotient
    chunks.
 5. **Evaluate constraints at OOD** — For each AIR at the lifted OOD point
-   `y_j = zeta^{r_j}`: compute selectors, evaluate periodic polynomials,
+   `y_j = z^{r_j}`: compute selectors, evaluate periodic polynomials,
    fold constraints with alpha, accumulate with beta.
-6. **Check identity** — `accumulated == Q(zeta) * Z_H(zeta)`.
+6. **Check identity** — `accumulated == Q(z) * Z_H(z)`.
 7. **Ensure transcript is fully consumed** — Canonicality enforcement.
 
 ## Math Sketch
@@ -97,7 +97,7 @@ See `docs/lifting.md` for a deeper discussion and sufficient conditions.
 
 Each trace j has height `n_j = n_max / r_j` where `r_j` is a power-of-two
 lift ratio. The committed polynomial is `p_j(X^{r_j})`, so opening the LMCS
-commitment at `zeta` yields `p_j(zeta^{r_j})`. The coset shift for trace j
+commitment at `z` yields `p_j(z^{r_j})`. The coset shift for trace j
 is `g^{r_j}` where g is the multiplicative generator.
 
 ### Constraint Folding
@@ -150,18 +150,18 @@ Q(X) = q_0(X^D) + X * q_1(X^D) + ... + X^{D-1} * q_{D-1}(X^D)
 ```
 
 The prover commits evaluations of each `q_t` over the LDE domain. The
-verifier reconstructs `Q(zeta)` from `q_t(zeta)` via barycentric
+verifier reconstructs `Q(z)` from `q_t(z)` via barycentric
 interpolation:
 
 ```
-Q(zeta) = (sum_t w_t * q_t(zeta)) / (sum_t w_t)
-    where w_t = omega_S^t / (u - omega_S^t),  u = (zeta/g)^N
+Q(z) = (sum_t w_t * q_t(z)) / (sum_t w_t)
+    where w_t = omega_S^t / (u - omega_S^t),  u = (z/g)^N
 ```
 
 ### Virtual OOD Point
 
 For a trace with lift ratio `r_j`, the effective OOD evaluation point is
-`y_j = zeta^{r_j}`. The verifier evaluates selectors and periodic polynomials
+`y_j = z^{r_j}`. The verifier evaluates selectors and periodic polynomials
 at `y_j`, and the opened trace values already correspond to `p_j(y_j)`.
 
 ## Optimizations

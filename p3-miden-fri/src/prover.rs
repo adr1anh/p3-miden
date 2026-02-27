@@ -16,8 +16,8 @@ use crate::{
     QueryProof,
 };
 
-/// Create a proof that an opening `f(zeta)` is correct by proving that the
-/// function `(f(x) - f(zeta))/(x - zeta)` is low degree.
+/// Create a proof that an opening `f(z)` is correct by proving that the
+/// function `(f(x) - f(z))/(x - z)` is low degree.
 ///
 /// This further supports proving a batch of these claims for a collection of polynomials of shrinking degrees.
 /// Polynomials of equal degree can be combined using randomness before calling this function.
@@ -331,7 +331,7 @@ where
     InputMmcs: Mmcs<Val>,
 {
     // This gives the verifier access to evaluations `f(x)` from which it can compute
-    // `(f(zeta) - f(x))/(zeta - x)` and then combine them together and roll into FRI
+    // `(f(z) - f(x))/(z - x)` and then combine them together and roll into FRI
     // as appropriate.
     prover_data_with_opening_points
         .iter()
