@@ -13,17 +13,19 @@ extern crate alloc;
 
 mod air;
 mod builder;
+mod extension;
 mod periodic;
 pub mod symbolic;
 
 pub use air::LiftedAir;
 pub use builder::LiftedAirBuilder;
+pub use extension::{ExtensionBuilder, PermutationAirBuilder};
 pub use periodic::{AirWithPeriodicColumns, PeriodicAirBuilder};
 
 // Re-export upstream traits for convenience so users don't need to depend on p3-air directly.
 pub use p3_air::{
     Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, BaseAirWithPublicValues,
-    ExtensionBuilder, FilteredAirBuilder, PairBuilder, PermutationAirBuilder,
+    FilteredAirBuilder, PairBuilder,
 };
 
 // Re-export key symbolic types at crate root for ergonomic imports.

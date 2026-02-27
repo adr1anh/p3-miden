@@ -25,7 +25,7 @@ use p3_miden_lifted_prover::{
     AirWitness, DeepParams, FriFold, FriParams, LmcsConfig, PcsParams, ProverTranscript,
     prove_multi,
 };
-use p3_miden_lifted_verifier::{AirInstance, StarkConfig, VerifierTranscript};
+use p3_miden_lifted_verifier::{AirInstance, GenericStarkConfig, VerifierTranscript};
 use tracing::info_span;
 
 type Val = Goldilocks;
@@ -41,6 +41,7 @@ fn main() {
 
     type Lmcs = LmcsConfig<gl::P, gl::P, gl::Sponge, gl::Compress, { gl::WIDTH }, { gl::DIGEST }>;
     type Dft = Radix2DitParallel<Val>;
+    type Config = GenericStarkConfig<Val, Challenge, Lmcs, Dft, gl::Challenger>;
 
     let pcs = PcsParams {
         fri: FriParams {
@@ -57,7 +58,7 @@ fn main() {
     let (_, sponge, compress) = gl::test_components();
     let lmcs: Lmcs = LmcsConfig::new(sponge, compress);
     let dft = Dft::default();
-    let config = StarkConfig { pcs, lmcs, dft };
+    let config = Config::new(pcs, lmcs, dft, gl::test_challenger());
 
     // --- Generate traces ---
     let air1 = DummyMidenAir::new(TRACE1_WIDTH, NUM_AUX_COLS);
@@ -105,8 +106,7 @@ fn main() {
 
         let mut channel = ProverTranscript::new(gl::test_challenger());
         info_span!("prove").in_scope(|| {
-            prove_multi::<Val, Challenge, _, _, _, _>(&config, &instances, &mut channel)
-                .expect("proving failed");
+            prove_multi(&config, &instances, &mut channel).expect("proving failed");
         });
         let transcript = channel.into_data();
 
@@ -127,7 +127,7 @@ fn main() {
             ];
             let mut verifier_channel =
                 VerifierTranscript::from_data(gl::test_challenger(), &transcript);
-            p3_miden_lifted_verifier::verify_multi::<Val, Challenge, _, _, _, _>(
+            p3_miden_lifted_verifier::verify_multi(
                 &config,
                 &verifier_instances,
                 &mut verifier_channel,

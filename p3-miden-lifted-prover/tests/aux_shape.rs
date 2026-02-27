@@ -58,11 +58,5 @@ fn aux_width_mismatch_panics() {
 
     let mut channel = ProverTranscript::new(bb::test_challenger());
 
-    let _result = prove_single::<bb::F, bb::EF, _, _, _, _>(
-        &config,
-        &air,
-        &trace,
-        &public_values,
-        &mut channel,
-    );
+    let _result = prove_single(&config, &air, &trace, &public_values, &mut channel);
 }

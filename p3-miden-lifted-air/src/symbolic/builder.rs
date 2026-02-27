@@ -3,7 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_field::{ExtensionField, Field};
+use p3_field::{Algebra, ExtensionField, Field};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use tracing::instrument;
@@ -265,7 +265,7 @@ where
     F: Field,
     EF: ExtensionField<F>,
     A: LiftedAir<F, EF>,
-    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
+    SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     let preprocessed_width = air.preprocessed_trace().map_or(0, |t| t.width());
     let mut builder = SymbolicAirBuilder::<F, EF>::new(
@@ -427,7 +427,7 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilderWithPublicValues for SymbolicAir
 
 impl<F: Field, EF: ExtensionField<F>> ExtensionBuilder for SymbolicAirBuilder<F, EF>
 where
-    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
+    SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     type EF = EF;
     type ExprEF = SymbolicExpression<EF>;
@@ -444,7 +444,7 @@ where
 
 impl<F: Field, EF: ExtensionField<F>> PermutationAirBuilder for SymbolicAirBuilder<F, EF>
 where
-    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
+    SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     type MP = RowMajorMatrix<Self::VarEF>;
 
@@ -468,7 +468,7 @@ impl<F: Field, EF: ExtensionField<F>> PeriodicAirBuilder for SymbolicAirBuilder<
 }
 
 impl<F: Field, EF: ExtensionField<F>> LiftedAirBuilder for SymbolicAirBuilder<F, EF> where
-    SymbolicExpression<EF>: From<SymbolicExpression<F>>
+    SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>
 {
 }
 

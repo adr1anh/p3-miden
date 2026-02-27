@@ -102,8 +102,8 @@ pub enum VerifierError {
 ///
 /// # Returns
 /// `Ok(())` on success, or a `VerifierError` if verification fails.
-pub fn verify_single<F, EF, A, L, Dft, Ch>(
-    config: &StarkConfig<L, Dft>,
+pub fn verify_single<F, EF, A, SC, Ch>(
+    config: &SC,
     air: &A,
     log_trace_height: usize,
     public_values: &[F],
@@ -112,9 +112,11 @@ pub fn verify_single<F, EF, A, L, Dft, Ch>(
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
+    SC: StarkConfig<F, EF>,
     A: LiftedAir<F, EF>,
-    L: Lmcs<F = F>,
-    Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
+    Ch: VerifierChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>
+        + CanSample<F>
+        + CanSampleBits<usize>,
 {
     let instance = AirInstance::new(log_trace_height, public_values);
     verify_multi(config, &[(air, instance)], channel)
@@ -149,17 +151,19 @@ where
 ///
 /// # Returns
 /// `Ok(())` on success, or a `VerifierError` if verification fails.
-pub fn verify_multi<F, EF, A, L, Dft, Ch>(
-    config: &StarkConfig<L, Dft>,
+pub fn verify_multi<F, EF, A, SC, Ch>(
+    config: &SC,
     instances: &[(&A, AirInstance<'_, F>)],
     channel: &mut Ch,
 ) -> Result<(), VerifierError>
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
+    SC: StarkConfig<F, EF>,
     A: LiftedAir<F, EF>,
-    L: Lmcs<F = F>,
-    Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
+    Ch: VerifierChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>
+        + CanSample<F>
+        + CanSampleBits<usize>,
 {
     let air_instances: Vec<_> = instances.iter().map(|(_, inst)| *inst).collect();
     p3_miden_lifted_stark::validate_instances(&air_instances)?;
@@ -170,8 +174,8 @@ where
     }
     let has_aux = aux_widths.iter().any(|&w| w > 0);
 
-    let log_blowup = config.pcs.fri.log_blowup;
-    let alignment = config.lmcs.alignment();
+    let log_blowup = config.pcs().fri.log_blowup;
+    let alignment = config.lmcs().alignment();
 
     // Infer constraint degree from symbolic AIR analysis (max across all AIRs)
     let constraint_degree = instances
@@ -256,9 +260,9 @@ where
     };
 
     // 8. Verify PCS openings
-    let evals = verify_pcs_with_channel::<F, EF, L, _, 2>(
-        &config.pcs,
-        &config.lmcs,
+    let evals = verify_pcs_with_channel::<F, EF, SC::Lmcs, _, 2>(
+        config.pcs(),
+        config.lmcs(),
         &commitments,
         log_lde_height,
         [z, z_next],

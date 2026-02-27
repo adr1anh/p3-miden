@@ -18,11 +18,10 @@ use p3_matrix::Matrix;
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
-use p3_miden_lifted_stark::LiftedCoset;
+use p3_miden_lifted_stark::{LiftedCoset, StarkConfig};
 use p3_miden_lmcs::Lmcs;
 use p3_util::log2_strict_usize;
 
-use crate::StarkConfig;
 use crate::commit::Committed;
 
 // ============================================================================
@@ -134,21 +133,20 @@ where
 ///
 /// - If `q_evals.len()` is not divisible by N
 /// - If blowup B < constraint degree D
-pub fn commit_quotient<F, EF, L, Dft>(
-    config: &StarkConfig<L, Dft>,
+pub fn commit_quotient<F, EF, SC>(
+    config: &SC,
     q_evals: Vec<EF>,
     coset: &LiftedCoset,
-) -> Committed<F, RowMajorMatrix<F>, L>
+) -> Committed<F, RowMajorMatrix<F>, SC::Lmcs>
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
-    L: Lmcs<F = F>,
-    Dft: TwoAdicSubgroupDft<F>,
+    SC: StarkConfig<F, EF>,
 {
     let n = coset.trace_height();
     let d = q_evals.len() / n;
     let log_d = log2_strict_usize(d);
-    let log_blowup = config.pcs.fri.log_blowup;
+    let log_blowup = config.pcs().fri.log_blowup;
     let b = 1usize << log_blowup;
 
     debug_assert!(
@@ -171,7 +169,7 @@ where
     // g·ω_Jᵗ·H), producing shifted coefficients:
     //   c_hat[t, k] = a[t, k]·(g·ω_Jᵗ)ᵏ
     // where a[t, k] are the true coefficients of qₜ.
-    let mut coeffs = config.dft.idft_algebra_batch(m);
+    let mut coeffs = config.dft().idft_algebra_batch(m);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Step 2: Fused coefficient scaling
@@ -230,14 +228,14 @@ where
     // ═══════════════════════════════════════════════════════════════════════
     // Because gᵏ is baked into the coefficients, the plain DFT evaluates
     // on gK directly: entry (i, t) gives qₜ(g·ω_Kⁱ).
-    let lde = config.dft.dft_batch(coeffs_padded);
+    let lde = config.dft().dft_batch(coeffs_padded);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Step 5: Bit-reverse rows for commitment
     // ═══════════════════════════════════════════════════════════════════════
     let quotient_matrix = lde.bit_reverse_rows().to_row_major_matrix();
 
-    let tree = config.lmcs.build_aligned_tree(vec![quotient_matrix]);
+    let tree = config.lmcs().build_aligned_tree(vec![quotient_matrix]);
 
     Committed::new(tree, log_blowup)
 }

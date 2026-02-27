@@ -164,19 +164,13 @@ fn malformed_transcript_is_rejected() {
     let log_trace_height = log2_strict_usize(trace.height());
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-    prove_single::<bb::F, bb::EF, _, _, _, _>(
-        &config,
-        &air,
-        &trace,
-        &public_values,
-        &mut prover_channel,
-    )
-    .expect("proving should succeed");
+    prove_single(&config, &air, &trace, &public_values, &mut prover_channel)
+        .expect("proving should succeed");
     let transcript = prover_channel.into_data();
 
     // Baseline should verify
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    verify_single::<bb::F, bb::EF, _, _, _, _>(
+    verify_single(
         &config,
         &air,
         log_trace_height,
@@ -191,7 +185,7 @@ fn malformed_transcript_is_rejected() {
     let bad_transcript = TranscriptData::new(fields, commitments);
 
     let mut bad_channel = VerifierTranscript::from_data(bb::test_challenger(), &bad_transcript);
-    let err = verify_single::<bb::F, bb::EF, _, _, _, _>(
+    let err = verify_single(
         &config,
         &air,
         log_trace_height,

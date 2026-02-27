@@ -126,8 +126,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_challenger::{CanSample, CanSampleBits};
-use p3_dft::TwoAdicSubgroupDft;
-use p3_field::{BasedVectorSpace, ExtensionField, Field, TwoAdicField};
+use p3_field::{Algebra, BasedVectorSpace, ExtensionField, Field, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::{LiftedAir, SymbolicExpression, get_constraint_layout};
@@ -172,8 +171,8 @@ pub enum ProverError {
 ///
 /// # Returns
 /// `Ok(())` on success, or a `ProverError` if validation fails.
-pub fn prove_single<F, EF, A, L, Dft, Ch>(
-    config: &StarkConfig<L, Dft>,
+pub fn prove_single<F, EF, A, SC, Ch>(
+    config: &SC,
     air: &A,
     trace: &RowMajorMatrix<F>,
     public_values: &[F],
@@ -182,11 +181,12 @@ pub fn prove_single<F, EF, A, L, Dft, Ch>(
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
+    SC: StarkConfig<F, EF>,
     A: LiftedAir<F, EF>,
-    L: Lmcs<F = F>,
-    Dft: TwoAdicSubgroupDft<F>,
-    Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
-    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
+    Ch: ProverChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>
+        + CanSample<F>
+        + CanSampleBits<usize>,
+    SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     let witness = AirWitness::new(trace, public_values);
     prove_multi(config, &[(air, witness)], channel)
@@ -222,20 +222,20 @@ where
 /// # Returns
 /// `Ok(())` on success, or a `ProverError` if validation fails.
 #[instrument(name = "prove", skip_all)]
-#[allow(clippy::too_many_arguments)]
-pub fn prove_multi<F, EF, A, L, Dft, Ch>(
-    config: &StarkConfig<L, Dft>,
+pub fn prove_multi<F, EF, A, SC, Ch>(
+    config: &SC,
     instances: &[(&A, AirWitness<'_, F>)],
     channel: &mut Ch,
 ) -> Result<(), ProverError>
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
+    SC: StarkConfig<F, EF>,
     A: LiftedAir<F, EF>,
-    L: Lmcs<F = F>,
-    Dft: TwoAdicSubgroupDft<F>,
-    Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
-    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
+    Ch: ProverChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>
+        + CanSample<F>
+        + CanSampleBits<usize>,
+    SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     validate_inputs(instances)?;
 
@@ -246,7 +246,7 @@ where
     );
     let has_aux = aux_widths.iter().any(|&w| w > 0);
 
-    let log_blowup = config.pcs.fri.log_blowup;
+    let log_blowup = config.pcs().fri.log_blowup;
 
     // Infer constraint degree from symbolic AIR analysis (max across all AIRs)
     let log_constraint_degree = instances
@@ -429,9 +429,9 @@ where
     };
 
     info_span!("open").in_scope(|| {
-        open_with_channel::<F, EF, L, RowMajorMatrix<F>, _, 2>(
-            &config.pcs,
-            &config.lmcs,
+        open_with_channel::<F, EF, SC::Lmcs, RowMajorMatrix<F>, _, 2>(
+            config.pcs(),
+            config.lmcs(),
             log_lde_height,
             [z, z_next],
             &trees,

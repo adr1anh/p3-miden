@@ -52,7 +52,8 @@ type Challenger = DuplexChallenger<Val, Perm, { bb::WIDTH }, { bb::RATE }>;
 
 // Lifted types
 type LiftedLmcs = LmcsConfig<bb::P, bb::P, bb::Sponge, bb::Compress, { bb::WIDTH }, { bb::DIGEST }>;
-type LiftedConfig = p3_miden_lifted_verifier::StarkConfig<LiftedLmcs, Dft>;
+type LiftedConfig =
+    p3_miden_lifted_verifier::GenericStarkConfig<Val, Challenge, LiftedLmcs, Dft, Challenger>;
 
 // =============================================================================
 // Constants
@@ -79,11 +80,7 @@ fn lifted_config() -> LiftedConfig {
     };
     let (_, sponge, compress) = bb::test_components();
     let lmcs: LiftedLmcs = LmcsConfig::new(sponge, compress);
-    LiftedConfig {
-        pcs,
-        lmcs,
-        dft: Dft::default(),
-    }
+    LiftedConfig::new(pcs, lmcs, Dft::default(), bb::test_challenger())
 }
 
 fn workspace_pcs() -> WorkspacePcs {
@@ -129,8 +126,7 @@ fn bench_quotient_commit(c: &mut Criterion) {
                 bench.iter(|| {
                     let mut q_evals = random_quotient_evals(n, D, 42);
                     q_evals.reserve(n * b - n * D);
-                    let committed =
-                        commit_quotient::<Val, Challenge, _, _>(&config, q_evals, &coset);
+                    let committed = commit_quotient(&config, q_evals, &coset);
                     black_box(committed)
                 });
             });

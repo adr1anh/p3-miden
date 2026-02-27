@@ -8,15 +8,14 @@
 use alloc::vec::Vec;
 
 use p3_dft::TwoAdicSubgroupDft;
-use p3_field::TwoAdicField;
+use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::bitrev::{BitReversedMatrixView, BitReversibleMatrix};
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_util::log2_strict_usize;
 
-use crate::StarkConfig;
-use p3_miden_lifted_stark::LiftedCoset;
+use p3_miden_lifted_stark::{LiftedCoset, StarkConfig};
 
 // ============================================================================
 // Committed
@@ -171,14 +170,14 @@ where
 /// lifted polynomial `f_lift(X) = f(Xʳ)` on the max LDE coset. This is achieved by
 /// evaluating the original trace on a *nested* coset with shift gʳ: the map
 /// `(g·ω)ʳ = gʳ·ωʳ` sends the max domain down to the smaller one.
-pub fn commit_traces<F, L, Dft>(
-    config: &StarkConfig<L, Dft>,
+pub fn commit_traces<F, EF, SC>(
+    config: &SC,
     traces: Vec<RowMajorMatrix<F>>,
-) -> Committed<F, RowMajorMatrix<F>, L>
+) -> Committed<F, RowMajorMatrix<F>, SC::Lmcs>
 where
     F: TwoAdicField,
-    L: Lmcs<F = F>,
-    Dft: TwoAdicSubgroupDft<F>,
+    EF: ExtensionField<F>,
+    SC: StarkConfig<F, EF>,
 {
     assert!(!traces.is_empty(), "at least one trace required");
 
@@ -188,7 +187,7 @@ where
         "traces must be sorted by height in ascending order"
     );
 
-    let log_blowup = config.pcs.fri.log_blowup;
+    let log_blowup = config.pcs().fri.log_blowup;
 
     // Find max trace height
     let max_trace_height = traces.last().unwrap().height();
@@ -214,7 +213,7 @@ where
 
             // Compute coset LDE and bit-reverse rows
             config
-                .dft
+                .dft()
                 .coset_lde_batch(trace, log_blowup, coset_shift)
                 .bit_reverse_rows()
                 .to_row_major_matrix()
@@ -222,7 +221,7 @@ where
         .collect();
 
     // Build aligned LMCS tree and wrap in Committed
-    let tree = config.lmcs.build_aligned_tree(ldes);
+    let tree = config.lmcs().build_aligned_tree(ldes);
     Committed::new(tree, log_blowup)
 }
 

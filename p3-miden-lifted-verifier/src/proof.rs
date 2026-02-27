@@ -77,13 +77,14 @@ where
     /// 8. Parse PCS sub-transcript via [`PcsTranscript::from_verifier_channel`]
     ///
     /// Does **not** verify constraints or check the quotient identity.
-    pub fn from_verifier_channel<A, Dft, Ch>(
-        config: &StarkConfig<L, Dft>,
+    pub fn from_verifier_channel<A, SC, Ch>(
+        config: &SC,
         instances: &[(&A, AirInstance<'_, L::F>)],
         channel: &mut Ch,
     ) -> Result<Self, VerifierError>
     where
         A: LiftedAir<L::F, EF>,
+        SC: StarkConfig<L::F, EF, Lmcs = L>,
         Ch: VerifierChannel<F = L::F, Commitment = L::Commitment>
             + CanSample<L::F>
             + CanSampleBits<usize>,
@@ -91,8 +92,8 @@ where
         let aux_widths: Vec<_> = instances.iter().map(|(air, _)| air.aux_width()).collect();
         let has_aux = aux_widths.iter().any(|&w| w > 0);
 
-        let log_blowup = config.pcs.fri.log_blowup;
-        let alignment = config.lmcs.alignment();
+        let log_blowup = config.pcs().fri.log_blowup;
+        let alignment = config.lmcs().alignment();
 
         // Infer constraint degree from symbolic AIR analysis (max across all AIRs)
         let constraint_degree = instances
@@ -175,8 +176,8 @@ where
 
         // 8. Parse PCS sub-transcript
         let pcs_transcript = PcsTranscript::from_verifier_channel::<Ch, 2>(
-            &config.pcs,
-            &config.lmcs,
+            config.pcs(),
+            config.lmcs(),
             &commitments,
             log_lde_height,
             [z, z_next],
