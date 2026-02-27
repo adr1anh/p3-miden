@@ -231,51 +231,46 @@ impl LiftedCoset {
         }
     }
 
-    /// Compute selectors at an out-of-domain point (verifier).
+    /// Lifted selectors at the OOD point (verifier).
+    ///
+    /// For a selector `s(x)` defined over the original trace domain of size `n_j`,
+    /// lifting evaluates `s(z_lift)` where `z_lift = z^r` and
+    /// `r = 2^log_lift_ratio = max_n / n_j`. This maps the OOD point `z`
+    /// (sampled in the max-trace domain) into the per-instance trace domain.
     ///
     /// # Formulas (unnormalized)
-    /// - `is_first_row = Z_H(z) / (z − 1)`
-    /// - `is_last_row = Z_H(z) / (z − ω⁻¹)`
-    /// - `is_transition = z − ω⁻¹`
+    /// - `is_first_row = Z_H(z_lift) / (z_lift − 1)`
+    /// - `is_last_row  = Z_H(z_lift) / (z_lift − ω_{n_j}⁻¹)`
+    /// - `is_transition = z_lift − ω_{n_j}⁻¹`
     ///
-    /// where `Z_H(z) = zⁿ − 1` is the vanishing polynomial of the trace domain.
-    ///
-    /// The verifier evaluates selectors at the OOD point z rather than across the trace.
-    /// This is enough because the prover commits to the quotient polynomial using DEEP+FRI.
-    /// At the random point z, the verifier checks that
-    ///
-    /// `Q(z)·Z_H(z) = Σₖ α^{K−1−k}·Cₖ(z)`.
-    ///
-    /// Each Cₖ already incorporates its selector (via `when_first_row`, `when_transition`,
-    /// etc.), so the selector values at z are baked into the constraint evaluations.
+    /// where `Z_H(z_lift) = z_lift^{n_j} − 1 = z^{max_n} − 1`.
     pub fn selectors_at<F, EF>(&self, z: EF) -> Selectors<EF>
     where
         F: TwoAdicField,
         EF: ExtensionField<F>,
     {
-        let z_n = z.exp_power_of_2(self.log_trace_height);
-        let vanishing = z_n - F::ONE;
+        let z_lift = z.exp_power_of_2(self.log_lift_ratio());
+        let vanishing = self.vanishing_at::<F, _>(z_lift);
         let omega_inv = F::two_adic_generator(self.log_trace_height).inverse();
 
         Selectors {
-            is_first_row: vanishing / (z - F::ONE),
-            is_last_row: vanishing / (z - omega_inv),
-            is_transition: z - omega_inv,
+            is_first_row: vanishing / (z_lift - F::ONE),
+            is_last_row: vanishing / (z_lift - omega_inv),
+            is_transition: z_lift - omega_inv,
         }
     }
 
     // ============ Vanishing polynomial ============
 
-    /// Compute inverse vanishing at an out-of-domain point (verifier).
+    /// Vanishing polynomial at an out-of-domain point.
     ///
-    /// Returns `1 / Z_H(z)` where `Z_H(z) = zⁿ − 1`.
-    pub fn inv_vanishing_at<F, EF>(&self, z: EF) -> EF
+    /// Returns `Z_H(z) = zⁿ − 1` using `exp_power_of_2` (log-many squarings).
+    pub fn vanishing_at<F, EF>(&self, z: EF) -> EF
     where
         F: TwoAdicField,
         EF: ExtensionField<F>,
     {
-        let z_n = z.exp_power_of_2(self.log_trace_height);
-        (z_n - EF::ONE).inverse()
+        z.exp_power_of_2(self.log_trace_height) - EF::ONE
     }
 
     // ============ Domain membership ============

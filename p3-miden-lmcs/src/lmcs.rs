@@ -179,6 +179,10 @@ where
         // Collect and deduplicate indices. BTreeSet iteration yields sorted order.
         let unique_indices: BTreeSet<usize> = indices.into_iter().collect();
 
+        if unique_indices.is_empty() {
+            return Err(LmcsError::InvalidProof);
+        }
+
         // Map index -> (rows, leaf_hash), filled in sorted order.
         let mut openings_by_index: BTreeMap<usize, Opening<Self::F, Self::Commitment>> =
             BTreeMap::new();
@@ -204,10 +208,6 @@ where
             };
 
             openings_by_index.insert(index, (rows, leaf_hash));
-        }
-
-        if openings_by_index.is_empty() {
-            return Err(LmcsError::InvalidProof);
         }
 
         // Recompute root from known leaves and streamed siblings.

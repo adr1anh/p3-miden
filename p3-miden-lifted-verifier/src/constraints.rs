@@ -46,7 +46,7 @@ where
     pub main: RowMajorMatrix<EF>,
     pub aux: RowMajorMatrix<EF>,
     pub randomness: &'a [EF],
-    pub public_values: &'a [EF],
+    pub public_values: &'a [F],
     pub periodic_values: &'a [EF],
     pub selectors: Selectors<EF>,
     pub alpha: EF,
@@ -94,7 +94,7 @@ where
     F: Field,
     EF: ExtensionField<F>,
 {
-    type PublicVar = EF;
+    type PublicVar = F;
 
     fn public_values(&self) -> &[Self::PublicVar] {
         self.public_values

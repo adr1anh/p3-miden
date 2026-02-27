@@ -3,7 +3,7 @@
 //! The [`Selectors`] struct is a plain container holding selector values.
 //! Computation is done via [`LiftedCoset`](crate::LiftedCoset) methods:
 //! - [`LiftedCoset::selectors`](crate::LiftedCoset::selectors) for coset evaluation (prover)
-//! - [`LiftedCoset::selectors_at`](crate::LiftedCoset::selectors_at) for OOD point (verifier)
+//! - [`LiftedCoset::selectors_at`](crate::LiftedCoset::selectors_at) for lifted OOD point evaluation (verifier)
 
 use alloc::vec::Vec;
 
@@ -66,11 +66,11 @@ mod tests {
 
         let _sels = coset.selectors_at::<F, _>(z);
 
-        // Verify inv_vanishing * vanishing = 1
-        let inv_van = coset.inv_vanishing_at::<F, _>(z);
+        // Verify vanishing_at matches manual computation
+        let vanishing = coset.vanishing_at::<F, _>(z);
         let n = 1usize << log_n;
-        let vanishing = z.exp_u64(n as u64) - EF::ONE;
-        assert_eq!(inv_van * vanishing, EF::ONE);
+        let expected = z.exp_u64(n as u64) - EF::ONE;
+        assert_eq!(vanishing, expected);
     }
 
     #[test]

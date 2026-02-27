@@ -54,7 +54,7 @@ use p3_field::{ExtensionField, FieldArray, TwoAdicField, batch_multiplicative_in
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::linear_map::LinearMap;
-use p3_util::{flatten_to_base, log2_strict_usize, reconstitute_from_base};
+use p3_util::{log2_strict_usize, reconstitute_from_base};
 use tracing::{debug_span, info_span};
 
 use p3_miden_lmcs::RowList;
@@ -93,10 +93,15 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
             .map(|&x| points.map(|z| z - x))
             .collect();
 
-        // Flatten to Vec<EF> for batch inversion, invert, then reconstitute
-        // SAFETY: [EF; N] has same alignment as EF and size is N * size_of::<EF>()
-        let diffs_flat: Vec<EF> = unsafe { flatten_to_base(diffs) };
-        let invs_flat: Vec<EF> = batch_multiplicative_inverse(&diffs_flat);
+        // Flatten FieldArray slice for batch inversion (zero-copy), then reconstitute.
+        let diffs_flat = FieldArray::as_raw_slice(&diffs).as_flattened();
+        let invs_flat = batch_multiplicative_inverse(diffs_flat);
+        debug_assert_eq!(invs_flat.len(), N * n_points);
+        // SAFETY: `reconstitute_from_base` requires:
+        // - Same alignment: `FieldArray<EF, N>` is `#[repr(transparent)]` over
+        //   `[EF; N]`, so it has the same alignment as `EF`.
+        // - Length is a multiple of N: `invs_flat` has length `N * n_points`
+        //   (one inverse per OOD point per domain element).
         let point_quotient: Vec<FieldArray<EF, N>> = unsafe { reconstitute_from_base(invs_flat) };
 
         debug_assert_eq!(point_quotient.len(), n_points);

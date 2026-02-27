@@ -284,13 +284,7 @@ where
     let mut accumulated = EF::ZERO;
 
     for (j, (air, inst)) in instances.iter().enumerate() {
-        let log_n_j = inst.log_trace_height;
-        let n_j = 1usize << log_n_j;
-        let log_lift_ratio = log_max_trace_height - log_n_j;
-
-        // Virtual evaluation point for this (possibly lifted) trace: yⱼ = z^{rⱼ}.
-        // For unlifted traces (rⱼ = 1), yⱼ = z.
-        let y_j = z.exp_power_of_2(log_lift_ratio);
+        let coset_j = LiftedCoset::new(inst.log_trace_height, log_blowup, log_max_trace_height);
 
         // Extract main trace opened values, truncating alignment padding.
         let main_width = air.width();
@@ -310,17 +304,16 @@ where
             None => (vec![], vec![]),
         };
 
-        // Selectors at the virtual point yⱼ (relative to this trace's domain).
-        let coset_j = LiftedCoset::new(log_n_j, log_blowup, log_max_trace_height);
-        let selectors = coset_j.selectors_at::<F, _>(y_j);
+        // Selectors at the lifted OOD point yⱼ = z^{rⱼ} (encapsulated in LiftedCoset).
+        let selectors = coset_j.selectors_at::<F, _>(z);
 
-        // Periodic values at the virtual point yⱼ.
+        // Periodic values: for a column with period p, eval_at computes z^{n/p}.
+        // Using (max_trace_height, z) gives z^{max_n / p}, which equals
+        // y_j^{n_j / p} = (z^{max_n/n_j})^{n_j/p} = z^{max_n/p}. This avoids
+        // computing y_j = z^{r_j} explicitly.
         let periodic_polys = PeriodicPolys::new(air.periodic_columns())
             .ok_or(VerifierError::InvalidPeriodicTable)?;
-        let periodic_values = periodic_polys.eval_at::<EF>(n_j, y_j);
-
-        // Public values as EF
-        let public_values_ef: Vec<EF> = inst.public_values.iter().copied().map(EF::from).collect();
+        let periodic_values = periodic_polys.eval_at::<EF>(max_trace_height, z);
 
         // Build 2-row matrices for the folder (row 0 = local, row 1 = next)
         let main_pair = RowMajorMatrix::new([main_local, main_next].concat(), main_width);
@@ -331,7 +324,7 @@ where
             main: main_pair,
             aux: aux_pair,
             randomness: &randomness[..num_rand],
-            public_values: &public_values_ef,
+            public_values: inst.public_values,
             periodic_values: &periodic_values,
             selectors,
             alpha,
@@ -350,7 +343,7 @@ where
     let quotient_chunks = row_to_packed_ext::<F, EF>(&quotient_evals.point(0).row(0)[..qw])?;
     let quotient_z = reconstruct_quotient::<F, EF>(z, &max_lde_coset, &quotient_chunks);
 
-    let vanishing = z.exp_u64(max_trace_height as u64) - EF::ONE;
+    let vanishing = max_lde_coset.vanishing_at::<F, _>(z);
     if accumulated != quotient_z * vanishing {
         return Err(VerifierError::ConstraintMismatch);
     }
