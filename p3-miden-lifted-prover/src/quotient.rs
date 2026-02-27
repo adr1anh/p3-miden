@@ -199,10 +199,27 @@ where
     // We flatten before the DFT (rather than using dft_algebra_batch) because
     // we need base field for commitment anyway — this skips the reconstitute.
     //
-    // Zero-padding from N·D to N·B rows is required because `dft_batch` (plain DFT)
-    // expects the full target-size buffer, unlike `coset_lde_batch` which pads
-    // internally. The extra zeros correspond to the high-degree coefficients that
-    // are zero for degree-< N polynomials.
+    // Zero-padding from N to N·B rows is needed because `dft_batch` expects
+    // the full target-size buffer. The extra rows are zero because each qₜ has
+    // degree < N. We pad here (after iDFT + scaling) so those two steps work
+    // on the smaller N-row buffer.
+    //
+    // PERF: the full N·B-size DFT processes N·(B−1) zero rows through every
+    // butterfly stage, costing O(N·B·log(N·B)) instead of O(N·B·log N). For
+    // B = 4, N = 2^20 that is ≈ 9% overhead on this step (small relative to
+    // total proving time since the quotient matrix has only D·DIM columns).
+    //
+    // The existing `lde_batch`/`coset_lde_batch` APIs cannot help: they take
+    // *evaluations*, not coefficients. Using them would add a redundant DFT(N)
+    // → iDFT(N) round-trip.
+    //
+    // What is conceptually missing from `TwoAdicSubgroupDft` is an
+    // `added_bits` parameter on `dft_batch` / `coset_dft_batch` that evaluates
+    // degree-< N coefficients on a larger domain of size N·2^added_bits. The
+    // default would be zero-pad + the existing same-size DFT, but an optimized
+    // implementation (like `Radix2DftParallel`) could run B separate N-size
+    // DFTs — one per coset of H inside K — matching what its `coset_lde_batch`
+    // already does internally after the iDFT phase.
     let base_width = d * EF::DIMENSION;
     let mut base_coeffs = <EF as BasedVectorSpace<F>>::flatten_to_base(coeffs.values);
     base_coeffs.resize(n * b * base_width, F::ZERO);
