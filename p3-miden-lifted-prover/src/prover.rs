@@ -127,7 +127,7 @@ use alloc::vec::Vec;
 
 use p3_challenger::{CanSample, CanSampleBits};
 use p3_dft::TwoAdicSubgroupDft;
-use p3_field::{BasedVectorSpace, ExtensionField, Field, PrimeField64, TwoAdicField};
+use p3_field::{BasedVectorSpace, ExtensionField, Field, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::{LiftedAir, SymbolicExpression, get_constraint_layout};
@@ -180,11 +180,10 @@ pub fn prove_single<F, EF, A, L, Dft, Ch>(
     channel: &mut Ch,
 ) -> Result<(), ProverError>
 where
-    F: TwoAdicField + PrimeField64,
+    F: TwoAdicField,
     EF: ExtensionField<F>,
     A: LiftedAir<F, EF>,
     L: Lmcs<F = F>,
-    L::Commitment: Copy,
     Dft: TwoAdicSubgroupDft<F>,
     Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
     SymbolicExpression<EF>: From<SymbolicExpression<F>>,
@@ -230,11 +229,10 @@ pub fn prove_multi<F, EF, A, L, Dft, Ch>(
     channel: &mut Ch,
 ) -> Result<(), ProverError>
 where
-    F: TwoAdicField + PrimeField64,
+    F: TwoAdicField,
     EF: ExtensionField<F>,
     A: LiftedAir<F, EF>,
     L: Lmcs<F = F>,
-    L::Commitment: Copy,
     Dft: TwoAdicSubgroupDft<F>,
     Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
     SymbolicExpression<EF>: From<SymbolicExpression<F>>,

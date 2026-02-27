@@ -38,7 +38,7 @@ impl<'a, F, C, Ch> VerifierTranscript<'a, F, C, Ch> {
 /// Verifier-side channel interface for transcript operations.
 pub trait VerifierChannel {
     type F: Field;
-    type Commitment: Copy;
+    type Commitment: Clone;
 
     fn receive_field_slice(&mut self, count: usize) -> Result<&[Self::F], TranscriptError>;
 
@@ -121,7 +121,7 @@ pub trait VerifierChannel {
 impl<'a, F, C, Ch> VerifierChannel for VerifierTranscript<'a, F, C, Ch>
 where
     F: Field,
-    C: Copy,
+    C: Clone,
     Ch: CanObserve<F> + CanObserve<C> + GrindingChallenger<Witness = F>,
 {
     type F = F;

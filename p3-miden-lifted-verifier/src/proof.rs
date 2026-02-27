@@ -15,7 +15,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_challenger::{CanSample, CanSampleBits};
-use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64, TwoAdicField};
+use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_miden_lifted_air::LiftedAir;
 use p3_miden_lifted_fri::PcsTranscript;
 use p3_miden_lmcs::Lmcs;
@@ -61,7 +61,7 @@ where
 impl<EF, L> StarkTranscript<EF, L>
 where
     L: Lmcs,
-    L::F: TwoAdicField + PrimeField64 + PrimeCharacteristicRing,
+    L::F: TwoAdicField,
     EF: ExtensionField<L::F>,
 {
     /// Parse a STARK transcript from a verifier channel without constraint checks.
@@ -84,7 +84,6 @@ where
     ) -> Result<Self, VerifierError>
     where
         A: LiftedAir<L::F, EF>,
-        L::Commitment: Copy,
         Ch: VerifierChannel<F = L::F, Commitment = L::Commitment>
             + CanSample<L::F>
             + CanSampleBits<usize>,
@@ -110,7 +109,7 @@ where
         let max_lde_coset = LiftedCoset::unlifted(log_max_trace_height, log_blowup);
 
         // 1. Receive main trace commitment
-        let main_commit = *channel.receive_commitment()?;
+        let main_commit = channel.receive_commitment()?.clone();
 
         // 2. Sample randomness for aux traces
         let max_num_randomness = instances
@@ -125,7 +124,7 @@ where
 
         // 3. Receive aux trace commitment (only when AIRs have aux columns)
         let aux_commit = if has_aux {
-            Some(*channel.receive_commitment()?)
+            Some(channel.receive_commitment()?.clone())
         } else {
             None
         };
@@ -135,7 +134,7 @@ where
         let beta: EF = channel.sample_algebra_element::<EF>();
 
         // 5. Receive quotient commitment
-        let quotient_commit = *channel.receive_commitment()?;
+        let quotient_commit = channel.receive_commitment()?.clone();
 
         // 6. Sample OOD point (outside max trace domain H and max LDE coset gK)
         let z: EF = loop {
@@ -156,21 +155,21 @@ where
             .collect();
         let quotient_width = aligned_len(constraint_degree * EF::DIMENSION, alignment);
 
-        let commitments = match aux_commit {
+        let commitments = match &aux_commit {
             Some(aux_commit) => {
                 let aux_committed_widths: Vec<usize> = instances
                     .iter()
                     .map(|(air, _)| aligned_len(air.aux_width() * EF::DIMENSION, alignment))
                     .collect();
                 vec![
-                    (main_commit, main_widths),
-                    (aux_commit, aux_committed_widths),
-                    (quotient_commit, vec![quotient_width]),
+                    (main_commit.clone(), main_widths),
+                    (aux_commit.clone(), aux_committed_widths),
+                    (quotient_commit.clone(), vec![quotient_width]),
                 ]
             }
             None => vec![
-                (main_commit, main_widths),
-                (quotient_commit, vec![quotient_width]),
+                (main_commit.clone(), main_widths),
+                (quotient_commit.clone(), vec![quotient_width]),
             ],
         };
 

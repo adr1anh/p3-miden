@@ -50,8 +50,7 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use p3_challenger::{CanSample, CanSampleBits};
-use p3_dft::TwoAdicSubgroupDft;
-use p3_field::{ExtensionField, PrimeCharacteristicRing, PrimeField64, TwoAdicField};
+use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::LiftedAir;
 use p3_miden_lifted_fri::verifier::{PcsError, verify_with_channel as verify_pcs_with_channel};
@@ -111,12 +110,10 @@ pub fn verify_single<F, EF, A, L, Dft, Ch>(
     channel: &mut Ch,
 ) -> Result<(), VerifierError>
 where
-    F: TwoAdicField + PrimeField64 + PrimeCharacteristicRing,
+    F: TwoAdicField,
     EF: ExtensionField<F>,
     A: LiftedAir<F, EF>,
     L: Lmcs<F = F>,
-    L::Commitment: Copy,
-    Dft: TwoAdicSubgroupDft<F>,
     Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
     let instance = AirInstance::new(log_trace_height, public_values);
@@ -158,12 +155,10 @@ pub fn verify_multi<F, EF, A, L, Dft, Ch>(
     channel: &mut Ch,
 ) -> Result<(), VerifierError>
 where
-    F: TwoAdicField + PrimeField64 + PrimeCharacteristicRing,
+    F: TwoAdicField,
     EF: ExtensionField<F>,
     A: LiftedAir<F, EF>,
     L: Lmcs<F = F>,
-    L::Commitment: Copy,
-    Dft: TwoAdicSubgroupDft<F>,
     Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
 {
     let air_instances: Vec<_> = instances.iter().map(|(_, inst)| *inst).collect();
@@ -194,7 +189,7 @@ where
     let max_lde_coset = LiftedCoset::unlifted(log_max_trace_height, log_blowup);
 
     // 1. Receive main trace commitment
-    let main_commit = *channel.receive_commitment()?;
+    let main_commit = channel.receive_commitment()?.clone();
 
     // 2. Sample randomness for aux traces
     let max_num_randomness = instances
@@ -209,7 +204,7 @@ where
 
     // 3. Receive aux trace commitment (only when AIRs have aux columns)
     let aux_commit = if has_aux {
-        Some(*channel.receive_commitment()?)
+        Some(channel.receive_commitment()?.clone())
     } else {
         None
     };
@@ -219,7 +214,7 @@ where
     let beta: EF = channel.sample_algebra_element::<EF>();
 
     // 5. Receive quotient commitment
-    let quotient_commit = *channel.receive_commitment()?;
+    let quotient_commit = channel.receive_commitment()?.clone();
 
     // 6. Sample OOD point (outside max trace domain H and max LDE coset gK)
     let z: EF = loop {
