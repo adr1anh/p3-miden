@@ -87,9 +87,10 @@ fn batched_base_linear_combination<P: PackedField>(coeffs: &[P::Scalar], values:
 
 /// Evaluate constraints on the quotient domain, adding results into `output`.
 ///
-/// Here J is the quotient-domain subgroup of size `N * D`, and `gJ` is its coset.
-/// For each point on `gJ`, we evaluate all AIR constraints, fold them with powers of
-/// `alpha`, and add the resulting numerator value:
+/// Here `gJ` is the quotient evaluation coset of size `N * D`, the subset of the
+/// committed LDE coset `gK` (size `N * B`) that contains just enough points to
+/// evaluate the quotient point-wise. For each point on `gJ`, we evaluate all AIR
+/// constraints, fold them with powers of `alpha`, and add the resulting numerator value:
 ///
 /// `output[i] += folded_constraints(xᵢ)`.
 ///

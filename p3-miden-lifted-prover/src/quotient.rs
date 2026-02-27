@@ -117,13 +117,16 @@ where
 /// coset `g·ω_Jᵗ·H`.
 ///
 /// We commit to all qₜ by LDE-extending them to the PCS domain `gK` (size `N·B`) and
-/// hashing the resulting matrix. Doing this efficiently is the point of the "fused
-/// scaling" trick used below:
-/// - an iDFT on each column yields coefficients multiplied by `(g·ω_Jᵗ)ᵏ`,
-/// - multiplying by `(ω_J⁻ᵏ)ᵗ` removes the t-dependent part, leaving a gᵏ
-///   factor baked into the coefficients,
-/// - with gᵏ baked in, a plain (unshifted) DFT evaluates directly on the shifted coset
-///   `gK` without running `D` separate coset DFTs.
+/// hashing the resulting matrix. Naïvely this would require `D` separate coset-iDFT /
+/// coset-DFT pairs (one per chunk). The "fused scaling" trick below collapses all of
+/// them into a single plain iDFT, a diagonal scaling pass, and one plain DFT:
+///
+/// - a plain iDFT on each column yields coefficients multiplied by `(g·ω_Jᵗ)ᵏ`
+///   (the inverse coset shift is absorbed into the coefficients),
+/// - multiplying by `(ω_J⁻ᵏ)ᵗ` removes the per-chunk shift ω_Jᵗ while keeping the
+///   common factor gᵏ baked in,
+/// - a plain (unshifted) forward DFT then evaluates directly on the shifted coset `gK`,
+///   because gᵏ already accounts for the coset offset.
 ///
 /// `q_evals` is consumed and flattened to the base field for commitment.
 ///
@@ -195,6 +198,11 @@ where
     // ═══════════════════════════════════════════════════════════════════════
     // We flatten before the DFT (rather than using dft_algebra_batch) because
     // we need base field for commitment anyway — this skips the reconstitute.
+    //
+    // Zero-padding from N·D to N·B rows is required because `dft_batch` (plain DFT)
+    // expects the full target-size buffer, unlike `coset_lde_batch` which pads
+    // internally. The extra zeros correspond to the high-degree coefficients that
+    // are zero for degree-< N polynomials.
     let base_width = d * EF::DIMENSION;
     let mut base_coeffs = <EF as BasedVectorSpace<F>>::flatten_to_base(coeffs.values);
     base_coeffs.resize(n * b * base_width, F::ZERO);
