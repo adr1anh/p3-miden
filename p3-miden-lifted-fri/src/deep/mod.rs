@@ -49,15 +49,18 @@
 //! - Prover LDE evaluation (`prover::DeepPoly::from_trees` via explicit dot-product
 //!   with reversed negated coefficients — see comments there)
 
-mod evals;
 mod interpolate;
 mod proof;
 pub(crate) mod prover;
 pub(crate) mod verifier;
 
-pub use evals::DeepEvals;
+use alloc::vec::Vec;
+use p3_field::{ExtensionField, TwoAdicField};
+use p3_matrix::dense::RowMajorMatrix;
+use p3_miden_transcript::{TranscriptError, VerifierChannel};
+
 pub use interpolate::PointQuotients;
-pub use proof::DeepTranscript;
+pub use proof::{DeepTranscript, OpenedValues};
 pub use verifier::DeepError;
 
 /// DEEP quotient parameters.
@@ -68,6 +71,53 @@ pub use verifier::DeepError;
 pub struct DeepParams {
     /// Grinding bits before DEEP challenge sampling.
     pub deep_pow_bits: usize,
+}
+
+/// Read OOD evaluation matrices from a verifier channel.
+///
+/// The prover sends one flat slice per evaluation point containing all matrices'
+/// column values concatenated. This function splits by widths and reshapes into
+/// per-group, per-matrix `RowMajorMatrix<EF>` with `num_eval_points` rows each.
+pub(crate) fn read_eval_matrices<F, EF, Ch>(
+    group_widths: &[&[usize]],
+    num_eval_points: usize,
+    channel: &mut Ch,
+) -> Result<OpenedValues<EF>, TranscriptError>
+where
+    F: TwoAdicField,
+    EF: ExtensionField<F>,
+    Ch: VerifierChannel<F = F>,
+{
+    let all_widths: Vec<usize> = group_widths
+        .iter()
+        .flat_map(|gw| gw.iter().copied())
+        .collect();
+    let total_width: usize = all_widths.iter().sum();
+
+    let mut values: Vec<Vec<EF>> = all_widths
+        .iter()
+        .map(|&w| Vec::with_capacity(w * num_eval_points))
+        .collect();
+
+    for _ in 0..num_eval_points {
+        let flat = channel.receive_algebra_slice::<EF>(total_width)?;
+        let mut offset = 0;
+        for (m, &w) in all_widths.iter().enumerate() {
+            values[m].extend_from_slice(&flat[offset..offset + w]);
+            offset += w;
+        }
+    }
+
+    let mut mat_iter = values
+        .into_iter()
+        .zip(&all_widths)
+        .map(|(vals, &w)| RowMajorMatrix::new(vals, w));
+    let evals = group_widths
+        .iter()
+        .map(|gw| mat_iter.by_ref().take(gw.len()).collect())
+        .collect();
+
+    Ok(evals)
 }
 
 #[cfg(test)]

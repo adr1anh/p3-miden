@@ -1,18 +1,28 @@
 //! DEEP transcript data structures.
 
-use crate::deep::DeepEvals;
-use crate::deep::DeepParams;
+use crate::deep::{DeepParams, read_eval_matrices};
 use alloc::vec::Vec;
 use p3_field::{ExtensionField, Field, TwoAdicField};
+use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_transcript::{Channel, TranscriptError, VerifierChannel};
+
+/// Opened evaluations grouped by commitment group and matrix.
+///
+/// `opened[g][m]` is a `RowMajorMatrix<EF>` with one row per evaluation point,
+/// where `g` is the commitment group index and `m` the matrix index within that group.
+pub type OpenedValues<EF> = Vec<Vec<RowMajorMatrix<EF>>>;
 
 /// Structured transcript view for the DEEP interaction.
 ///
 /// This records the prover's PoW witness and the two challenges sampled
 /// from the Fiat-Shamir transcript after observing evaluations.
+///
+/// `evals[g][m]` is a `RowMajorMatrix<EF>` with `num_eval_points` rows for
+/// commitment group `g`, matrix `m`. Widths include alignment padding (matching
+/// the committed rows).
 pub struct DeepTranscript<F: Field, EF: ExtensionField<F>> {
-    /// `evals.point(idx).as_slice()` gives all column values for a single point.
-    pub evals: DeepEvals<EF>,
+    /// `evals[g][m]` is a `RowMajorMatrix` with `num_eval_points` rows.
+    pub evals: OpenedValues<EF>,
     /// Proof-of-work witness sampled before DEEP challenges.
     pub pow_witness: F,
     /// Challenge `α` for batching columns into `f_reduced`.
@@ -41,11 +51,8 @@ where
     where
         Ch: VerifierChannel<F = F>,
     {
-        let widths: Vec<&[usize]> = commitments
-            .iter()
-            .map(|(_, widths)| widths.as_slice())
-            .collect();
-        let evals = DeepEvals::read_from_channel(&widths, num_eval_points, channel)?;
+        let group_widths: Vec<&[usize]> = commitments.iter().map(|(_, gw)| gw.as_slice()).collect();
+        let evals = read_eval_matrices::<F, EF, Ch>(&group_widths, num_eval_points, channel)?;
 
         let pow_witness = channel.grind(params.deep_pow_bits)?;
         let challenge_columns: EF = channel.sample_algebra_element();

@@ -1,56 +1,60 @@
 //! PCS Verifier
 //!
 //! Verifies polynomial evaluation claims against commitments.
+//!
+//! Three entry points with the same signature, differing only in post-processing:
+//!
+//! | Function         | Alignment | Transcript check |
+//! |------------------|-----------|------------------|
+//! | [`verify`]       | caller    | no               |
+//! | [`verify_strict`]| caller    | yes              |
+//! | [`verify_aligned`]| automatic| no              |
 
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 
 use p3_field::{ExtensionField, TwoAdicField};
+use p3_matrix::Matrix;
+use p3_matrix::horizontally_truncated::HorizontallyTruncated;
 use p3_miden_lmcs::Lmcs;
+use p3_miden_lmcs::utils::aligned_widths;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
 use thiserror::Error;
 
-use crate::PcsParams;
 use crate::deep::DeepError;
-use crate::deep::DeepEvals;
 use crate::deep::verifier::DeepOracle;
 use crate::fri::FriError;
 use crate::fri::verifier::FriOracle;
+use crate::{OpenedValues, PcsParams};
 
-/// Verify polynomial evaluation claims against commitments using a verifier channel.
+/// Verify polynomial evaluation claims against commitments.
+///
+/// Commitment widths must match the committed rows (including any alignment padding
+/// from `build_aligned_tree`). The PCS is alignment-agnostic; callers that use
+/// aligned trees must pass aligned widths and handle truncation themselves.
+/// See [`verify_aligned`] for automatic alignment handling.
+///
+/// Does **not** check that the channel is fully consumed after verification.
+/// See [`verify_strict`] for standalone usage where trailing data should be rejected.
 ///
 /// # Preconditions
 /// - `eval_points` must lie outside both the trace-domain subgroup `H` and the
-///   LDE evaluation coset `gK` used by the PCS. If a point lies in either set,
-///   denominators `(zⱼ − X)` in the DEEP quotient become zero for some domain element,
-///   making the quotient undefined.
-/// - All commitments are expected to be lifted to the same LDE height `2^log_lde_height`.
+///   LDE evaluation coset `gK`. Otherwise denominators `(zⱼ − X)` in the DEEP
+///   quotient become zero, making it undefined.
+/// - All commitments must be lifted to the same LDE height `2^log_lde_height`.
 ///
-/// `log_lde_height` is the log₂ of the LDE evaluation domain height (i.e. the height of
-/// the committed LDE matrices). When a trace degree is known, it is typically
-/// `log_trace_height + params.fri.log_blowup` (plus any extension used by the caller).
-/// In that common case, the trace subgroup `H` has size `2^(log_lde_height - params.fri.log_blowup)`,
-/// while the LDE coset `gK` has size `2^log_lde_height`.
-///
-/// Trace commitment widths are expected to include any alignment padding
-/// (i.e., trees built with `build_aligned_tree`).
-///
-/// Returns `Ok(evals)` where each group/matrix is a row-major matrix with one row per point.
-///
-/// **Transcript consumption**: This function does not check that the channel is fully
-/// consumed after verification. When used as a component of a larger protocol, the caller
-/// manages transcript boundaries. For standalone usage, either call
-/// `channel.is_empty()` afterwards or use [`verify_with_channel_strict`], which rejects
-/// proofs with trailing data (proof malleability).
-pub fn verify_with_channel<F, EF, L, Ch, const N: usize>(
+/// # Returns
+/// `opened[group][matrix]` as a `RowMajorMatrix<EF>` with `N` rows
+/// (one per evaluation point), using the same widths that were passed in.
+pub fn verify<F, EF, L, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
     commitments: &[(L::Commitment, Vec<usize>)],
     log_lde_height: usize,
     eval_points: [EF; N],
     channel: &mut Ch,
-) -> Result<DeepEvals<EF>, PcsError>
+) -> Result<OpenedValues<EF>, PcsError>
 where
     F: TwoAdicField,
     EF: ExtensionField<F> + PartialEq + Clone,
@@ -59,14 +63,11 @@ where
 {
     const { assert!(N > 0, "at least one evaluation point required") };
 
-    // Validate we have commitments
     if commitments.is_empty() {
         return Err(PcsError::NoCommitments);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Construct verifier's DEEP oracle (observes evals, checks PoW, samples alpha/beta)
-    // ─────────────────────────────────────────────────────────────────────────
+    // Construct verifier's DEEP oracle (observes evals, checks PoW, samples α/β)
     let (deep_oracle, evals) = DeepOracle::<F, EF, L>::new(
         &params.deep,
         &eval_points,
@@ -75,14 +76,10 @@ where
         channel,
     )?;
 
-    // ─────────────────────────────────────────────────────────────────────────
     // Create FRI oracle (observes commitments + final poly, checks per-round PoW)
-    // ─────────────────────────────────────────────────────────────────────────
     let fri_oracle = FriOracle::new(&params.fri, log_lde_height, channel)?;
 
-    // ─────────────────────────────────────────────────────────────────────────
     // Check query PoW witness and sample query indices
-    // ─────────────────────────────────────────────────────────────────────────
     channel.grind(params.query_pow_bits)?;
 
     // Sample exponents and convert to tree indices immediately.
@@ -94,44 +91,35 @@ where
         })
         .collect();
 
-    // ─────────────────────────────────────────────────────────────────────────
     // Verify DEEP openings for all queries at once
-    // ─────────────────────────────────────────────────────────────────────────
     // tree_indices are bit-reversed positions; deep_evals is keyed by tree index
     let deep_evals = deep_oracle.open_batch(lmcs, &tree_indices, channel)?;
 
-    // ─────────────────────────────────────────────────────────────────────────
     // Test low-degree proximity for all queries at once
-    // ─────────────────────────────────────────────────────────────────────────
     fri_oracle.test_low_degree(lmcs, &params.fri, deep_evals, channel)?;
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Return verified evaluations
-    // ─────────────────────────────────────────────────────────────────────────
     Ok(evals)
 }
 
-/// Like [`verify_with_channel`], but also checks that the transcript is fully consumed.
+/// Like [`verify`], but rejects proofs with trailing transcript data.
 ///
 /// Returns [`PcsError::TrailingData`] if any unread data remains after verification.
 /// Use this for standalone verification where the entire transcript belongs to the PCS.
-pub fn verify_with_channel_strict<F, EF, L, Ch, const N: usize>(
+pub fn verify_strict<F, EF, L, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
     commitments: &[(L::Commitment, Vec<usize>)],
     log_lde_height: usize,
     eval_points: [EF; N],
     channel: &mut Ch,
-) -> Result<DeepEvals<EF>, PcsError>
+) -> Result<OpenedValues<EF>, PcsError>
 where
     F: TwoAdicField,
     EF: ExtensionField<F> + PartialEq + Clone,
     L: Lmcs<F = F>,
     Ch: VerifierChannel<F = F, Commitment = L::Commitment>,
 {
-    const { assert!(N > 0, "at least one evaluation point required") };
-
-    let evals = verify_with_channel(
+    let result = verify(
         params,
         lmcs,
         commitments,
@@ -142,7 +130,62 @@ where
     if !channel.is_empty() {
         return Err(PcsError::TrailingData);
     }
-    Ok(evals)
+    Ok(result)
+}
+
+/// Like [`verify`], but handles LMCS alignment automatically.
+///
+/// Commitment widths should be the original (unpadded) data widths. This function:
+/// 1. Aligns widths to `lmcs.alignment()`
+/// 2. Calls [`verify`] with aligned widths
+/// 3. Truncates returned evals back to original widths
+pub fn verify_aligned<F, EF, L, Ch, const N: usize>(
+    params: &PcsParams,
+    lmcs: &L,
+    commitments: &[(L::Commitment, Vec<usize>)],
+    log_lde_height: usize,
+    eval_points: [EF; N],
+    channel: &mut Ch,
+) -> Result<OpenedValues<EF>, PcsError>
+where
+    F: TwoAdicField,
+    EF: ExtensionField<F> + PartialEq + Clone,
+    L: Lmcs<F = F>,
+    Ch: VerifierChannel<F = F, Commitment = L::Commitment>,
+{
+    let alignment = lmcs.alignment();
+    let aligned_commitments: Vec<_> = commitments
+        .iter()
+        .map(|(c, widths)| (c.clone(), aligned_widths(widths.clone(), alignment)))
+        .collect();
+
+    let evals = verify(
+        params,
+        lmcs,
+        &aligned_commitments,
+        log_lde_height,
+        eval_points,
+        channel,
+    )?;
+
+    // Truncate each matrix back to original widths, removing alignment padding.
+    let truncated = evals
+        .into_iter()
+        .zip(commitments)
+        .map(|(group, (_, orig_widths))| {
+            group
+                .into_iter()
+                .zip(orig_widths)
+                .map(|(mat, &orig_w)| {
+                    HorizontallyTruncated::new(mat, orig_w)
+                        .expect("original width must not exceed aligned width")
+                        .to_row_major_matrix()
+                })
+                .collect()
+        })
+        .collect();
+
+    Ok(truncated)
 }
 
 // ============================================================================

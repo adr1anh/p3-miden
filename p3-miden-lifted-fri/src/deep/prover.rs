@@ -145,12 +145,15 @@ impl<EF> DeepPoly<EF> {
         // 1. Bind the prover's OOD evaluation claims into the Fiat-Shamir transcript.
         //    The DEEP challenges (alpha, beta) are derived after this, so a cheating prover
         //    cannot adapt its claims to the challenges.
-        //    Each row is implicitly zero-padded to the tree alignment, matching the
+        //    Each matrix row is zero-padded to the tree alignment, matching the
         //    virtual zero columns the LMCS inserts when hashing rows.
+        //    All matrices are concatenated into a single flat slice per eval point.
         for point_idx in 0..N {
-            for eval in batched_evals.iter_aligned(alignment) {
-                channel.send_algebra_element(eval[point_idx]);
-            }
+            let flat: Vec<EF> = batched_evals
+                .iter_aligned(alignment)
+                .map(|fa| fa[point_idx])
+                .collect();
+            channel.send_algebra_slice(&flat);
         }
 
         // 2. Grind for proof-of-work witness

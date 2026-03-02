@@ -3,9 +3,11 @@ use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
 
-use super::{DeepEvals, DeepParams};
-use crate::utils::{horner, horner_acc};
+use super::{DeepParams, read_eval_matrices};
+use crate::OpenedValues;
+use crate::utils::horner_acc;
 use p3_field::{ExtensionField, TwoAdicField};
+use p3_matrix::Matrix;
 use p3_miden_lmcs::{Lmcs, LmcsError};
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
@@ -64,21 +66,21 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
     /// `log_lde_height` is the log₂ of the LDE evaluation domain height (i.e. the height of
     /// the committed LDE matrices). When a trace degree is known, it is typically
     /// `log_trace_height + params.fri.log_blowup` (plus any extension used by the caller).
+    ///
+    /// Returns the oracle and per-matrix evaluations: `evals[g][m]` is a
+    /// `RowMajorMatrix<EF>` with one row per evaluation point.
     pub fn new<Ch>(
         params: &DeepParams,
         eval_points: &[EF],
         commitments: Vec<(L::Commitment, Vec<usize>)>,
         log_lde_height: usize,
         channel: &mut Ch,
-    ) -> Result<(Self, DeepEvals<EF>), DeepError>
+    ) -> Result<(Self, OpenedValues<EF>), DeepError>
     where
         Ch: VerifierChannel<F = F, Commitment = L::Commitment>,
     {
-        let widths: Vec<&[usize]> = commitments
-            .iter()
-            .map(|(_, widths)| widths.as_slice())
-            .collect();
-        let evals = DeepEvals::read_from_channel::<F, Ch>(&widths, eval_points.len(), channel)?;
+        let group_widths: Vec<&[usize]> = commitments.iter().map(|(_, gw)| gw.as_slice()).collect();
+        let evals = read_eval_matrices::<F, EF, Ch>(&group_widths, eval_points.len(), channel)?;
 
         // 1. Check grinding witness
         channel.grind(params.deep_pow_bits)?;
@@ -87,14 +89,23 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
         let challenge_columns: EF = channel.sample_algebra_element();
         let challenge_points: EF = channel.sample_algebra_element();
 
-        // Reduce each opening's evaluations via Horner: (zⱼ, f_reduced(zⱼ)).
-        debug_assert_eq!(evals.num_points(), eval_points.len());
+        // Horner reduction: fold across all evals for each evaluation point
         let reduced_openings: Vec<(EF, EF)> = eval_points
             .iter()
             .enumerate()
-            .map(|(point_idx, &point)| {
-                let all_columns = evals.point(point_idx).iter_values();
-                (point, horner(challenge_columns, all_columns))
+            .map(|(p, &point)| {
+                let val = evals
+                    .iter()
+                    .flat_map(|g| g.iter())
+                    .fold(EF::ZERO, |acc, mat| {
+                        // mat has num_eval_points rows (one per z), p < num_eval_points.
+                        horner_acc(
+                            acc,
+                            challenge_columns,
+                            mat.row(p).expect("eval point index in range"),
+                        )
+                    });
+                (point, val)
             })
             .collect();
 

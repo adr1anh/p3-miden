@@ -42,7 +42,7 @@ where
     ///
     /// Composes [`DeepTranscript`], [`FriTranscript`], and per-query LMCS batch proofs.
     /// Does not verify any claims; validation happens in
-    /// [`verify_with_channel`](crate::verifier::verify_with_channel).
+    /// [`verify`](crate::verifier::verify).
     /// Commitment widths must match the committed rows (including any alignment padding),
     /// and all commitments are expected to be lifted to the same `log_lde_height`.
     ///

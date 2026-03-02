@@ -171,11 +171,10 @@ where
                     let row_idx = idx >> log_arity;
                     let position = idx & (arity - 1);
 
-                    // open_batch guarantees all requested indices are returned with
-                    // the correct widths.
-                    let flat_row: &[F] = opened_rows
+                    // FRI commits one matrix per round; iter_rows().next() yields it safely.
+                    let flat_row = opened_rows
                         .get(&row_idx)
-                        .and_then(|rows| rows.iter_rows().next()?.get(..base_width))
+                        .and_then(|rows| rows.iter_rows().next())
                         .ok_or(FriError::InvalidOpening {
                             tree_index: row_idx,
                             round: round_idx,

@@ -52,9 +52,8 @@ use core::marker::PhantomData;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::LiftedAir;
-use p3_miden_lifted_fri::verifier::{PcsError, verify_with_channel as verify_pcs_with_channel};
+use p3_miden_lifted_fri::verifier::{PcsError, verify_aligned};
 use p3_miden_lmcs::Lmcs;
-use p3_miden_lmcs::utils::aligned_widths;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use thiserror::Error;
 
@@ -172,7 +171,6 @@ where
     let has_aux = aux_widths.iter().any(|&w| w > 0);
 
     let log_blowup = config.pcs().fri.log_blowup;
-    let alignment = config.lmcs().alignment();
 
     // Infer constraint degree from symbolic AIR analysis (max across all AIRs)
     let constraint_degree = instances
@@ -182,7 +180,12 @@ where
         .unwrap_or(2);
 
     // Max trace height determines the LDE domain
-    let log_max_trace_height = instances.last().unwrap().1.log_trace_height;
+    // validate_instances rejects empty input, so last() is always Some.
+    let log_max_trace_height = instances
+        .last()
+        .expect("non-empty instances")
+        .1
+        .log_trace_height;
     let max_trace_height = 1usize << log_max_trace_height;
     let log_lde_height = log_max_trace_height + log_blowup;
 
@@ -230,27 +233,22 @@ where
         .collect();
     let quotient_widths: Vec<usize> = vec![constraint_degree * EF::DIMENSION];
 
-    // Build commitments with aligned widths for PCS verification.
+    // Build commitments with original (unpadded) widths.
+    // The PCS aligned wrapper handles alignment and truncation internally.
     let commitments = match aux_commit {
         Some(aux_commit) => vec![
-            (main_commit, aligned_widths(main_widths.clone(), alignment)),
-            (aux_commit, aligned_widths(aux_widths.clone(), alignment)),
-            (
-                quotient_commit,
-                aligned_widths(quotient_widths.clone(), alignment),
-            ),
+            (main_commit, main_widths),
+            (aux_commit, aux_widths),
+            (quotient_commit, quotient_widths),
         ],
         None => vec![
-            (main_commit, aligned_widths(main_widths.clone(), alignment)),
-            (
-                quotient_commit,
-                aligned_widths(quotient_widths.clone(), alignment),
-            ),
+            (main_commit, main_widths),
+            (quotient_commit, quotient_widths),
         ],
     };
 
-    // 8. Verify PCS openings
-    let evals = verify_pcs_with_channel::<F, EF, SC::Lmcs, _, 2>(
+    // 8. Verify PCS openings (returns per-matrix RowMajorMatrix<EF>, truncated to original widths)
+    let opened = verify_aligned::<F, EF, SC::Lmcs, _, 2>(
         config.pcs(),
         config.lmcs(),
         &commitments,
@@ -259,39 +257,39 @@ where
         channel,
     )?;
 
-    // 9. Split flat evals into one DeepEvals per commitment group: [main, aux?, quotient]
-    let group_sizes: Vec<usize> = commitments.iter().map(|(_, w)| w.len()).collect();
-    let group_evals = evals.split_by_groups(&group_sizes);
-    let main_evals = &group_evals[0];
-    let (aux_evals, quotient_evals) = if has_aux {
-        (Some(&group_evals[1]), &group_evals[2])
+    // Group indices for accessing opened matrices.
+    let (main_g, aux_g, quot_g) = if has_aux {
+        (0, Some(1), 2)
     } else {
-        (None, &group_evals[1])
+        (0, None, 1)
     };
 
     // 10. Per-AIR constraint evaluation and beta accumulation
+    //
+    // opened[g] has one matrix per AIR (for main/aux) or one matrix total (quotient).
+    // Each matrix has N=2 rows: row 0 = local (z), row 1 = next (z·h).
+    debug_assert_eq!(opened[main_g].len(), instances.len());
+    debug_assert!(aux_g.is_none_or(|g| opened[g].len() == instances.len()));
     let mut accumulated = EF::ZERO;
 
     for (j, (air, inst)) in instances.iter().enumerate() {
         let coset_j = LiftedCoset::new(inst.log_trace_height, log_blowup, log_max_trace_height);
 
-        // Extract main trace opened values, truncating alignment padding.
-        let main_width = air.width();
-        let main_local = &main_evals.point(0).row(j)[..main_width];
-        let main_next = &main_evals.point(1).row(j)[..main_width];
+        // opened[main_g][j] is a 2-row RowMajorMatrix (local, next) already truncated.
+        let main_pair = opened[main_g][j].clone();
 
-        // Extract aux trace opened values (reconstitute EF from base field components),
-        // truncating alignment padding.
+        // Extract aux trace opened values (reconstitute EF from base field components).
         let aux_ef_width = air.aux_width();
-        let (aux_local, aux_next) = match aux_evals {
-            Some(aux) => {
-                let bw = aux_ef_width * EF::DIMENSION;
-                let local = row_to_packed_ext::<F, EF>(&aux.point(0).row(j)[..bw])?;
-                let next = row_to_packed_ext::<F, EF>(&aux.point(1).row(j)[..bw])?;
+        let (aux_local, aux_next) = match aux_g {
+            Some(g) => {
+                let mut rows = opened[g][j].row_slices();
+                let local = row_to_packed_ext::<F, EF>(rows.next().expect("row 0 (local)"))?;
+                let next = row_to_packed_ext::<F, EF>(rows.next().expect("row 1 (next)"))?;
                 (local, next)
             }
             None => (vec![], vec![]),
         };
+        let aux_pair = RowMajorMatrix::new([aux_local, aux_next].concat(), aux_ef_width);
 
         // Selectors at the lifted OOD point yⱼ = z^{rⱼ} (encapsulated in LiftedCoset).
         let selectors = coset_j.selectors_at::<F, _>(z);
@@ -303,10 +301,6 @@ where
         let periodic_polys = PeriodicPolys::new(air.periodic_columns())
             .ok_or(VerifierError::InvalidPeriodicTable)?;
         let periodic_values = periodic_polys.eval_at::<EF>(max_trace_height, z);
-
-        // Build 2-row matrices for the folder (row 0 = local, row 1 = next)
-        let main_pair = RowMajorMatrix::new([main_local, main_next].concat(), main_width);
-        let aux_pair = RowMajorMatrix::new([aux_local, aux_next].concat(), aux_ef_width);
 
         let num_rand = air.num_randomness();
         let mut folder = ConstraintFolder {
@@ -328,8 +322,9 @@ where
     }
 
     // 11. Reconstruct Q(z) and check quotient identity Q(z) * Z_{H_max}(z)
-    let qw = constraint_degree * EF::DIMENSION;
-    let quotient_chunks = row_to_packed_ext::<F, EF>(&quotient_evals.point(0).row(0)[..qw])?;
+    // Quotient group has a single matrix; row 0 is the evaluation at z.
+    let mut quot_rows = opened[quot_g][0].row_slices();
+    let quotient_chunks = row_to_packed_ext::<F, EF>(quot_rows.next().expect("quotient row 0"))?;
     let quotient_z = reconstruct_quotient::<F, EF>(z, &max_lde_coset, &quotient_chunks);
 
     let vanishing = max_lde_coset.vanishing_at::<F, _>(z);

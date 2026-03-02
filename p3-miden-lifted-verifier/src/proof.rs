@@ -7,7 +7,7 @@
 //!
 //! This is a parse-only view that exists alongside [`verify_multi`](crate::verify_multi),
 //! following the same pattern as [`PcsTranscript`] alongside
-//! [`verify_with_channel`](p3_miden_lifted_fri::verifier::verify_with_channel).
+//! [`verify`](p3_miden_lifted_fri::verifier::verify).
 
 extern crate alloc;
 
