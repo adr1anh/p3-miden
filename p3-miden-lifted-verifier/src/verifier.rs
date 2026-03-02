@@ -49,7 +49,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::LiftedAir;
@@ -59,7 +58,9 @@ use p3_miden_lmcs::utils::aligned_widths;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use thiserror::Error;
 
-use p3_miden_lifted_stark::{AirInstance, LiftedCoset, StarkConfig, ValidationError};
+use p3_miden_lifted_stark::{
+    AirInstance, LiftedCoset, StarkConfig, ValidationError, sample_ood_point,
+};
 
 use crate::constraints::{ConstraintFolder, reconstruct_quotient, row_to_packed_ext};
 use crate::periodic::PeriodicPolys;
@@ -114,9 +115,7 @@ where
     EF: ExtensionField<F>,
     SC: StarkConfig<F, EF>,
     A: LiftedAir<F, EF>,
-    Ch: VerifierChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>
-        + CanSample<F>
-        + CanSampleBits<usize>,
+    Ch: VerifierChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>,
 {
     let instance = AirInstance::new(log_trace_height, public_values);
     verify_multi(config, &[(air, instance)], channel)
@@ -161,9 +160,7 @@ where
     EF: ExtensionField<F>,
     SC: StarkConfig<F, EF>,
     A: LiftedAir<F, EF>,
-    Ch: VerifierChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>
-        + CanSample<F>
-        + CanSampleBits<usize>,
+    Ch: VerifierChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>,
 {
     let air_instances: Vec<_> = instances.iter().map(|(_, inst)| *inst).collect();
     p3_miden_lifted_stark::validate_instances(&air_instances)?;
@@ -221,14 +218,7 @@ where
     let quotient_commit = channel.receive_commitment()?.clone();
 
     // 6. Sample OOD point (outside max trace domain H and max LDE coset gK)
-    let z: EF = loop {
-        let candidate: EF = channel.sample_algebra_element::<EF>();
-        if !max_lde_coset.is_in_trace_domain::<F, _>(candidate)
-            && !max_lde_coset.is_in_lde_coset::<F, _>(candidate)
-        {
-            break candidate;
-        }
-    };
+    let z: EF = sample_ood_point(channel, &max_lde_coset);
     let h = F::two_adic_generator(log_max_trace_height);
     let z_next = z * h;
 

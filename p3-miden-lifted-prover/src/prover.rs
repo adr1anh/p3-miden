@@ -125,7 +125,6 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{Algebra, BasedVectorSpace, ExtensionField, Field, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -137,7 +136,9 @@ use p3_util::log2_strict_usize;
 use thiserror::Error;
 use tracing::{info_span, instrument};
 
-use p3_miden_lifted_stark::{AirWitness, LiftedCoset, StarkConfig, ValidationError};
+use p3_miden_lifted_stark::{
+    AirWitness, LiftedCoset, StarkConfig, ValidationError, sample_ood_point,
+};
 
 use crate::commit::commit_traces;
 use crate::constraints::evaluate_constraints_into;
@@ -183,9 +184,7 @@ where
     EF: ExtensionField<F>,
     SC: StarkConfig<F, EF>,
     A: LiftedAir<F, EF>,
-    Ch: ProverChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>
-        + CanSample<F>
-        + CanSampleBits<usize>,
+    Ch: ProverChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>,
     SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     let witness = AirWitness::new(trace, public_values);
@@ -232,9 +231,7 @@ where
     EF: ExtensionField<F>,
     SC: StarkConfig<F, EF>,
     A: LiftedAir<F, EF>,
-    Ch: ProverChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>
-        + CanSample<F>
-        + CanSampleBits<usize>,
+    Ch: ProverChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>,
     SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     validate_inputs(instances)?;
@@ -411,14 +408,7 @@ where
     channel.send_commitment(quotient_committed.root());
 
     // 8. Sample OOD point (outside H and gK)
-    let z: EF = loop {
-        let candidate: EF = channel.sample_algebra_element::<EF>();
-        if !max_lde_coset.is_in_trace_domain::<F, _>(candidate)
-            && !max_lde_coset.is_in_lde_coset::<F, _>(candidate)
-        {
-            break candidate;
-        }
-    };
+    let z: EF = sample_ood_point(channel, &max_lde_coset);
     let h = F::two_adic_generator(log_max_trace_height);
     let z_next = z * h;
 
