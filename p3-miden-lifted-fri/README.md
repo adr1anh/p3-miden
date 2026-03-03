@@ -20,7 +20,7 @@ This PCS is used by the lifted STARK prover/verifier crates in this workspace.
 - **Proves/verifies** that the DEEP quotient is low degree via (batched) FRI.
 
 The implementation is generic over `N`. The common STARK instantiation uses
-`N = 2` (an out-of-domain point `zeta` and `zeta_next = zeta * omega_H`).
+`N = 2` (an out-of-domain point `z` and `z_next = z * omega_H`).
 
 ## Math Sketch
 
@@ -135,7 +135,7 @@ FRI round commitments commit a *single* matrix per round and therefore use
 | Path | Purpose |
 |------|---------|
 | `p3-miden-lifted-fri/src/prover.rs` | `open_with_channel` (prover) |
-| `p3-miden-lifted-fri/src/verifier.rs` | `verify_with_channel` / `verify_with_channel_strict` (verifier) |
+| `p3-miden-lifted-fri/src/verifier.rs` | `verify` / `verify_strict` / `verify_aligned` (verifier) |
 | `p3-miden-lifted-fri/src/params.rs` | `PcsParams` |
 | `p3-miden-lifted-fri/src/proof.rs` | `PcsTranscript` (export/debug view) |
 

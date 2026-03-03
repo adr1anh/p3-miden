@@ -1,7 +1,6 @@
 //! Transcript data container for external transport.
 
 use alloc::vec::Vec;
-
 use serde::{Deserialize, Serialize};
 
 /// Raw transcript data captured by a prover and replayed by a verifier.
@@ -40,5 +39,10 @@ impl<F, C> TranscriptData<F, C> {
     /// Consume and return the underlying vectors.
     pub fn into_parts(self) -> (Vec<F>, Vec<C>) {
         (self.fields, self.commitments)
+    }
+
+    /// Returns the total byte size of the recorded transcript data.
+    pub fn size_in_bytes(&self) -> usize {
+        size_of_val(self.fields.as_slice()) + size_of_val(self.commitments.as_slice())
     }
 }

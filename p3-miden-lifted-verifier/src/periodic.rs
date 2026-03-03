@@ -45,13 +45,21 @@ impl<F: TwoAdicField> PeriodicPolys<F> {
 
     /// Evaluate all periodic polynomials at the OOD point.
     ///
-    /// For a column with period `p`, evaluates at `zeta^(trace_height / p)`.
+    /// For a column with period `p`, evaluates at `z^(trace_height / p)`.
     /// Uses Horner's method for efficient polynomial evaluation.
     ///
     /// # Arguments
     /// - `trace_height`: Height of the trace
-    /// - `zeta`: The OOD evaluation point
-    pub fn eval_at<EF>(&self, trace_height: usize, zeta: EF) -> Vec<EF>
+    /// - `z`: The OOD evaluation point
+    ///
+    /// The evaluation point is `z^{n/p}` rather than `z` directly. A periodic
+    /// column with period p is a polynomial P(X) of degree < p defined on the subgroup of
+    /// order p. At trace row i, the value is P(ωₙⁱ) = P(ωₚ^{i mod p}).
+    /// Since ωₙ^{n/p} = ωₚ, the map X → X^{n/p} collapses the trace domain H
+    /// (order n) onto the periodic subgroup (order p). So evaluating P at z^{n/p} gives
+    /// the same result as evaluating the periodic extension of P at z on the full trace
+    /// domain.
+    pub fn eval_at<EF>(&self, trace_height: usize, z: EF) -> Vec<EF>
     where
         EF: ExtensionField<F>,
     {
@@ -59,7 +67,7 @@ impl<F: TwoAdicField> PeriodicPolys<F> {
 
         for coeffs in &self.polys {
             let period = coeffs.len();
-            let y = zeta.exp_u64((trace_height / period) as u64);
+            let y = z.exp_u64((trace_height / period) as u64);
             result.push(horner_eval(coeffs, y));
         }
 

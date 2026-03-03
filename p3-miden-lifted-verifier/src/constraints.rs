@@ -2,7 +2,7 @@
 //!
 //! This module provides:
 //! - [`ConstraintFolder`]: Minimal EF-only folder for verifier constraint evaluation
-//! - [`reconstruct_quotient`]: Reconstructs Q(ζ) from quotient chunk evaluations
+//! - [`reconstruct_quotient`]: Reconstructs Q(z) from quotient chunk evaluations
 //! - [`row_to_packed_ext`]: Reconstitutes EF elements from opened base field evaluations
 
 use alloc::vec::Vec;
@@ -24,9 +24,18 @@ use crate::VerifierError;
 
 /// Minimal constraint folder for verifier OOD evaluation.
 ///
-/// Implements [`MidenAirBuilder`] for evaluating AIR constraints at out-of-domain
-/// points. Uses extension field throughout since the verifier only evaluates at
-/// a single EF point (ζ).
+/// Implements the AIR builder traits needed to evaluate constraints at an out-of-domain
+/// point. Uses the extension field throughout since the verifier only evaluates at a
+/// single EF point (z).
+///
+/// The verifier folds constraints on the fly using Horner:
+///
+/// acc = acc·α + Cₖ(z).
+///
+/// This matches the prover's random linear combination
+/// `Σₖ α^{K−1−k}·Cₖ(z)`, but is cheaper for a single-point evaluation.
+/// The prover computes an equivalent fold over the whole quotient domain, optimized
+/// with base-field SIMD where possible.
 #[derive(Clone, Debug)]
 pub struct ConstraintFolder<'a, F, EF>
 where
@@ -36,7 +45,7 @@ where
     pub main: RowMajorMatrix<EF>,
     pub aux: RowMajorMatrix<EF>,
     pub randomness: &'a [EF],
-    pub public_values: &'a [EF],
+    pub public_values: &'a [F],
     pub periodic_values: &'a [EF],
     pub selectors: Selectors<EF>,
     pub alpha: EF,
@@ -53,7 +62,7 @@ where
     type Expr = EF;
     type Var = EF;
     type M = RowMajorMatrix<EF>;
-    type PublicVar = EF;
+    type PublicVar = F;
 
     fn main(&self) -> Self::M {
         self.main.clone()
@@ -145,19 +154,29 @@ where
 // Quotient Reconstruction
 // ============================================================================
 
-/// Reconstruct Q(ζ) from D quotient chunk evaluations using barycentric interpolation.
+/// Reconstruct `Q(z)` from `D` quotient chunk evaluations.
 ///
-/// The quotient Q is decomposed into D chunks q_0, ..., q_{D-1} where each q_t
-/// interpolates Q on the coset g·ω_J^t·H.
+/// The quotient `Q` is committed as `D` chunk polynomials qₜ of degree `< N`, one for
+/// each `H`-coset inside `J`:
 ///
-/// Let ω_S = ω_J^N (the D-th root of unity) and u = (ζ/g)^N.
-/// For t = 0..D−1 define:
-///   a_t = u − ω_S^t
-///   w_t = ω_S^t / a_t
+/// qₜ agrees with `Q` on the coset `g·ω_Jᵗ·H`.
 ///
-/// The reconstruction formula is:
-///   Q(ζ) = (Σ_t w_t · q_t(ζ)) / (Σ_t w_t)
-pub fn reconstruct_quotient<F, EF>(zeta: EF, coset: &LiftedCoset, chunks: &[EF]) -> EF
+/// During verification we open all qₜ(z) at the same OOD point `z` and need to
+/// recombine them into `Q(z)`.
+///
+/// The key observation is that the map `x → xᴺ` collapses each coset
+/// `g·ω_Jᵗ·H` to a single `D`-th root of unity. Let
+/// - ωₛ = ω_Jᴺ (a `D`-th root of unity),
+/// - u = (z/s)ᴺ where s = coset.lde_shift().
+///
+/// Then `Q(z)` is the barycentric interpolation of the values qₜ(z) at the points
+/// ωₛᵗ:
+///
+/// ```text
+/// wₜ = ωₛᵗ / (u − ωₛᵗ)
+/// Q(z) = (Σₜ wₜ·qₜ(z)) / (Σₜ wₜ)
+/// ```
+pub fn reconstruct_quotient<F, EF>(z: EF, coset: &LiftedCoset, chunks: &[EF]) -> EF
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
@@ -166,17 +185,17 @@ where
     let shift: F = coset.lde_shift();
     let omega_s = F::two_adic_generator(log_d);
 
-    // u = (ζ/g)^N — single EF exponentiation
-    let u = (zeta * shift.inverse()).exp_power_of_2(coset.log_trace_height);
+    // u = (z/s)ᴺ where s = lde_shift
+    let u = (z * shift.inverse()).exp_power_of_2(coset.log_trace_height);
 
-    // Compute weighted sum: Σ_t w_t · q_t(ζ) and Σ_t w_t
+    // Compute weighted sum: Σₜ wₜ·qₜ(z) and Σₜ wₜ
     let mut numerator = EF::ZERO;
     let mut denominator = EF::ZERO;
-    let mut omega_s_t = F::ONE;
+    let mut omega_s_t = F::ONE; // ωₛᵗ
 
     for &q_t in chunks.iter() {
-        let a_t = u - omega_s_t;
-        let w_t = a_t.inverse() * omega_s_t;
+        let a_t = u - omega_s_t; // aₜ = u − ωₛᵗ
+        let w_t = a_t.inverse() * omega_s_t; // wₜ = ωₛᵗ / aₜ
 
         numerator += w_t * q_t;
         denominator += w_t;
@@ -191,7 +210,11 @@ where
 ///
 /// When an EF polynomial is committed, it becomes DIM base field polynomials.
 /// Opening at EF point z gives DIM EF values (F-polys evaluated at EF point).
-/// Reconstruct each EF element: ef_i = Σ_j basis_j * row[i*DIM + j]
+/// Reconstruct each EF element: `vᵢ = Σⱼ basisⱼ·row[i·DIM + j]`.
+///
+/// An EF element `v = Σⱼ cⱼ·basisⱼ` is committed as DIM base field polynomials pⱼ
+/// (one per basis coordinate cⱼ). Opening at `z` returns the DIM values pⱼ(z), and we
+/// recover the original EF value as `v(z) = Σⱼ basisⱼ·pⱼ(z)`.
 pub fn row_to_packed_ext<F, EF>(row: &[EF]) -> Result<Vec<EF>, VerifierError>
 where
     F: TwoAdicField,

@@ -574,7 +574,7 @@ where
         // for this sample is tightly tied to the soundness error of the FRI protocol.
         // Roughly speaking, at a minimum is it k/|EF| where `k` is the sum of, for each function, the number of
         // points it needs to be opened at. This comes from the fact that we are taking a large linear combination
-        // of `(f(zeta) - f(x))/(zeta - x)` for each function `f` and all of `f`'s opening points.
+        // of `(f(z) - f(x))/(z - x)` for each function `f` and all of `f`'s opening points.
         // In our setup, k is two times the trace width plus the number of quotient polynomials.
         let alpha: Challenge = challenger.sample_algebra_element();
 
@@ -592,9 +592,9 @@ where
         // Now that we have sent the openings to the verifier, it remains to prove
         // that those openings are correct.
 
-        // Given a low degree polynomial `f(x)` with claimed evaluation `f(zeta)`, we can check
-        // that `f(zeta)` is correct by doing a low degree test on `(f(zeta) - f(x))/(zeta - x)`.
-        // We will use `alpha` to batch together both different claimed openings `zeta` and
+        // Given a low degree polynomial `f(x)` with claimed evaluation `f(z)`, we can check
+        // that `f(z)` is correct by doing a low degree test on `(f(z) - f(x))/(z - x)`.
+        // We will use `alpha` to batch together both different claimed openings `z` and
         // different polynomials `f` whose evaluation vectors have the same height.
 
         // TODO: If we allow different polynomials to have different blow_up factors
@@ -606,8 +606,8 @@ where
 
         // For each `log_height` from 2^1 -> 2^32, reduced_openings will contain either `None`
         // if there are no matrices of that height, or `Some(vec)` where `vec` is equal to
-        // a weighted sum of `(f(zeta) - f(x))/(zeta - x)` over all `f`'s of that height and
-        // for each `f`, all opening points `zeta`. The sum is weighted by powers of the challenge alpha.
+        // a weighted sum of `(f(z) - f(x))/(z - x)` over all `f`'s of that height and
+        // for each `f`, all opening points `z`. The sum is weighted by powers of the challenge alpha.
         let mut reduced_openings: [_; 32] = core::array::from_fn(|_| None);
 
         for ((mats, points), openings_for_round) in

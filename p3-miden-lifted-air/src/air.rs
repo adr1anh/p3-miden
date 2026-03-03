@@ -47,6 +47,26 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
     ///
     /// Uses `SymbolicAirBuilder<F, F>` (base field only) which is sufficient for degree
     /// computation since extension-field operations have the same degree structure.
+    ///
+    /// # Why `M − 1` chunks?
+    ///
+    /// Let N be the trace height (so trace columns are polynomials of degree < N).
+    /// Symbolic evaluation assigns each constraint a *degree multiple* M, meaning the
+    /// resulting numerator polynomial C(X) has degree bounded by roughly M·(N − 1).
+    ///
+    /// In a STARK, the constraint numerator is divisible by the trace vanishing
+    /// polynomial `Z_H(X) = Xᴺ − 1`, so the quotient polynomial
+    /// `Q(X) = C(X) / Z_H(X)` has
+    ///
+    /// `deg(Q) ≤ deg(C) − N ≤ M·(N − 1) − N < (M − 1)·N`.
+    ///
+    /// We commit to Q(X) by splitting it into D chunks of degree < N. The bound above
+    /// shows that D = M − 1 chunks suffice; we then round D up to a power of two and
+    /// return `log2(D)`.
+    ///
+    /// We clamp M ≥ 2 so that D ≥ 1. If M = 1 then `deg(C) < N`, and divisibility by
+    /// `Z_H` would force C(X) to be the zero polynomial (i.e. the constraint carries no
+    /// information about the trace).
     fn log_quotient_degree(&self) -> usize
     where
         Self: Sized,

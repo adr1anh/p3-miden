@@ -67,6 +67,14 @@ where
     }
 }
 
+impl<F, const D: usize> Algebra<SymbolicExpression<F>>
+    for SymbolicExpression<BinomialExtensionField<F, D>>
+where
+    F: Field,
+    BinomialExtensionField<F, D>: ExtensionField<F>,
+{
+}
+
 /// A symbolic expression tree representing AIR constraint computations over [`SymbolicVariable`]s.
 ///
 /// This enum forms an Abstract Syntax Tree (AST) for constraint expressions.
@@ -85,14 +93,14 @@ pub enum SymbolicExpression<F> {
     /// - 1 on the first row,
     /// - 0 elsewhere.
     ///
-    /// Evaluates to `L_0(x)`, the Lagrange basis polynomial for index 0.
+    /// Evaluates to L₀(x), the Lagrange basis polynomial for index 0.
     IsFirstRow,
 
     /// Selector that is:
     /// - 1 on the last row,
     /// - 0 elsewhere.
     ///
-    /// Evaluates to `L_{n-1}(x)`, the Lagrange basis polynomial for the last index.
+    /// Evaluates to Lₙ₋₁(x), the Lagrange basis polynomial for the last index.
     IsLastRow,
 
     /// Selector that is:

@@ -3,7 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_field::{ExtensionField, Field};
+use p3_field::{Algebra, ExtensionField, Field};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use tracing::instrument;
@@ -180,7 +180,7 @@ enum ConstraintType {
 
 /// Maps between global constraint indices and the separated base/ext streams.
 ///
-/// When alpha powers are pre-computed in global order `[alpha^(N-1), ..., alpha^0]`,
+/// When alpha powers are pre-computed in global order `[α^{N−1}, …, α⁰]`,
 /// the layout tells us which powers correspond to base-field constraints (for
 /// `packed_linear_combination`) and which to extension-field constraints.
 #[derive(Debug, Default)]
@@ -197,20 +197,34 @@ impl ConstraintLayout {
         self.base_indices.len() + self.ext_indices.len()
     }
 
-    /// Decompose `alpha` into reordered powers for base and extension constraints.
+    /// Decompose `α` into reordered powers for base and extension constraints.
     ///
     /// Returns `(base_alpha_powers, ext_alpha_powers)` where:
     /// - `base_alpha_powers[d][j]` = d-th basis coefficient of the alpha power for
     ///   the j-th base constraint (transposed + reordered for `packed_linear_combination`)
     /// - `ext_alpha_powers[j]` = full EF alpha power for the j-th extension constraint
+    ///
+    /// Constraints are emitted in one global order and folded into a single random
+    /// linear combination using powers of `α`:
+    ///
+    /// `C_fold(X) = Σ_{i=0..K−1} α^{K−1−i} · Cᵢ(X)`.
+    ///
+    /// We use descending powers because the verifier evaluates the fold at a single
+    /// point via Horner (streaming): `acc = acc·α + Cᵢ`.
+    ///
+    /// The prover accumulates base-field constraints with packed (SIMD) arithmetic for
+    /// throughput, while extension constraints must stay in the extension field. This
+    /// method splits the precomputed powers accordingly, and also transposes EF powers
+    /// into their base-field coordinates so the base-field path can use
+    /// `packed_linear_combination` without repeated cross-field conversions.
     pub fn decompose_alpha<F: Field, EF: ExtensionField<F>>(
         &self,
         alpha: EF,
     ) -> (Vec<Vec<F>>, Vec<EF>) {
         let total = self.total_constraints();
 
-        // alpha_powers[i] = alpha^(total - 1 - i), so constraint i gets
-        // weight alpha^(total - 1 - i) in the linear combination.
+        // alpha_powers[i] = α^{total − 1 − i}, so constraint i gets
+        // weight α^{total − 1 − i} in the linear combination.
         let mut alpha_powers: Vec<EF> = alpha.powers().take(total).collect();
         alpha_powers.reverse();
 
@@ -250,7 +264,7 @@ where
     F: Field,
     EF: ExtensionField<F>,
     A: LiftedAir<F, EF>,
-    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
+    SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     let preprocessed_width = air.preprocessed_trace().map_or(0, |t| t.width());
     let mut builder = SymbolicAirBuilder::<F, EF>::new(
@@ -408,7 +422,7 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
 
 impl<F: Field, EF: ExtensionField<F>> ExtensionBuilder for SymbolicAirBuilder<F, EF>
 where
-    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
+    SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     type EF = EF;
     type ExprEF = SymbolicExpression<EF>;
@@ -425,7 +439,7 @@ where
 
 impl<F: Field, EF: ExtensionField<F>> PermutationAirBuilder for SymbolicAirBuilder<F, EF>
 where
-    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
+    SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     type MP = RowMajorMatrix<Self::VarEF>;
 
@@ -449,7 +463,7 @@ impl<F: Field, EF: ExtensionField<F>> PeriodicAirBuilder for SymbolicAirBuilder<
 }
 
 impl<F: Field, EF: ExtensionField<F>> LiftedAirBuilder for SymbolicAirBuilder<F, EF> where
-    SymbolicExpression<EF>: From<SymbolicExpression<F>>
+    SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>
 {
 }
 

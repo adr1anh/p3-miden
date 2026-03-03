@@ -53,7 +53,7 @@ fn get_ldt_for_testing<R: Rng>(
 /// We create a random polynomial of size `1 << log_size` for each size in `polynomial_log_sizes`.
 /// We then commit to these polynomials using a `log_blowup` of `1`.
 ///
-/// We open each polynomial at the same point `zeta` and run FRI to verify the openings, stopping
+/// We open each polynomial at the same point `z` and run FRI to verify the openings, stopping
 /// FRI at `log_final_poly_len`.
 fn do_test_fri_ldt<R: Rng>(
     rng: &mut R,
@@ -102,14 +102,14 @@ fn do_test_fri_ldt<R: Rng>(
         // Observe the commitment.
         challenger.observe(commitment.clone());
 
-        // Sample the challenge point zeta which all polynomials
+        // Sample the challenge point z which all polynomials
         // will be opened at.
-        let zeta: Challenge = challenger.sample_algebra_element();
+        let z: Challenge = challenger.sample_algebra_element();
 
         // Prepare the data into the form expected by `pcs.open`.
-        let open_data = vec![(&prover_data, vec![vec![zeta]; num_evaluations])]; // open every chunk at zeta
+        let open_data = vec![(&prover_data, vec![vec![z]; num_evaluations])]; // open every chunk at z
 
-        // Open all polynomials at zeta and produce the opening proof.
+        // Open all polynomials at z and produce the opening proof.
         let (opened_values, opening_proof) = pcs.open(open_data, &mut challenger);
 
         // Return the commitment, opened values, opening proof and challenger.
@@ -129,7 +129,7 @@ fn do_test_fri_ldt<R: Rng>(
         challenger.observe(commitment.clone());
 
         // Sample the opening point.
-        let zeta = challenger.sample_algebra_element();
+        let z = challenger.sample_algebra_element();
 
         // Construct the expected initial polynomial domains.
         // Right now it doesn't matter what these are so long as the size
@@ -146,7 +146,7 @@ fn do_test_fri_ldt<R: Rng>(
             domains
                 .into_iter()
                 .zip(opened_values.into_iter().flatten().flatten())
-                .map(|(domain, value)| (domain, vec![(zeta, value)]))
+                .map(|(domain, value)| (domain, vec![(z, value)]))
                 .collect(),
         )];
 

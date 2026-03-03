@@ -21,6 +21,14 @@ pub use verifier::FriError;
 /// FRI protocol parameters.
 ///
 /// Controls the trade-off between proof size, prover time, and verifier time.
+///
+/// Higher `log_blowup` increases soundness per query (fewer queries needed) but introduces
+/// larger Merkle trees — increasing both proof size (longer authentication paths) and prover time
+/// (LDE over a larger domain). Higher arity reduces the number of FRI rounds (fewer Merkle
+/// tree commitments) but increases per-query proof size (each opening reveals `arity`
+/// siblings). `log_final_degree` reduces the number of rounds and therefore the number of
+/// Merkle commitments; if too large, the final polynomial's coefficients dominate the proof
+/// size.
 #[derive(Clone, Copy, Debug)]
 pub struct FriParams {
     /// Log₂ of the blowup factor (LDE domain size / polynomial degree).

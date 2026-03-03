@@ -1,8 +1,6 @@
 //! The `LiftedAirBuilder` super-trait for constraint evaluation builders.
 
-use p3_air::{AirBuilder, ExtensionBuilder, PermutationAirBuilder};
-
-use crate::PeriodicAirBuilder;
+use crate::{AirBuilder, ExtensionBuilder, PeriodicAirBuilder, PermutationAirBuilder};
 
 /// Super-trait bundling all builder capabilities needed by the lifted STARK system.
 ///

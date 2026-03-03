@@ -64,6 +64,15 @@ impl FriFold {
     ///
     /// The slice must have exactly `arity()` elements.
     /// Used by the verifier in scalar mode.
+    ///
+    /// Folding is the core FRI step: it turns `arity` evaluations of `f` on a coset
+    /// `s·⟨ω⟩` into a single evaluation of a new polynomial `g` on the folded domain.
+    ///
+    /// Conceptually, write `f(X)` as `Σⱼ Xʲ·fⱼ(X^arity)`. The fold interpolates the
+    /// `fⱼ` values from the row (an iFFT on the coset) and then takes a random linear
+    /// combination with challenge `β` to obtain `g(s^arity)`. The resulting `g` has
+    /// degree reduced by a factor of `arity`. If `deg(f) < arity`, folding recovers
+    /// `f(β)` exactly.
     #[inline]
     pub fn fold_evals<F: TwoAdicField, EF: ExtensionField<F>>(
         &self,

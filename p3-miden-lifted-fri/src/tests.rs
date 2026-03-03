@@ -18,7 +18,7 @@ use rand::{Rng, RngExt, SeedableRng};
 
 use crate::deep::DeepParams;
 use crate::fri::{FriFold, FriParams};
-use crate::{PcsParams, prover::open_with_channel, verifier::verify_with_channel};
+use crate::{PcsParams, prover::open_with_channel, verifier::verify_aligned};
 
 pub use p3_miden_dev_utils::configs::baby_bear_poseidon2::*;
 pub use p3_miden_dev_utils::matrix::random_lde_matrix;
@@ -98,7 +98,14 @@ fn run_pcs_case(params: &PcsParams, trees: Vec<TestTree>, seed: u64) -> Result<(
     let log_lde_height = log2_strict_usize(lde_height);
     let eval_points: [EF; 2] = [rng.sample(StandardUniform), rng.sample(StandardUniform)];
 
-    let commitments: Vec<_> = trees.iter().map(|t| (t.root(), t.widths())).collect();
+    let commitments: Vec<_> = trees
+        .iter()
+        .map(|t| {
+            // get the true matrix widths
+            let widths = t.leaves().iter().map(|m| m.width()).collect();
+            (t.root(), widths)
+        })
+        .collect();
     let trace_trees: Vec<&_> = trees.iter().collect();
 
     // Prover: observe all commitments before opening.
@@ -125,7 +132,7 @@ fn run_pcs_case(params: &PcsParams, trees: Vec<TestTree>, seed: u64) -> Result<(
     }
     let mut verifier_channel = VerifierTranscript::from_data(challenger, &transcript);
 
-    let result = verify_with_channel::<F, EF, _, _, 2>(
+    let result = verify_aligned::<F, EF, _, _, 2>(
         params,
         &lmcs,
         &commitments,

@@ -56,7 +56,7 @@ These are requirements on *applications* composing these crates.
   prover and verifier.
 - You MUST enforce transcript boundaries / canonicality at the protocol boundary.
   The lifted STARK verifier rejects trailing data; if you compose the PCS
-  separately, use `verify_with_channel_strict` or check `channel.is_empty()` at
+  separately, use `verify_strict` or check `channel.is_empty()` at
   the outer layer.
 - You MUST cap proof sizes / transcript lengths when deserializing from bytes.
   These libraries operate on already-deserialized streams and do not enforce
@@ -99,11 +99,11 @@ transcript data.
 
 The PCS verifier (`p3-miden-lifted-fri`) provides both:
 
-- `verify_with_channel` (does not require transcript exhaustion; intended for
-  composition), and
-- `verify_with_channel_strict` (rejects trailing data).
+- `verify` (does not require transcript exhaustion; intended for composition),
+- `verify_strict` (rejects trailing data), and
+- `verify_aligned` (handles LMCS alignment; does not check transcript exhaustion).
 
-If you use `verify_with_channel` directly, you must define transcript boundaries
+If you use `verify` or `verify_aligned` directly, you must define transcript boundaries
 at the outer protocol layer.
 
 ## Composition Rules
@@ -116,7 +116,7 @@ at the outer protocol layer.
 ## What To Review First (Suggested Order)
 
 1. `p3-miden-lifted-verifier/src/verifier.rs` (`verify_multi`)
-2. `p3-miden-lifted-fri/src/verifier.rs` (`verify_with_channel`)
+2. `p3-miden-lifted-fri/src/verifier.rs` (`verify`)
 3. `p3-miden-lmcs/src/lmcs.rs` (`LmcsConfig::open_batch`)
 4. `p3-miden-lifted-fri/src/deep/verifier.rs` (DEEP reduction + quotient eval)
 5. `p3-miden-lifted-fri/src/fri/verifier.rs` (FRI round loop)
@@ -162,7 +162,7 @@ at the outer protocol layer.
 ### Lifted STARK (`p3-miden-lifted-{prover,verifier}`)
 
 - [ ] Instances are provided in ascending height order; heights are powers of two.
-- [ ] The verifier's OOD evaluation point projection `y_j = zeta^{r_j}` matches
+- [ ] The verifier's OOD evaluation point projection `y_j = z^{r_j}` matches
       the prover's lifted commitment domains.
 - [ ] Quotient chunk reconstruction (`reconstruct_quotient`) matches the prover's
       quotient decomposition.
@@ -215,8 +215,8 @@ Lifting is the map `f(X) -> f(X^r)`.
 
 - LMCS upsampling in bit-reversed order corresponds to evaluating the lifted
   polynomial on the max domain.
-- Openings at a global point `zeta` implicitly provide openings at projected
-  points `y_j = zeta^{r_j}` for each smaller trace.
+- Openings at a global point `z` implicitly provide openings at projected
+  points `y_j = z^{r_j}` for each smaller trace.
 
 The lifted STARK verifier evaluates each AIR instance at its projected point.
 If the AIR is *liftable* (roughly: it does not depend on wrap-around "next row"

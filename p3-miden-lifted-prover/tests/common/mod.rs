@@ -1,22 +1,22 @@
 #![allow(dead_code)]
 
-use p3_dft::Radix2DitParallel;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_air::LiftedAir;
 use p3_miden_lifted_fri::PcsParams;
 use p3_miden_lifted_fri::deep::DeepParams;
 use p3_miden_lifted_fri::fri::{FriFold, FriParams};
-use p3_miden_lifted_prover::AirWitness;
-use p3_miden_lifted_verifier::{StarkConfig, verify_multi};
+use p3_miden_lifted_prover::{AirWitness, GenericStarkConfig};
+use p3_miden_lifted_verifier::verify_multi;
 use p3_miden_lmcs::LmcsConfig;
 use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
 
 pub type TestLmcs =
     LmcsConfig<bb::P, bb::P, bb::Sponge, bb::Compress, { bb::WIDTH }, { bb::DIGEST }>;
-pub type TestDft = Radix2DitParallel<bb::F>;
+pub type TestDft = p3_dft::Radix2DitParallel<bb::F>;
+pub type TestConfig = GenericStarkConfig<bb::F, bb::EF, TestLmcs, TestDft, bb::Challenger>;
 
-pub fn test_config() -> StarkConfig<TestLmcs, TestDft> {
+pub fn test_config() -> TestConfig {
     let pcs = PcsParams {
         fri: FriParams {
             log_blowup: 2,
@@ -33,7 +33,7 @@ pub fn test_config() -> StarkConfig<TestLmcs, TestDft> {
     let lmcs: TestLmcs = LmcsConfig::new(sponge, compress);
     let dft = TestDft::default();
 
-    StarkConfig { pcs, lmcs, dft }
+    GenericStarkConfig::new(pcs, lmcs, dft, bb::test_challenger())
 }
 
 /// Prove and verify multiple traces, each with its own public values.
@@ -51,12 +51,8 @@ pub fn prove_and_verify<A: LiftedAir<bb::F, bb::EF>>(
         .collect();
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-    p3_miden_lifted_prover::prove_multi::<bb::F, bb::EF, _, _, _, _>(
-        &config,
-        &prover_instances,
-        &mut prover_channel,
-    )
-    .expect("proving should succeed");
+    p3_miden_lifted_prover::prove_multi(&config, &prover_instances, &mut prover_channel)
+        .expect("proving should succeed");
     let transcript = prover_channel.into_data();
 
     let verifier_instances: Vec<_> = prover_instances
@@ -65,6 +61,6 @@ pub fn prove_and_verify<A: LiftedAir<bb::F, bb::EF>>(
         .collect();
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    verify_multi::<bb::F, bb::EF, _, _, _, _>(&config, &verifier_instances, &mut verifier_channel)
+    verify_multi(&config, &verifier_instances, &mut verifier_channel)
         .expect("verification should succeed");
 }

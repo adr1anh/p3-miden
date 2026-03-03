@@ -4,7 +4,6 @@ use core::iter::zip;
 use super::DeepParams;
 use super::interpolate::PointQuotients;
 use crate::utils::{PackedFieldExtensionExt, horner};
-use p3_challenger::CanSample;
 use p3_field::{
     ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue, TwoAdicField,
 };
@@ -21,6 +20,20 @@ use crate::utils::bit_reversed_coset_points;
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
 /// Combines all polynomial evaluation claims into a single low-degree polynomial.
+///
+/// Intuition: DEEP turns many separate opening claims into a single polynomial identity.
+///
+/// After reducing all opened columns with a random `α` into one polynomial `f_red(X)`,
+/// DEEP defines
+///
+/// ```text
+/// Q(X) = Σⱼ βʲ · (f_red(zⱼ) − f_red(X)) / (zⱼ − X)
+/// ```
+///
+/// If the claimed OOD values `f_red(zⱼ)` are correct, each numerator vanishes at
+/// `X = zⱼ` and cancels the denominator, so `Q` is a (low-degree) polynomial.
+/// If any claim is wrong, the corresponding term has a pole and `Q` is not even a
+/// polynomial; committing to `Q` via FRI then detects the inconsistency.
 pub struct DeepPoly<EF> {
     /// The DEEP quotient polynomial evaluated over the domain.
     /// `deep_evals[i]` is the evaluation at the i-th domain point (bit-reversed order).
@@ -47,7 +60,7 @@ impl<EF> DeepPoly<EF> {
         L::F: TwoAdicField,
         EF: ExtensionField<L::F>,
         M: Matrix<L::F>,
-        Ch: ProverChannel<F = L::F, Commitment = L::Commitment> + CanSample<L::F>,
+        Ch: ProverChannel<F = L::F, Commitment = L::Commitment>,
     {
         let lde_height = trace_trees
             .first()
@@ -83,9 +96,17 @@ impl<EF> DeepPoly<EF> {
     /// - `batched_evals`: One row per matrix, each row holding `FieldArray<EF, N>` per column.
     ///   Widths match the unpadded matrices; alignment padding is applied lazily during
     ///   channel writes and Horner reduction.
-    /// - `quotient`: Precomputed `1/(zⱼ - xᵢ)` for all opening points zⱼ and domain points xᵢ.
+    /// - `quotient`: Precomputed `1/(zⱼ − xᵢ)` for all opening points zⱼ and domain points xᵢ.
     ///
     /// Returns the constructed `DeepPoly` and the (unaligned) `batched_evals` for test inspection.
+    ///
+    /// Columns are reduced with a random `α` using Horner
+    /// (`f_red(X) = Σᵢ α^{W−1−i} · fᵢ(X)`). This lets the verifier stream the
+    /// reduction as it reads opened rows, and ensures a cheating prover cannot satisfy
+    /// some constraints while failing others with non-negligible probability.
+    ///
+    /// Implementation note: we fuse a sign change into the per-column coefficient stream
+    /// so reduction and quotient assembly can share a single traversal over the domain.
     pub(crate) fn from_evals<L, M, const N: usize, Ch>(
         params: &DeepParams,
         trace_trees: &[&L::Tree<M>],
@@ -98,7 +119,7 @@ impl<EF> DeepPoly<EF> {
         L::F: TwoAdicField,
         EF: ExtensionField<L::F>,
         M: Matrix<L::F>,
-        Ch: ProverChannel<F = L::F, Commitment = L::Commitment> + CanSample<L::F>,
+        Ch: ProverChannel<F = L::F, Commitment = L::Commitment>,
     {
         // The alignment of the trees defines the number of virtual zero-values columns were
         // inserted while hashing the rows of the matrices. The prover pads the opened rows of each
@@ -122,14 +143,17 @@ impl<EF> DeepPoly<EF> {
             .collect();
 
         // 1. Bind the prover's OOD evaluation claims into the Fiat-Shamir transcript.
-        //    The DEEP challenges (α, β) are derived after this, so a cheating prover
+        //    The DEEP challenges (alpha, beta) are derived after this, so a cheating prover
         //    cannot adapt its claims to the challenges.
-        //    Each row is implicitly zero-padded to the tree alignment, matching the
+        //    Each matrix row is zero-padded to the tree alignment, matching the
         //    virtual zero columns the LMCS inserts when hashing rows.
+        //    All matrices are concatenated into a single flat slice per eval point.
         for point_idx in 0..N {
-            for eval in batched_evals.iter_aligned(alignment) {
-                channel.send_algebra_element(eval[point_idx]);
-            }
+            let flat: Vec<EF> = batched_evals
+                .iter_aligned(alignment)
+                .map(|fa| fa[point_idx])
+                .collect();
+            channel.send_algebra_slice(&flat);
         }
 
         // 2. Grind for proof-of-work witness
@@ -157,20 +181,20 @@ impl<EF> DeepPoly<EF> {
         // Align each matrix width so padding is explicit in the transcript.
         let aligned_widths = aligned_widths(widths, alignment);
 
-        // Compute explicit coefficients for -f_reduced(X) = -Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X).
+        // Compute explicit coefficients for -f_reduced(X) = -Σᵢ α^{W−1−i}·fᵢ(X).
         //
-        // The verifier computes f_reduced via `horner(α, columns)`, which assigns
-        // the highest power to the first column: column 0 gets α^(W-1), column W-1
+        // The verifier computes f_reduced via `horner(alpha, columns)`, which assigns
+        // the highest power to the first column: column 0 gets α^{W−1}, column W-1
         // gets α⁰. To match this with an explicit dot-product (needed for the LDE
-        // evaluation), we need coefficient[i] = -α^(W-1-i).
+        // evaluation), we need coefficient[i] = −α^{W−1−i}.
         //
         // Construction:
-        //   shifted_powers(NEG_ONE) produces [-1, -α, -α², ..., -α^(W-1)]
-        //   .rev() reverses to [-α^(W-1), ..., -α, -1]
+        //   shifted_powers(NEG_ONE) produces [−1, −α, −α², …, −α^{W−1}]
+        //   .rev() reverses to [−α^{W−1}, …, −α, −1]
         //   Split into per-matrix chunks in commitment order.
         //
         // The negation is folded into the coefficients so the DEEP quotient loop can
-        // compute f_reduced(zⱼ) + neg_f_reduced(X) = f_reduced(zⱼ) - f_reduced(X)
+        // compute f_reduced(zⱼ) + neg_f_reduced(X) = f_reduced(zⱼ) − f_reduced(X)
         // without a separate negation pass.
         let total_width: usize = aligned_widths.iter().sum();
         let mut neg_powers_iter = challenge_columns
@@ -183,9 +207,9 @@ impl<EF> DeepPoly<EF> {
             .map(|&width| neg_powers_iter.by_ref().take(width).collect())
             .collect();
 
-        // Compute -f_reduced(X) = -Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X) over the LDE domain, then
+        // Compute -f_reduced(X) = -Σᵢ α^{W−1−i}·fᵢ(X) over the LDE domain, then
         // transform in-place into the DEEP quotient:
-        //   Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) · 1/(zⱼ - X)
+        //   Q(X) = Σⱼ βʲ·(f_reduced(zⱼ) − f_reduced(X))·1/(zⱼ − X)
         //
         // The column reduction and quotient assembly are fused: the `neg_f_reduced`
         // vector is consumed in-place to produce `deep_evals`, avoiding a separate
@@ -215,7 +239,7 @@ impl<EF> DeepPoly<EF> {
                 core::array::from_fn(|j| challenge_points.exp_u64(j as u64));
 
             // Transform neg_f_reduced in-place into deep_evals.
-            // Q(x) = Σⱼ βʲ · q_j(x) · (f_reduced(zⱼ) + neg_f_reduced(x))
+            // Q(x) = Σⱼ βʲ·qⱼ(x)·(f_reduced(zⱼ) + neg_f_reduced(x))
             if w == 1 || n < w {
                 neg_f_reduced
                     .par_iter_mut()
@@ -265,11 +289,14 @@ impl<EF> DeepPoly<EF> {
     }
 }
 
-/// Accumulate `f_reduced(X) = Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X)` across matrices of varying heights.
+/// Accumulate `f_reduced(X) = Σᵢ α^{W−1−i}·fᵢ(X)` across matrices of varying heights.
 ///
-/// In bit-reversed order, lifting `f(X)` to `f(Xʳ)` repeats each value r times.
-/// We exploit this: when crossing a height boundary, upsample by repeating entries,
-/// then continue accumulating. Matrices must be sorted by ascending height.
+/// In bit-reversed order, the lifted polynomial `f(Xʳ)` repeats each evaluation r times
+/// (because adjacent bit-reversed indices differ only in their low bits, mapping to points
+/// that are r-th roots of the same value). This lets us upsample by repetition instead of
+/// recomputing the lifted polynomial: when crossing a height boundary, repeat entries to
+/// match the new height, then continue accumulating. Matrices must be sorted by ascending
+/// height.
 fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>, C: AsRef<[EF]>>(
     matrices: &[&M],
     coeffs: &[C],

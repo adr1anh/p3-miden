@@ -25,11 +25,11 @@ use crate::{
 /// Recomposes the quotient polynomial from its chunks evaluated at a point.
 ///
 /// Given quotient chunks and their domains, this computes the Lagrange
-/// interpolation coefficients (zps) and reconstructs quotient(zeta).
+/// interpolation coefficients (zps) and reconstructs quotient(z).
 pub fn recompose_quotient_from_chunks<SC>(
     quotient_chunks_domains: &[Domain<SC>],
     quotient_chunks: &[Vec<SC::Challenge>],
-    zeta: SC::Challenge,
+    z: SC::Challenge,
 ) -> SC::Challenge
 where
     SC: StarkGenericConfig,
@@ -43,7 +43,7 @@ where
                 .enumerate()
                 .filter(|(j, _)| *j != i)
                 .map(|(_, other_domain)| {
-                    other_domain.vanishing_poly_at_point(zeta)
+                    other_domain.vanishing_poly_at_point(z)
                         * other_domain
                             .vanishing_poly_at_point(domain.first_point())
                             .inverse()
@@ -68,10 +68,10 @@ where
         .sum::<SC::Challenge>()
 }
 
-/// Verifies that the folded constraints match the quotient polynomial at zeta.
+/// Verifies that the folded constraints match the quotient polynomial at z.
 ///
 /// This evaluates the AIR constraints at the out-of-domain point and checks
-/// that constraints(zeta) / Z_H(zeta) = quotient(zeta).
+/// that constraints(z) / Z_H(z) = quotient(z).
 #[allow(clippy::too_many_arguments)]
 pub fn verify_constraints<SC, A, PcsErr>(
     air: &A,
@@ -85,7 +85,7 @@ pub fn verify_constraints<SC, A, PcsErr>(
     aux_bus_boundary_values: &[SC::Challenge],
     public_values: &[Val<SC>],
     trace_domain: Domain<SC>,
-    zeta: SC::Challenge,
+    z: SC::Challenge,
     alpha: SC::Challenge,
     quotient: SC::Challenge,
 ) -> Result<(), VerificationError<PcsErr>>
@@ -94,16 +94,13 @@ where
     A: MidenAir<Val<SC>, SC::Challenge>,
     Val<SC>: TwoAdicField,
 {
-    let sels = trace_domain.selectors_at_point(zeta);
+    let sels = trace_domain.selectors_at_point(z);
 
     // =====================================
     // Periodic entries
     // =====================================
-    let periodic_values: Vec<SC::Challenge> = evaluate_periodic_at_point::<Val<SC>, SC::Challenge>(
-        air.periodic_table(),
-        trace_domain,
-        zeta,
-    );
+    let periodic_values: Vec<SC::Challenge> =
+        evaluate_periodic_at_point::<Val<SC>, SC::Challenge>(air.periodic_table(), trace_domain, z);
 
     // =====================================
     // Main trace
@@ -168,7 +165,7 @@ where
     air.eval(&mut folder);
     let folded_constraints = folder.accumulator;
 
-    // Check that constraints(zeta) / Z_H(zeta) = quotient(zeta)
+    // Check that constraints(z) / Z_H(z) = quotient(z)
     if folded_constraints * sels.inv_vanishing != quotient {
         return Err(VerificationError::OodEvaluationMismatch { index: None });
     }
@@ -381,9 +378,9 @@ where
     // Get an out-of-domain point to open our values at.
     //
     // Soundness Error: dN/|EF| where `N` is the trace length and our constraint polynomial has degree `d`.
-    let zeta = challenger.sample_algebra_element();
-    let zeta_next = init_trace_domain
-        .next_point(zeta)
+    let z = challenger.sample_algebra_element();
+    let z_next = init_trace_domain
+        .next_point(z)
         .ok_or(VerificationError::NextPointUnavailable)?;
 
     // We've already checked that commitments.random and opened_values.random are present if and only if ZK is enabled.
@@ -394,7 +391,7 @@ where
             .ok_or(VerificationError::RandomizationError)?;
         vec![(
             random_commit.clone(),
-            vec![(trace_domain, vec![(zeta, random_values.clone())])],
+            vec![(trace_domain, vec![(z, random_values.clone())])],
         )]
     } else {
         vec![]
@@ -405,8 +402,8 @@ where
             vec![(
                 trace_domain,
                 vec![
-                    (zeta, opened_values.trace_local.clone()),
-                    (zeta_next, opened_values.trace_next.clone()),
+                    (z, opened_values.trace_local.clone()),
+                    (z_next, opened_values.trace_next.clone()),
                 ],
             )],
         ),
@@ -418,7 +415,7 @@ where
                 &opened_values.quotient_chunks,
                 VerificationError::InvalidProofShape,
             )?
-            .map(|(domain, values)| (*domain, vec![(zeta, values.clone())]))
+            .map(|(domain, values)| (*domain, vec![(z, values.clone())]))
             .collect_vec(),
         ),
     ]);
@@ -437,7 +434,7 @@ where
             aux_commit.clone(),
             vec![(
                 trace_domain,
-                vec![(zeta, aux_local.clone()), (zeta_next, aux_next.clone())],
+                vec![(z, aux_local.clone()), (z_next, aux_next.clone())],
             )],
         ));
     }
@@ -458,8 +455,8 @@ where
             vec![(
                 trace_domain,
                 vec![
-                    (zeta, preprocessed_local.clone()),
-                    (zeta_next, preprocessed_next.clone()),
+                    (z, preprocessed_local.clone()),
+                    (z_next, preprocessed_next.clone()),
                 ],
             )],
         ));
@@ -471,7 +468,7 @@ where
     let quotient = recompose_quotient_from_chunks::<SC>(
         &quotient_chunks_domains,
         &opened_values.quotient_chunks,
-        zeta,
+        z,
     );
 
     // Verify the aux trace final values match the expected values if the aux trace contains buses (one bus per aux column)
@@ -508,7 +505,7 @@ where
         aux_finals,
         public_values,
         init_trace_domain,
-        zeta,
+        z,
         alpha,
         quotient,
     )?;
@@ -570,8 +567,8 @@ pub enum VerificationError<PcsErr> {
     InvalidProofShape,
     /// An error occurred while verifying the claimed openings.
     InvalidOpeningArgument(PcsErr),
-    /// Out-of-domain evaluation mismatch, i.e. `constraints(zeta)` did not match
-    /// `quotient(zeta) Z_H(zeta)`.
+    /// Out-of-domain evaluation mismatch, i.e. `constraints(z)` did not match
+    /// `quotient(z) Z_H(z)`.
     OodEvaluationMismatch {
         index: Option<usize>,
     },

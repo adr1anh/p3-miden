@@ -125,9 +125,7 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_challenger::{CanSample, CanSampleBits};
-use p3_dft::TwoAdicSubgroupDft;
-use p3_field::{BasedVectorSpace, ExtensionField, Field, PrimeField64, TwoAdicField};
+use p3_field::{Algebra, BasedVectorSpace, ExtensionField, Field, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::{LiftedAir, SymbolicExpression, get_constraint_layout};
@@ -138,7 +136,9 @@ use p3_util::log2_strict_usize;
 use thiserror::Error;
 use tracing::{info_span, instrument};
 
-use p3_miden_lifted_stark::{AirWitness, LiftedCoset, StarkConfig, ValidationError};
+use p3_miden_lifted_stark::{
+    AirWitness, LiftedCoset, StarkConfig, ValidationError, sample_ood_point,
+};
 
 use crate::commit::commit_traces;
 use crate::constraints::evaluate_constraints_into;
@@ -172,22 +172,20 @@ pub enum ProverError {
 ///
 /// # Returns
 /// `Ok(())` on success, or a `ProverError` if validation fails.
-pub fn prove_single<F, EF, A, L, Dft, Ch>(
-    config: &StarkConfig<L, Dft>,
+pub fn prove_single<F, EF, A, SC, Ch>(
+    config: &SC,
     air: &A,
     trace: &RowMajorMatrix<F>,
     public_values: &[F],
     channel: &mut Ch,
 ) -> Result<(), ProverError>
 where
-    F: TwoAdicField + PrimeField64,
+    F: TwoAdicField,
     EF: ExtensionField<F>,
+    SC: StarkConfig<F, EF>,
     A: LiftedAir<F, EF>,
-    L: Lmcs<F = F>,
-    L::Commitment: Clone,
-    Dft: TwoAdicSubgroupDft<F>,
-    Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
-    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
+    Ch: ProverChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>,
+    SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     let witness = AirWitness::new(trace, public_values);
     prove_multi(config, &[(air, witness)], channel)
@@ -204,35 +202,37 @@ where
 /// may have a different height that is a power of 2. The quotient numerators are
 /// accumulated using cyclic extension:
 ///
-/// 1. Compute numerator N_0 on the smallest quotient domain
-/// 2. For each subsequent trace j:
-///    - Extend accumulator to trace j's quotient domain size
-///    - Fold: `acc = acc * beta + N_j`
-/// 3. Divide by Z_H once on the largest quotient domain
+/// 1. Compute numerator N₀ on the smallest quotient domain.
+/// 2. For each subsequent trace `j`:
+///    - cyclically extend the accumulator to the new (larger) quotient domain,
+///    - fold with the random challenge β: acc = acc·β + Nⱼ.
+/// 3. Divide by `Z_H` once on the largest quotient domain.
+///
+/// The ordering is important: cyclic extension only grows the accumulator (it does not
+/// shrink), and both prover and verifier must assign the same powers of `beta` to each
+/// instance's contribution.
 ///
 /// # Arguments
 /// - `config`: STARK configuration (PCS params, LMCS, DFT)
-/// - `instances`: Pairs of (AIR, witness) sorted by trace height (ascending)
+/// - `instances`: Pairs of (AIR, witness) sorted by trace height (ascending).
+///   All AIRs must either all have auxiliary traces or none.
 /// - `channel`: Prover channel for transcript/proof I/O
 ///
 /// # Returns
 /// `Ok(())` on success, or a `ProverError` if validation fails.
 #[instrument(name = "prove", skip_all)]
-#[allow(clippy::too_many_arguments)]
-pub fn prove_multi<F, EF, A, L, Dft, Ch>(
-    config: &StarkConfig<L, Dft>,
+pub fn prove_multi<F, EF, A, SC, Ch>(
+    config: &SC,
     instances: &[(&A, AirWitness<'_, F>)],
     channel: &mut Ch,
 ) -> Result<(), ProverError>
 where
-    F: TwoAdicField + PrimeField64,
+    F: TwoAdicField,
     EF: ExtensionField<F>,
+    SC: StarkConfig<F, EF>,
     A: LiftedAir<F, EF>,
-    L: Lmcs<F = F>,
-    L::Commitment: Clone,
-    Dft: TwoAdicSubgroupDft<F>,
-    Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
-    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
+    Ch: ProverChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>,
+    SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     validate_inputs(instances)?;
 
@@ -243,7 +243,7 @@ where
     );
     let has_aux = aux_widths.iter().any(|&w| w > 0);
 
-    let log_blowup = config.pcs.fri.log_blowup;
+    let log_blowup = config.pcs().fri.log_blowup;
 
     // Infer constraint degree from symbolic AIR analysis (max across all AIRs)
     let log_constraint_degree = instances
@@ -352,11 +352,13 @@ where
             let this_quotient_coset = this_lde_coset.quotient_domain(log_constraint_degree);
             let this_quotient_height = this_quotient_coset.lde_height();
 
-            // Get views into committed LDEs for this trace
-            let main_on_gj = main_committed.quotient_domain_natural(i, constraint_degree);
+            // Truncate the committed LDE to the quotient evaluation domain gJ (size N·D).
+            // Since B ≥ D, the committed LDE on gK (size N·B) contains gJ as a prefix in
+            // bit-reversed storage, so this is a zero-copy view.
+            let main_on_gj = main_committed.evals_on_quotient_domain(i, constraint_degree);
             let aux_on_gj = aux_committed
                 .as_ref()
-                .map(|aux| aux.quotient_domain_natural(i, constraint_degree));
+                .map(|aux| aux.evals_on_quotient_domain(i, constraint_degree));
 
             // Build periodic LDE for this trace via coset method
             let periodic_lde = PeriodicLde::build(&this_quotient_coset, air.periodic_columns());
@@ -406,15 +408,9 @@ where
     channel.send_commitment(quotient_committed.root());
 
     // 8. Sample OOD point (outside H and gK)
-    let zeta: EF = loop {
-        let z: EF = channel.sample_algebra_element::<EF>();
-        if !max_lde_coset.is_in_trace_domain::<F, _>(z) && !max_lde_coset.is_in_lde_coset::<F, _>(z)
-        {
-            break z;
-        }
-    };
+    let z: EF = sample_ood_point(channel, &max_lde_coset);
     let h = F::two_adic_generator(log_max_trace_height);
-    let zeta_next = zeta * h;
+    let z_next = z * h;
 
     // 9. Open via PCS
     let trees = match aux_committed {
@@ -423,11 +419,11 @@ where
     };
 
     info_span!("open").in_scope(|| {
-        open_with_channel::<F, EF, L, RowMajorMatrix<F>, _, 2>(
-            &config.pcs,
-            &config.lmcs,
+        open_with_channel::<F, EF, SC::Lmcs, RowMajorMatrix<F>, _, 2>(
+            config.pcs(),
+            config.lmcs(),
             log_lde_height,
-            [zeta, zeta_next],
+            [z, z_next],
             &trees,
             channel,
         )

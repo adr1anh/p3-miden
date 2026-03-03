@@ -2,13 +2,12 @@
 
 use alloc::vec::Vec;
 
-use p3_challenger::{
-    CanObserve, CanSample, CanSampleBits, CanSampleUniformBits, GrindingChallenger,
-};
+use p3_challenger::{CanSample, CanSampleBits, CanSampleUniformBits};
 use p3_field::{BasedVectorSpace, Field};
 use thiserror::Error;
 
 use crate::TranscriptData;
+use crate::channel::{Channel, TranscriptChallenger};
 
 /// Verifier channel that reads transcript data and observes into the challenger.
 #[derive(Clone, Debug)]
@@ -33,13 +32,15 @@ impl<'a, F, C, Ch> VerifierTranscript<'a, F, C, Ch> {
         let (fields, commitments) = data.as_slices();
         Self::new(challenger, fields, commitments)
     }
+
+    /// Returns the total byte size of the remaining unconsumed transcript data.
+    pub fn size_in_bytes(&self) -> usize {
+        size_of_val(self.fields) + size_of_val(self.commitments)
+    }
 }
 
 /// Verifier-side channel interface for transcript operations.
-pub trait VerifierChannel {
-    type F: Field;
-    type Commitment: Clone;
-
+pub trait VerifierChannel: Channel {
     fn receive_field_slice(&mut self, count: usize) -> Result<&[Self::F], TranscriptError>;
 
     fn receive_commitment_slice(
@@ -109,12 +110,24 @@ pub trait VerifierChannel {
     fn grind(&mut self, bits: usize) -> Result<Self::F, TranscriptError>;
 
     fn is_empty(&self) -> bool;
+}
 
-    fn sample_algebra_element<A: BasedVectorSpace<Self::F>>(&mut self) -> A
-    where
-        Self: CanSample<Self::F>,
-    {
-        A::from_basis_coefficients_fn(|_| self.sample())
+impl<'a, F, C, Ch> Channel for VerifierTranscript<'a, F, C, Ch>
+where
+    F: Field,
+    C: Clone,
+    Ch: TranscriptChallenger<F, C>,
+{
+    type F = F;
+    type Commitment = C;
+    type Challenger = Ch;
+
+    fn sample(&mut self) -> F {
+        CanSample::<F>::sample(&mut self.challenger)
+    }
+
+    fn sample_bits(&mut self, bits: usize) -> usize {
+        self.challenger.sample_bits(bits)
     }
 }
 
@@ -122,11 +135,8 @@ impl<'a, F, C, Ch> VerifierChannel for VerifierTranscript<'a, F, C, Ch>
 where
     F: Field,
     C: Clone,
-    Ch: CanObserve<F> + CanObserve<C> + GrindingChallenger<Witness = F>,
+    Ch: TranscriptChallenger<F, C>,
 {
-    type F = F;
-    type Commitment = C;
-
     // === Observed data ===
     fn receive_field_slice(&mut self, count: usize) -> Result<&'a [Self::F], TranscriptError> {
         let values = pop_slice(&mut self.fields, count).ok_or(TranscriptError::NoMoreFields)?;

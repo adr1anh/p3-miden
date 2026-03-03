@@ -87,8 +87,12 @@ fn batched_base_linear_combination<P: PackedField>(coeffs: &[P::Scalar], values:
 
 /// Evaluate constraints on the quotient domain, adding results into `output`.
 ///
-/// For each point on gJ, evaluates all constraints, folds them with alpha powers,
-/// and adds the result: `output[i] += eval(i)`.
+/// Here `gJ` is the quotient evaluation coset of size `N * D`, the subset of the
+/// committed LDE coset `gK` (size `N * B`) that contains just enough points to
+/// evaluate the quotient point-wise. For each point on `gJ`, we evaluate all AIR
+/// constraints, fold them with powers of `alpha`, and add the resulting numerator value:
+///
+/// `output[i] += folded_constraints(xᵢ)`.
 ///
 /// The caller is responsible for preparing `output` before calling this function
 /// (e.g. cyclically extending and scaling by beta for multi-trace accumulation).
@@ -98,6 +102,19 @@ fn batched_base_linear_combination<P: PackedField>(coeffs: &[P::Scalar], values:
 /// - Processes `WIDTH` points simultaneously using packed field types
 /// - Main trace stays in base field, only aux trace uses extension field
 /// - Constraints are collected then finalized in batches via decomposed alpha powers
+///
+/// Why we fold with `alpha`: the prover does not want to carry K separate constraint
+/// polynomials through the rest of the protocol. A random linear combination
+///
+/// `C_fold(x) = Σₖ α^{K−1−k}·Cₖ(x)`
+///
+/// collapses them into one numerator polynomial while preserving soundness (a non-zero
+/// constraint survives with high probability).
+///
+/// Why we only evaluate on `gJ`: `gJ` (size `N * D`) is a subset of the committed LDE
+/// coset `gK` (size `N * B`). For `B >= D`, these `N * D` points are sufficient for
+/// the quotient-degree bounds used by the protocol; division by the vanishing polynomial
+/// happens later.
 #[allow(clippy::too_many_arguments)]
 pub fn evaluate_constraints_into<F, EF, A, M>(
     output: &mut [EF],
@@ -277,6 +294,11 @@ where
     /// decomposing the extension-field multiply into D base-field SIMD dot products.
     /// Extension constraints use `batched_ext_linear_combination` with scalar EF
     /// coefficients. Both process in chunks of `CONSTRAINT_BATCH`.
+    ///
+    /// We keep base and extension constraints separate because the base constraints can
+    /// stay in the base field and use packed SIMD arithmetic. Decomposing EF powers of
+    /// `alpha` into base-field coordinates turns the base-field fold into a small number
+    /// of packed dot-products, avoiding repeated cross-field promotions.
     #[inline]
     pub fn finalize_constraints(self) -> PE {
         debug_assert_eq!(self.constraint_index, self.constraint_count);

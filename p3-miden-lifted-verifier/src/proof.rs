@@ -7,22 +7,21 @@
 //!
 //! This is a parse-only view that exists alongside [`verify_multi`](crate::verify_multi),
 //! following the same pattern as [`PcsTranscript`] alongside
-//! [`verify_with_channel`](p3_miden_lifted_fri::verifier::verify_with_channel).
+//! [`verify`](p3_miden_lifted_fri::verifier::verify).
 
 extern crate alloc;
 
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_challenger::{CanSample, CanSampleBits};
-use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64, TwoAdicField};
+use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_miden_lifted_air::LiftedAir;
 use p3_miden_lifted_fri::PcsTranscript;
 use p3_miden_lmcs::Lmcs;
 use p3_miden_lmcs::utils::aligned_len;
 use p3_miden_transcript::VerifierChannel;
 
-use p3_miden_lifted_stark::{AirInstance, LiftedCoset, StarkConfig};
+use p3_miden_lifted_stark::{AirInstance, LiftedCoset, StarkConfig, sample_ood_point};
 
 use crate::VerifierError;
 
@@ -46,14 +45,14 @@ where
     pub randomness: Vec<EF>,
     /// Auxiliary trace commitment (present only when AIRs have aux columns).
     pub aux_commit: Option<L::Commitment>,
-    /// Constraint folding challenge α.
+    /// Constraint folding challenge alpha.
     pub alpha: EF,
-    /// AIR accumulation challenge β.
+    /// AIR accumulation challenge beta.
     pub beta: EF,
     /// Quotient polynomial commitment.
     pub quotient_commit: L::Commitment,
-    /// Out-of-domain evaluation point ζ.
-    pub zeta: EF,
+    /// Out-of-domain evaluation point z.
+    pub z: EF,
     /// PCS sub-transcript (DEEP evals, FRI rounds, query openings).
     pub pcs_transcript: PcsTranscript<EF, L>,
 }
@@ -61,7 +60,7 @@ where
 impl<EF, L> StarkTranscript<EF, L>
 where
     L: Lmcs,
-    L::F: TwoAdicField + PrimeField64 + PrimeCharacteristicRing,
+    L::F: TwoAdicField,
     EF: ExtensionField<L::F>,
 {
     /// Parse a STARK transcript from a verifier channel without constraint checks.
@@ -70,30 +69,28 @@ where
     /// 1. Receive main trace commitment
     /// 2. Sample randomness for auxiliary traces
     /// 3. Receive auxiliary trace commitment (if present)
-    /// 4. Sample constraint folding α and accumulation β
+    /// 4. Sample constraint folding alpha and accumulation beta
     /// 5. Receive quotient commitment
-    /// 6. Sample OOD point ζ
+    /// 6. Sample OOD point z
     /// 7. Build commitment widths for PCS
     /// 8. Parse PCS sub-transcript via [`PcsTranscript::from_verifier_channel`]
     ///
     /// Does **not** verify constraints or check the quotient identity.
-    pub fn from_verifier_channel<A, Dft, Ch>(
-        config: &StarkConfig<L, Dft>,
+    pub fn from_verifier_channel<A, SC, Ch>(
+        config: &SC,
         instances: &[(&A, AirInstance<'_, L::F>)],
         channel: &mut Ch,
     ) -> Result<Self, VerifierError>
     where
         A: LiftedAir<L::F, EF>,
-        L::Commitment: Clone,
-        Ch: VerifierChannel<F = L::F, Commitment = L::Commitment>
-            + CanSample<L::F>
-            + CanSampleBits<usize>,
+        SC: StarkConfig<L::F, EF, Lmcs = L>,
+        Ch: VerifierChannel<F = L::F, Commitment = L::Commitment>,
     {
         let aux_widths: Vec<_> = instances.iter().map(|(air, _)| air.aux_width()).collect();
         let has_aux = aux_widths.iter().any(|&w| w > 0);
 
-        let log_blowup = config.pcs.fri.log_blowup;
-        let alignment = config.lmcs.alignment();
+        let log_blowup = config.pcs().fri.log_blowup;
+        let alignment = config.lmcs().alignment();
 
         // Infer constraint degree from symbolic AIR analysis (max across all AIRs)
         let constraint_degree = instances
@@ -138,16 +135,9 @@ where
         let quotient_commit = channel.receive_commitment()?.clone();
 
         // 6. Sample OOD point (outside max trace domain H and max LDE coset gK)
-        let zeta: EF = loop {
-            let z: EF = channel.sample_algebra_element::<EF>();
-            if !max_lde_coset.is_in_trace_domain::<L::F, _>(z)
-                && !max_lde_coset.is_in_lde_coset::<L::F, _>(z)
-            {
-                break z;
-            }
-        };
+        let z: EF = sample_ood_point(channel, &max_lde_coset);
         let h = L::F::two_adic_generator(log_max_trace_height);
-        let zeta_next = zeta * h;
+        let z_next = z * h;
 
         // 7. Build commitment widths for PCS
         let main_widths: Vec<usize> = instances
@@ -156,8 +146,8 @@ where
             .collect();
         let quotient_width = aligned_len(constraint_degree * EF::DIMENSION, alignment);
 
-        let commitments = match aux_commit {
-            Some(ref aux_commit) => {
+        let commitments = match &aux_commit {
+            Some(aux_commit) => {
                 let aux_committed_widths: Vec<usize> = instances
                     .iter()
                     .map(|(air, _)| aligned_len(air.aux_width() * EF::DIMENSION, alignment))
@@ -176,13 +166,17 @@ where
 
         // 8. Parse PCS sub-transcript
         let pcs_transcript = PcsTranscript::from_verifier_channel::<Ch, 2>(
-            &config.pcs,
-            &config.lmcs,
+            config.pcs(),
+            config.lmcs(),
             &commitments,
             log_lde_height,
-            [zeta, zeta_next],
+            [z, z_next],
             channel,
         )?;
+
+        if !channel.is_empty() {
+            return Err(VerifierError::TranscriptNotConsumed);
+        }
 
         Ok(Self {
             main_commit,
@@ -191,7 +185,7 @@ where
             alpha,
             beta,
             quotient_commit,
-            zeta,
+            z,
             pcs_transcript,
         })
     }

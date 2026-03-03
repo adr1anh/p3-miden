@@ -17,7 +17,7 @@ use p3_miden_lifted_prover::{
     AirWitness, DeepParams, FriFold, FriParams, LmcsConfig, PcsParams, ProverTranscript,
     prove_multi,
 };
-use p3_miden_lifted_verifier::{AirInstance, StarkConfig, VerifierTranscript};
+use p3_miden_lifted_verifier::{AirInstance, GenericStarkConfig, VerifierTranscript};
 use p3_util::log2_strict_usize;
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
@@ -43,6 +43,7 @@ fn main() {
 
     type Lmcs = LmcsConfig<bb::P, bb::P, bb::Sponge, bb::Compress, { bb::WIDTH }, { bb::DIGEST }>;
     type Dft = Radix2DitParallel<Val>;
+    type Config = GenericStarkConfig<Val, Challenge, Lmcs, Dft, bb::Challenger>;
 
     let pcs = PcsParams {
         fri: FriParams {
@@ -59,7 +60,7 @@ fn main() {
     let (_, sponge, compress) = bb::test_components();
     let lmcs: Lmcs = LmcsConfig::new(sponge, compress);
     let dft = Dft::default();
-    let config = StarkConfig { pcs, lmcs, dft };
+    let config = Config::new(pcs, lmcs, dft, bb::test_challenger());
     let air = LiftedKeccakAir;
 
     let mut rng = SmallRng::seed_from_u64(1);
@@ -102,8 +103,7 @@ fn main() {
 
         let mut channel = ProverTranscript::new(bb::test_challenger());
         info_span!("prove").in_scope(|| {
-            prove_multi::<Val, Challenge, _, _, _, _>(&config, &instances, &mut channel)
-                .expect("proving failed");
+            prove_multi(&config, &instances, &mut channel).expect("proving failed");
         });
         let transcript = channel.into_data();
 
@@ -125,7 +125,7 @@ fn main() {
             ];
             let mut verifier_channel =
                 VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-            p3_miden_lifted_verifier::verify_multi::<Val, Challenge, _, _, _, _>(
+            p3_miden_lifted_verifier::verify_multi(
                 &config,
                 &verifier_instances,
                 &mut verifier_channel,

@@ -58,11 +58,11 @@
 //! Thus evaluating the periodic column on the evaluation domain is exactly a coset LDE
 //! of f_period of size P with blowup B and that shift.
 //!
-//! ## Evaluating at an out-of-domain point zeta
+//! ## Evaluating at an out-of-domain point z
 //!
-//! Compute pi(zeta) = (zeta / g)^(N / P).
+//! Compute pi(z) = (z / g)^(N / P).
 //!
-//! Then evaluate f_period at pi(zeta) using interpolation over the size-P subgroup.
+//! Then evaluate f_period at pi(z) using interpolation over the size-P subgroup.
 //!
 //! ## Memory-efficient storage
 //!
@@ -222,7 +222,7 @@ impl<F: TwoAdicField + Clone + Send + Sync> PeriodicLdeTable<F> {
     }
 }
 
-/// Evaluates periodic columns at an out-of-domain challenge point `zeta`.
+/// Evaluates periodic columns at an out-of-domain challenge point `z`.
 ///
 /// Used by the verifier to check constraint satisfaction. This function evaluates all
 /// periodic columns at a single random challenge point.
@@ -230,8 +230,8 @@ impl<F: TwoAdicField + Clone + Send + Sync> PeriodicLdeTable<F> {
 /// # Implementation Details
 ///
 /// For each periodic column with period `P` and trace height `N`:
-/// 1. Shift `zeta` by the trace domain's offset to get `unshifted_zeta`.
-/// 2. Compute `y = unshifted_zeta^(N/P)` to map `zeta` into one period.
+/// 1. Shift `z` by the trace domain's offset to get `unshifted_z`.
+/// 2. Compute `y = unshifted_z^(N/P)` to map `z` into one period.
 /// 3. Interpolate the column over its minimal cycle (subgroup of size `P`)
 ///    using barycentric Lagrange interpolation to evaluate at `y`.
 ///
@@ -240,15 +240,15 @@ impl<F: TwoAdicField + Clone + Send + Sync> PeriodicLdeTable<F> {
 /// * `periodic_table` - Vector of periodic columns, where each column is a vector
 ///   of length equal to its period (a power of 2 that divides trace height).
 /// * `trace_domain` - The domain over which the trace is defined
-/// * `zeta` - The out-of-domain challenge point at which to evaluate
+/// * `z` - The out-of-domain challenge point at which to evaluate
 ///
 /// # Returns
 ///
-/// A vector containing the evaluation of each periodic column at `zeta`.
+/// A vector containing the evaluation of each periodic column at `z`.
 pub(crate) fn evaluate_periodic_at_point<F, EF>(
     periodic_table: Vec<Vec<F>>,
     trace_domain: impl PolynomialSpace<Val = F>,
-    zeta: EF,
+    z: EF,
 ) -> Vec<EF>
 where
     F: TwoAdicField,
@@ -259,7 +259,7 @@ where
     }
 
     let (trace_height, log_trace_height, shift_inv) = trace_context(&trace_domain);
-    let unshifted_zeta = zeta * EF::from(shift_inv);
+    let unshifted_z = z * EF::from(shift_inv);
 
     periodic_table
         .into_iter()
@@ -271,8 +271,8 @@ where
             let (rate_bits, subgroup) =
                 subgroup_data::<F>(trace_height, log_trace_height, col.len());
 
-            // y = (zeta / shift)^{trace_height / period}
-            let y = unshifted_zeta.exp_power_of_2(rate_bits);
+            // y = (z / shift)^{trace_height / period}
+            let y = unshifted_z.exp_power_of_2(rate_bits);
             let diffs: Vec<_> = subgroup.iter().map(|&g| y - EF::from(g)).collect();
             let diff_invs = batch_multiplicative_inverse(&diffs);
 

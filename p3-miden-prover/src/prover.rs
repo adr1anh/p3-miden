@@ -354,31 +354,31 @@ where
     //
     // Soundness Error:
     // This sample will be used to check the equality: `C(X) = ZH(X)Q(X)`. If a prover is malicious
-    // and this equality is false, the probability that it is true at the point `zeta` will be
+    // and this equality is false, the probability that it is true at the point `z` will be
     // deg(C(X))/|EF| = dN/|EF| where `N` is the trace length and our constraints have degree `d`.
     //
     // Completeness Error:
-    // If zeta happens to lie in the domain `gK`, then when opening at zeta we will run into division
+    // If z happens to lie in the domain `gK`, then when opening at z we will run into division
     // by zero errors. This doesn't lead to a soundness issue as the verifier will just reject in those
     // cases but it is a completeness issue and contributes a completeness error of |gK| = 2N/|EF|.
-    let zeta: SC::Challenge = challenger.sample_algebra_element();
-    let zeta_next = trace_domain
-        .next_point(zeta)
+    let z: SC::Challenge = challenger.sample_algebra_element();
+    let z_next = trace_domain
+        .next_point(z)
         .expect("domain should support next_point operation");
 
     let is_random = opt_r_data.is_some();
     let (opened_values, opening_proof) = info_span!("open").in_scope(|| {
         let mut rounds = vec![];
         if let Some(r_data) = opt_r_data.as_ref() {
-            rounds.push((r_data, vec![vec![zeta]]));
+            rounds.push((r_data, vec![vec![z]]));
         }
-        rounds.push((&trace_data, vec![vec![zeta, zeta_next]]));
-        rounds.push((&quotient_data, vec![vec![zeta]; quotient_degree])); // open every chunk at zeta
+        rounds.push((&trace_data, vec![vec![z, z_next]]));
+        rounds.push((&quotient_data, vec![vec![z]; quotient_degree])); // open every chunk at z
         if let Some(aux_data) = aux_trace_data_opt.as_ref() {
-            rounds.push((aux_data, vec![vec![zeta, zeta_next]]));
+            rounds.push((aux_data, vec![vec![z, z_next]]));
         }
         if let Some(preprocessed_data) = preprocessed_data.as_ref() {
-            rounds.push((preprocessed_data, vec![vec![zeta, zeta_next]]));
+            rounds.push((preprocessed_data, vec![vec![z, z_next]]));
         }
 
         pcs.open(rounds, &mut challenger)
