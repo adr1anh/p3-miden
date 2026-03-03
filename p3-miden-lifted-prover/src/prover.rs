@@ -454,6 +454,9 @@ where
         if w.trace.width() != air.width() {
             return Err(ValidationError::WidthMismatch.into());
         }
+        if w.var_len_public_inputs.len() != air.num_var_len_public_inputs() {
+            return Err(ValidationError::VarLenPublicInputsMismatch.into());
+        }
     }
     let verifier_instances: Vec<_> = instances.iter().map(|(_, w, _)| w.to_instance()).collect();
     p3_miden_lifted_stark::validate_instances(&verifier_instances)?;

@@ -29,6 +29,9 @@ pub trait ExtensionBuilder: AirBuilder<F: Field> {
     type EF: ExtensionField<Self::F>;
 
     /// Expression type over extension field elements.
+    ///
+    /// `Algebra<Self::Expr>` enables mixed base/extension arithmetic in constraints.
+    /// `Algebra<Self::EF>` enables multiplying expressions by extension-field constants.
     type ExprEF: Algebra<Self::Expr> + Algebra<Self::EF>;
 
     /// Variable type over extension field elements.

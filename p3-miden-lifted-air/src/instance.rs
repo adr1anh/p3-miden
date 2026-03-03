@@ -90,6 +90,8 @@ pub enum ValidationError {
     NotAscending,
     #[error("trace width mismatch")]
     WidthMismatch,
+    #[error("var-len public inputs count mismatch")]
+    VarLenPublicInputsMismatch,
 }
 
 /// Validate that instances are non-empty and sorted by ascending log height.

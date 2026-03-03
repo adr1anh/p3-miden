@@ -7,7 +7,7 @@
 //! ## Prover
 //!
 //! 1. [`AuxBuilder::build_aux_trace`] constructs the aux trace and returns
-//!    aux values (extension-field scalars whose meaning is AIR-defined).
+//!    aux values (extension-field elements whose meaning is AIR-defined).
 //! 2. The aux trace is committed (Merkle commitment).
 //! 3. Aux values are sent via the Fiat-Shamir transcript.
 //!

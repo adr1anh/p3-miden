@@ -28,7 +28,7 @@ pub trait LiftedAir<F: Field, EF>:
 
     /// Number of extension-field aux values committed to the Fiat-Shamir transcript.
     ///
-    /// These are the scalars returned by [`AuxBuilder::build_aux_trace`](crate::AuxBuilder::build_aux_trace)
+    /// These are the values returned by [`AuxBuilder::build_aux_trace`](crate::AuxBuilder::build_aux_trace)
     /// alongside the aux trace matrix. Their count may differ from [`aux_width`](Self::aux_width)
     /// (the number of aux trace columns).
     fn num_aux_values(&self) -> usize;
@@ -37,7 +37,7 @@ pub trait LiftedAir<F: Field, EF>:
     ///
     /// Each input is a slice of base-field elements that
     /// [`reduced_aux_values`](Self::reduced_aux_values) reduces to a single value.
-    /// Callers must provide exactly this many slices.
+    /// The prover validates that witnesses provide exactly this many slices.
     fn num_var_len_public_inputs(&self) -> usize {
         0
     }
