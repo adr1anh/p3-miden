@@ -10,7 +10,7 @@
 //! cargo run -p p3-miden-lifted-examples --release --bin batch_stark_keccak
 //! ```
 
-use p3_air::{Air, AirBuilder, BaseAir, PermutationAirBuilder};
+use p3_air::{Air, AirBuilder, BaseAir, BaseLeaf, PermutationAirBuilder, SymbolicExpression};
 use p3_baby_bear::BabyBear;
 use p3_batch_stark::{ProverData, StarkInstance, prove_batch, verify_batch};
 use p3_challenger::DuplexChallenger;
@@ -92,9 +92,9 @@ impl<AB: AirBuilder> Air<AB> for KeccakWithLookup {
         let symbolic = SymbolicAirBuilder::<AB::F>::new(0, NUM_KECCAK_COLS, 0, 0, 0);
         let main = symbolic.main();
         let local = main.row_slice(0).unwrap();
-        let col0: p3_uni_stark::SymbolicExpression<AB::F> = local[0].into();
+        let col0: SymbolicExpression<AB::F> = local[0].into();
 
-        let one = p3_uni_stark::SymbolicExpression::Constant(AB::F::ONE);
+        let one = SymbolicExpression::Leaf(BaseLeaf::Constant(AB::F::ONE));
         let lookup_inputs = vec![
             (vec![col0.clone()], one.clone(), Direction::Send),
             (vec![col0], one, Direction::Receive),
