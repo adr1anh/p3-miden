@@ -52,7 +52,7 @@ impl LiftedCoset {
     /// Panics if `log_trace_height > log_max_trace_height`.
     #[inline]
     pub fn new(log_trace_height: usize, log_blowup: usize, log_max_trace_height: usize) -> Self {
-        debug_assert!(
+        assert!(
             log_trace_height <= log_max_trace_height,
             "trace height cannot exceed max trace height"
         );

@@ -210,8 +210,8 @@ pub fn upsample_matrix<F: Clone + Send + Sync>(
     target_height: usize,
 ) -> RowMajorMatrix<F> {
     let height = matrix.height();
-    debug_assert!(target_height >= height);
-    debug_assert!(height.is_power_of_two() && target_height.is_power_of_two());
+    assert!(target_height >= height);
+    assert!(height.is_power_of_two() && target_height.is_power_of_two());
 
     let repeat_factor = target_height / height;
     let width = matrix.width();
