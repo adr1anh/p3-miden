@@ -99,6 +99,16 @@ impl<T> RowList<T> {
             row
         })
     }
+
+    /// Get a single row by index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx >= self.num_rows()`.
+    pub fn row(&self, idx: usize) -> &[T] {
+        let offset: usize = self.widths[..idx].iter().sum();
+        &self.elems[offset..offset + self.widths[idx]]
+    }
 }
 
 impl<T: Copy + Default> RowList<T> {
@@ -169,12 +179,12 @@ pub const fn aligned_len(len: usize, alignment: usize) -> usize {
     }
 }
 
-/// Return widths aligned to `alignment`.
-pub fn aligned_widths(widths: impl IntoIterator<Item = usize>, alignment: usize) -> Vec<usize> {
+/// Align each width in place, returning the same `Vec`.
+pub fn aligned_widths(mut widths: Vec<usize>, alignment: usize) -> Vec<usize> {
+    for w in &mut widths {
+        *w = aligned_len(*w, alignment);
+    }
     widths
-        .into_iter()
-        .map(|w| aligned_len(w, alignment))
-        .collect()
 }
 
 /// Pad a row with `Default::default()` so its length is a multiple of `alignment`.
@@ -200,8 +210,8 @@ pub fn upsample_matrix<F: Clone + Send + Sync>(
     target_height: usize,
 ) -> RowMajorMatrix<F> {
     let height = matrix.height();
-    debug_assert!(target_height >= height);
-    debug_assert!(height.is_power_of_two() && target_height.is_power_of_two());
+    assert!(target_height >= height);
+    assert!(height.is_power_of_two() && target_height.is_power_of_two());
 
     let repeat_factor = target_height / height;
     let width = matrix.width();

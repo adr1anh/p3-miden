@@ -4,7 +4,6 @@ use crate::PcsParams;
 use crate::deep::DeepTranscript;
 use crate::fri::FriTranscript;
 use alloc::vec::Vec;
-use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
@@ -43,7 +42,7 @@ where
     ///
     /// Composes [`DeepTranscript`], [`FriTranscript`], and per-query LMCS batch proofs.
     /// Does not verify any claims; validation happens in
-    /// [`verify_with_channel`](crate::verifier::verify_with_channel).
+    /// [`verify`](crate::verifier::verify).
     /// Commitment widths must match the committed rows (including any alignment padding),
     /// and all commitments are expected to be lifted to the same `log_lde_height`.
     ///
@@ -59,9 +58,7 @@ where
         channel: &mut Ch,
     ) -> Result<Self, TranscriptError>
     where
-        Ch: VerifierChannel<F = L::F, Commitment = L::Commitment>
-            + CanSample<L::F>
-            + CanSampleBits<usize>,
+        Ch: VerifierChannel<F = L::F, Commitment = L::Commitment>,
     {
         if commitments.is_empty() {
             return Err(TranscriptError::NoMoreFields);

@@ -11,4 +11,5 @@ homepage.workspace = true
 [dependencies]
 p3-challenger.workspace = true
 p3-field.workspace = true
+serde.workspace = true
 thiserror.workspace = true

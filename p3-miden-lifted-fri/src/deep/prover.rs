@@ -4,7 +4,6 @@ use core::iter::zip;
 use super::DeepParams;
 use super::interpolate::PointQuotients;
 use crate::utils::{PackedFieldExtensionExt, horner};
-use p3_challenger::CanSample;
 use p3_field::{
     ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue, TwoAdicField,
 };
@@ -21,6 +20,20 @@ use crate::utils::bit_reversed_coset_points;
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
 /// Combines all polynomial evaluation claims into a single low-degree polynomial.
+///
+/// Intuition: DEEP turns many separate opening claims into a single polynomial identity.
+///
+/// After reducing all opened columns with a random `α` into one polynomial `f_red(X)`,
+/// DEEP defines
+///
+/// ```text
+/// Q(X) = Σⱼ βʲ · (f_red(zⱼ) − f_red(X)) / (zⱼ − X)
+/// ```
+///
+/// If the claimed OOD values `f_red(zⱼ)` are correct, each numerator vanishes at
+/// `X = zⱼ` and cancels the denominator, so `Q` is a (low-degree) polynomial.
+/// If any claim is wrong, the corresponding term has a pole and `Q` is not even a
+/// polynomial; committing to `Q` via FRI then detects the inconsistency.
 pub struct DeepPoly<EF> {
     /// The DEEP quotient polynomial evaluated over the domain.
     /// `deep_evals[i]` is the evaluation at the i-th domain point (bit-reversed order).
@@ -47,7 +60,7 @@ impl<EF> DeepPoly<EF> {
         L::F: TwoAdicField,
         EF: ExtensionField<L::F>,
         M: Matrix<L::F>,
-        Ch: ProverChannel<F = L::F, Commitment = L::Commitment> + CanSample<L::F>,
+        Ch: ProverChannel<F = L::F, Commitment = L::Commitment>,
     {
         let lde_height = trace_trees
             .first()
@@ -83,9 +96,17 @@ impl<EF> DeepPoly<EF> {
     /// - `batched_evals`: One row per matrix, each row holding `FieldArray<EF, N>` per column.
     ///   Widths match the unpadded matrices; alignment padding is applied lazily during
     ///   channel writes and Horner reduction.
-    /// - `quotient`: Precomputed `1/(zⱼ - xᵢ)` for all opening points zⱼ and domain points xᵢ.
+    /// - `quotient`: Precomputed `1/(zⱼ − xᵢ)` for all opening points zⱼ and domain points xᵢ.
     ///
     /// Returns the constructed `DeepPoly` and the (unaligned) `batched_evals` for test inspection.
+    ///
+    /// Columns are reduced with a random `α` using Horner
+    /// (`f_red(X) = Σᵢ α^{W−1−i} · fᵢ(X)`). This lets the verifier stream the
+    /// reduction as it reads opened rows, and ensures a cheating prover cannot satisfy
+    /// some constraints while failing others with non-negligible probability.
+    ///
+    /// Implementation note: we fuse a sign change into the per-column coefficient stream
+    /// so reduction and quotient assembly can share a single traversal over the domain.
     pub(crate) fn from_evals<L, M, const N: usize, Ch>(
         params: &DeepParams,
         trace_trees: &[&L::Tree<M>],
@@ -98,7 +119,7 @@ impl<EF> DeepPoly<EF> {
         L::F: TwoAdicField,
         EF: ExtensionField<L::F>,
         M: Matrix<L::F>,
-        Ch: ProverChannel<F = L::F, Commitment = L::Commitment> + CanSample<L::F>,
+        Ch: ProverChannel<F = L::F, Commitment = L::Commitment>,
     {
         // The alignment of the trees defines the number of virtual zero-values columns were
         // inserted while hashing the rows of the matrices. The prover pads the opened rows of each
@@ -122,14 +143,17 @@ impl<EF> DeepPoly<EF> {
             .collect();
 
         // 1. Bind the prover's OOD evaluation claims into the Fiat-Shamir transcript.
-        //    The DEEP challenges (α, β) are derived after this, so a cheating prover
+        //    The DEEP challenges (alpha, beta) are derived after this, so a cheating prover
         //    cannot adapt its claims to the challenges.
-        //    Each row is implicitly zero-padded to the tree alignment, matching the
+        //    Each matrix row is zero-padded to the tree alignment, matching the
         //    virtual zero columns the LMCS inserts when hashing rows.
+        //    All matrices are concatenated into a single flat slice per eval point.
         for point_idx in 0..N {
-            for eval in batched_evals.iter_aligned(alignment) {
-                channel.send_algebra_element(eval[point_idx]);
-            }
+            let flat: Vec<EF> = batched_evals
+                .iter_aligned(alignment)
+                .map(|fa| fa[point_idx])
+                .collect();
+            channel.send_algebra_slice(&flat);
         }
 
         // 2. Grind for proof-of-work witness
@@ -155,22 +179,22 @@ impl<EF> DeepPoly<EF> {
             .collect();
 
         // Align each matrix width so padding is explicit in the transcript.
-        let aligned_widths = aligned_widths(widths.iter().copied(), alignment);
+        let aligned_widths = aligned_widths(widths, alignment);
 
-        // Compute explicit coefficients for -f_reduced(X) = -Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X).
+        // Compute explicit coefficients for -f_reduced(X) = -Σᵢ α^{W−1−i}·fᵢ(X).
         //
-        // The verifier computes f_reduced via `horner(α, columns)`, which assigns
-        // the highest power to the first column: column 0 gets α^(W-1), column W-1
+        // The verifier computes f_reduced via `horner(alpha, columns)`, which assigns
+        // the highest power to the first column: column 0 gets α^{W−1}, column W-1
         // gets α⁰. To match this with an explicit dot-product (needed for the LDE
-        // evaluation), we need coefficient[i] = -α^(W-1-i).
+        // evaluation), we need coefficient[i] = −α^{W−1−i}.
         //
         // Construction:
-        //   shifted_powers(NEG_ONE) produces [-1, -α, -α², ..., -α^(W-1)]
-        //   .rev() reverses to [-α^(W-1), ..., -α, -1]
+        //   shifted_powers(NEG_ONE) produces [−1, −α, −α², …, −α^{W−1}]
+        //   .rev() reverses to [−α^{W−1}, …, −α, −1]
         //   Split into per-matrix chunks in commitment order.
         //
         // The negation is folded into the coefficients so the DEEP quotient loop can
-        // compute f_reduced(zⱼ) + neg_f_reduced(X) = f_reduced(zⱼ) - f_reduced(X)
+        // compute f_reduced(zⱼ) + neg_f_reduced(X) = f_reduced(zⱼ) − f_reduced(X)
         // without a separate negation pass.
         let total_width: usize = aligned_widths.iter().sum();
         let mut neg_powers_iter = challenge_columns
@@ -183,91 +207,96 @@ impl<EF> DeepPoly<EF> {
             .map(|&width| neg_powers_iter.by_ref().take(width).collect())
             .collect();
 
-        // Compute -f_reduced(X) = -Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X) over the LDE domain.
-        let mut neg_column_coeffs_iter = neg_column_coeffs.iter();
-        let neg_f_reduced = zip(matrices_groups.iter(), &group_sizes)
-            .map(|(matrices_group, &size)| {
-                let group_coeffs: Vec<&Vec<EF>> =
-                    neg_column_coeffs_iter.by_ref().take(size).collect();
-                accumulate_matrices(matrices_group, &group_coeffs)
-            })
-            .reduce(|mut acc, next| {
-                debug_assert_eq!(acc.len(), next.len());
-                acc.par_chunks_mut(w).zip(next.par_chunks(w)).for_each(
-                    |(acc_chunk, next_chunk)| {
-                        EF::add_slices(acc_chunk, next_chunk);
-                    },
-                );
-                acc
-            })
-            .unwrap_or_else(|| EF::zero_vec(n));
-
-        // Pre-compute βʲ for all N points
-        let point_coeffs: [EF; N] = core::array::from_fn(|j| challenge_points.exp_u64(j as u64));
-
-        // Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) · 1/(zⱼ - X)
+        // Compute -f_reduced(X) = -Σᵢ α^{W−1−i}·fᵢ(X) over the LDE domain, then
+        // transform in-place into the DEEP quotient:
+        //   Q(X) = Σⱼ βʲ·(f_reduced(zⱼ) − f_reduced(X))·1/(zⱼ − X)
         //
-        // If all evaluation claims are correct, each numerator vanishes at X = zⱼ,
-        // canceling the pole. Q(X) is then low-degree, which FRI can verify.
-        // A false claim leaves an uncanceled pole, making Q high-degree.
-        let mut deep_evals = EF::zero_vec(n);
+        // The column reduction and quotient assembly are fused: the `neg_f_reduced`
+        // vector is consumed in-place to produce `deep_evals`, avoiding a separate
+        // full-domain allocation and improving cache locality.
 
-        if w == 1 || n < w {
-            // Scalar path: use when packing width is 1, or the domain is smaller than
-            // the packing width (avoiding silent truncation from chunks_exact).
-            deep_evals
-                .par_iter_mut()
-                .zip(neg_f_reduced.par_iter())
-                .zip(point_quotient.par_iter())
-                .for_each(|((acc, &neg), q)| {
-                    // First point (j=0) has coefficient β⁰ = 1
-                    let mut result = q[0] * (f_reduced_at_points[0] + neg);
-                    // Remaining points multiply by βʲ
-                    for j in 1..N {
-                        result += point_coeffs[j] * q[j] * (f_reduced_at_points[j] + neg);
-                    }
-                    *acc = result;
-                });
-        } else {
-            // Packed path: use chunks for SIMD vectorization
-            // Pre-broadcast scalars to packed values (done once, outside hot loop)
-            let f_reduced_packed: [EF::ExtensionPacking; N] =
-                f_reduced_at_points.0.map(EF::ExtensionPacking::from);
-            let point_coeffs_packed: [EF::ExtensionPacking; N] =
-                point_coeffs.map(EF::ExtensionPacking::from);
+        let deep_evals = info_span!("DEEP reduce + assemble").in_scope(|| {
+            let mut neg_column_coeffs_iter = neg_column_coeffs.iter();
+            let mut neg_f_reduced = zip(matrices_groups.iter(), &group_sizes)
+                .map(|(matrices_group, &size)| {
+                    let group_coeffs: Vec<&Vec<EF>> =
+                        neg_column_coeffs_iter.by_ref().take(size).collect();
+                    accumulate_matrices(matrices_group, &group_coeffs)
+                })
+                .reduce(|mut acc, next| {
+                    debug_assert_eq!(acc.len(), next.len());
+                    acc.par_chunks_mut(w).zip(next.par_chunks(w)).for_each(
+                        |(acc_chunk, next_chunk)| {
+                            EF::add_slices(acc_chunk, next_chunk);
+                        },
+                    );
+                    acc
+                })
+                .unwrap_or_else(|| EF::zero_vec(n));
 
-            deep_evals
-                .par_chunks_exact_mut(w)
-                .zip(neg_f_reduced.par_chunks_exact(w))
-                .zip(point_quotient.par_chunks_exact(w))
-                .for_each(|((acc_chunk, neg_chunk), q_chunk)| {
-                    let neg_p = EF::ExtensionPacking::from_ext_slice(neg_chunk);
+            // Pre-compute βʲ for all N points
+            let point_coeffs: [EF; N] =
+                core::array::from_fn(|j| challenge_points.exp_u64(j as u64));
 
-                    // Transpose quotients: q_chunk[lane][point] -> q_packed[point] packs all lanes
-                    let q_packed: [EF::ExtensionPacking; N] =
-                        EF::ExtensionPacking::pack_ext_columns(FieldArray::as_raw_slice(q_chunk));
+            // Transform neg_f_reduced in-place into deep_evals.
+            // Q(x) = Σⱼ βʲ·qⱼ(x)·(f_reduced(zⱼ) + neg_f_reduced(x))
+            if w == 1 || n < w {
+                neg_f_reduced
+                    .par_iter_mut()
+                    .zip(point_quotient.par_iter())
+                    .for_each(|(neg, q)| {
+                        let mut result = q[0] * (f_reduced_at_points[0] + *neg);
+                        for j in 1..N {
+                            result += point_coeffs[j] * q[j] * (f_reduced_at_points[j] + *neg);
+                        }
+                        *neg = result;
+                    });
+            } else {
+                let f_reduced_packed: [EF::ExtensionPacking; N] =
+                    f_reduced_at_points.0.map(EF::ExtensionPacking::from);
+                let point_coeffs_packed: [EF::ExtensionPacking; N] =
+                    point_coeffs.map(EF::ExtensionPacking::from);
 
-                    // First point (j=0) has coefficient β⁰ = 1, compute directly
-                    let mut result_p = q_packed[0] * (f_reduced_packed[0] + neg_p);
+                neg_f_reduced
+                    .par_chunks_exact_mut(w)
+                    .zip(point_quotient.par_chunks_exact(w))
+                    .for_each(|(neg_chunk, q_chunk)| {
+                        let neg_p = EF::ExtensionPacking::from_ext_slice(neg_chunk);
 
-                    // Remaining points (j>0) multiply by βʲ
-                    for j in 1..N {
-                        result_p +=
-                            point_coeffs_packed[j] * q_packed[j] * (f_reduced_packed[j] + neg_p);
-                    }
-                    result_p.to_ext_slice(acc_chunk);
-                });
-        }
+                        // Transpose quotients: q_chunk[lane][point] -> q_packed[point] packs all lanes
+                        let q_packed: [EF::ExtensionPacking; N] =
+                            EF::ExtensionPacking::pack_ext_columns(FieldArray::as_raw_slice(
+                                q_chunk,
+                            ));
+
+                        // First point (j=0) has coefficient β⁰ = 1, compute directly
+                        let mut result_p = q_packed[0] * (f_reduced_packed[0] + neg_p);
+
+                        // Remaining points (j>0) multiply by βʲ
+                        for j in 1..N {
+                            result_p += point_coeffs_packed[j]
+                                * q_packed[j]
+                                * (f_reduced_packed[j] + neg_p);
+                        }
+                        result_p.to_ext_slice(neg_chunk);
+                    });
+            }
+
+            neg_f_reduced // now contains deep_evals
+        });
 
         (Self { deep_evals }, batched_evals)
     }
 }
 
-/// Accumulate `f_reduced(X) = Σᵢ αᵂ⁻¹⁻ⁱ · fᵢ(X)` across matrices of varying heights.
+/// Accumulate `f_reduced(X) = Σᵢ α^{W−1−i}·fᵢ(X)` across matrices of varying heights.
 ///
-/// In bit-reversed order, lifting `f(X)` to `f(Xʳ)` repeats each value r times.
-/// We exploit this: when crossing a height boundary, upsample by repeating entries,
-/// then continue accumulating. Matrices must be sorted by ascending height.
+/// In bit-reversed order, the lifted polynomial `f(Xʳ)` repeats each evaluation r times
+/// (because adjacent bit-reversed indices differ only in their low bits, mapping to points
+/// that are r-th roots of the same value). This lets us upsample by repetition instead of
+/// recomputing the lifted polynomial: when crossing a height boundary, repeat entries to
+/// match the new height, then continue accumulating. Matrices must be sorted by ascending
+/// height.
 fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>, C: AsRef<[EF]>>(
     matrices: &[&M],
     coeffs: &[C],
@@ -307,10 +336,11 @@ fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>, C: AsRef<[
             acc[..height].swap_with_slice(&mut scratch[..height]);
         }
 
-        // SIMD path using horizontal packing
-        // Pack coefficients: group WIDTH coefficients into each ExtensionPacking
+        // SIMD path using horizontal packing.
+        // Slice to matrix width to avoid packing alignment-padding coefficients.
         let w = F::Packing::WIDTH;
-        let packed_coeffs: Vec<EF::ExtensionPacking> = coeffs
+        let active_coeffs = &coeffs[..matrix.width()];
+        let packed_coeffs: Vec<EF::ExtensionPacking> = active_coeffs
             .chunks(w)
             .map(|chunk| {
                 if chunk.len() == w {
@@ -355,7 +385,7 @@ mod tests {
         let c: EF = EF::from_u64(2);
         let alignment = 3;
         let widths = [2usize, 3];
-        let aligned_widths = aligned_widths(widths, alignment);
+        let aligned_widths = aligned_widths(widths.to_vec(), alignment);
         let rows: Vec<Vec<F>> = vec![
             vec![F::from_u64(1), F::from_u64(2)],
             vec![F::from_u64(3), F::from_u64(4), F::from_u64(5)],
@@ -387,7 +417,7 @@ mod tests {
         let c: EF = EF::from_u64(7);
         let alignment = 4;
         let widths = [3usize, 5, 2];
-        let aligned_widths = aligned_widths(widths, alignment);
+        let aligned_widths = aligned_widths(widths.to_vec(), alignment);
 
         let mut neg_powers_iter = c
             .shifted_powers(EF::NEG_ONE)

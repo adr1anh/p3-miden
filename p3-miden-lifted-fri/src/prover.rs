@@ -4,7 +4,6 @@
 
 use alloc::collections::BTreeSet;
 
-use p3_challenger::{CanSample, CanSampleBits};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
@@ -21,7 +20,7 @@ use crate::fri::prover::FriPolys;
 /// # Preconditions
 /// - `eval_points` must lie outside both the trace-domain subgroup `H` and the
 ///   LDE evaluation coset `gK` used by the PCS. If a point lies in either set,
-///   denominators `(z_j - X)` in the DEEP quotient become zero for some domain element,
+///   denominators `(zⱼ − X)` in the DEEP quotient become zero for some domain element,
 ///   making the quotient undefined.
 /// - All trace trees must be built at the same LDE height `2^log_lde_height`.
 ///   Multiple LDE heights are not supported yet and will panic.
@@ -47,8 +46,10 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     EF: ExtensionField<F>,
     L: Lmcs<F = F>,
     M: Matrix<F>,
-    Ch: ProverChannel<F = F, Commitment = L::Commitment> + CanSample<F> + CanSampleBits<usize>,
+    Ch: ProverChannel<F = F, Commitment = L::Commitment>,
 {
+    const { assert!(N > 0, "at least one evaluation point required") };
+
     // Determine LDE domain size from the supplied LDE height.
     // For now, all trace trees must share this height; mixed LDE heights are not supported yet.
     assert!(!trace_trees.is_empty(), "at least one trace tree required");
@@ -60,7 +61,7 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
         "mixed LDE heights are not supported yet",
     );
     // ─────────────────────────────────────────────────────────────────────────
-    // Construct DEEP quotient (observes evals, grinds, samples α and β)
+    // Construct DEEP quotient (observes evals, grinds, samples alpha and beta)
     // ─────────────────────────────────────────────────────────────────────────
     let deep_poly = info_span!("DEEP quotient").in_scope(|| {
         DeepPoly::from_trees::<L, M, N, Ch>(
@@ -103,11 +104,15 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     // ─────────────────────────────────────────────────────────────────────────
     info_span!("query phase").in_scope(|| {
         // Open input trees at all query indices at once (one proof per tree)
-        for tree in trace_trees {
-            tree.prove_batch(tree_indices.iter().copied(), channel);
-        }
+        info_span!("open input trees", n_trees = trace_trees.len()).in_scope(|| {
+            for tree in trace_trees {
+                tree.prove_batch(tree_indices.iter().copied(), channel);
+            }
+        });
 
         // Open all FRI rounds at all query indices at once (one proof per round)
-        fri_polys.prove_queries(&params.fri, &tree_indices, channel);
+        info_span!("open FRI trees").in_scope(|| {
+            fri_polys.prove_queries(&params.fri, &tree_indices, channel);
+        });
     });
 }

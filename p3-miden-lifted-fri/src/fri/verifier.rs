@@ -25,7 +25,6 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use p3_challenger::CanSample;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_lmcs::{Lmcs, LmcsError};
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
@@ -38,8 +37,10 @@ use crate::utils::horner;
 /// FRI low-degree test oracle.
 ///
 /// Created via [`FriOracle::new`], which samples folding challenges from
-/// the Fiat-Shamir transcript. The oracle tests that evaluations are close
-/// to a low-degree polynomial.
+/// the Fiat-Shamir transcript. The oracle verifies that evaluations are close
+/// to a low-degree polynomial by checking that each folding round was performed
+/// correctly via spot-check queries, and that the final (small) polynomial
+/// matches the prover's claim exactly.
 ///
 /// Uses a single base-field LMCS. Opened base field values are reconstructed
 /// to extension field for folding verification.
@@ -76,7 +77,7 @@ where
         channel: &mut Ch,
     ) -> Result<Self, FriError>
     where
-        Ch: VerifierChannel<F = F, Commitment = L::Commitment> + CanSample<F>,
+        Ch: VerifierChannel<F = F, Commitment = L::Commitment>,
     {
         let num_rounds = params.num_rounds(log_domain_size);
         let mut rounds = Vec::with_capacity(num_rounds);
@@ -107,6 +108,10 @@ where
     ///
     /// Empty `evals` will fail at the first round's LMCS `open_batch` call,
     /// which rejects empty indices.
+    ///
+    /// For each query, the verifier opens the committed row and re-computes the fold
+    /// locally. A mismatch at any round indicates that the prover did not fold honestly.
+    /// After all rounds, the final polynomial is checked exactly against the prover's claim.
     pub fn test_low_degree<Ch>(
         &self,
         lmcs: &L,
@@ -166,11 +171,10 @@ where
                     let row_idx = idx >> log_arity;
                     let position = idx & (arity - 1);
 
-                    // open_batch guarantees all requested indices are returned with
-                    // the correct widths.
-                    let flat_row: &[F] = opened_rows
+                    // FRI commits one matrix per round; iter_rows().next() yields it safely.
+                    let flat_row = opened_rows
                         .get(&row_idx)
-                        .and_then(|rows| rows.iter_rows().next()?.get(..base_width))
+                        .and_then(|rows| rows.iter_rows().next())
                         .ok_or(FriError::InvalidOpening {
                             tree_index: row_idx,
                             round: round_idx,

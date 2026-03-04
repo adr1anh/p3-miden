@@ -14,7 +14,7 @@
 //!   configurable folding arities and final polynomial degree.
 //!
 //! - **PCS API (crate root)**: complete PCS implementation combining DEEP quotient and
-//!   FRI via `prover::open_with_channel` and `verifier::verify_with_channel`, plus `PcsParams`.
+//!   FRI via `prover::open_with_channel` and `verifier::verify`, plus `PcsParams`.
 //!
 //! For the Lifted Matrix Commitment Scheme (LMCS), see the [`p3_miden_lmcs`] crate.
 //!
@@ -44,6 +44,7 @@ pub mod verifier;
 
 pub mod utils;
 
+pub use deep::OpenedValues;
 pub use params::PcsParams;
 pub use proof::PcsTranscript;
 pub use verifier::PcsError;

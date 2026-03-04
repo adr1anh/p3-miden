@@ -179,6 +179,10 @@ where
         // Collect and deduplicate indices. BTreeSet iteration yields sorted order.
         let unique_indices: BTreeSet<usize> = indices.into_iter().collect();
 
+        if unique_indices.is_empty() {
+            return Err(LmcsError::InvalidProof);
+        }
+
         // Map index -> (rows, leaf_hash), filled in sorted order.
         let mut openings_by_index: BTreeMap<usize, Opening<Self::F, Self::Commitment>> =
             BTreeMap::new();
@@ -195,16 +199,15 @@ where
             let elems = channel.receive_hint_field_slice(total_width)?.to_vec();
             let rows = RowList::new(elems, widths);
 
-            let salt: [PF::Value; SALT_ELEMS] = channel.receive_hint_field_array()?;
-
             // Recompute leaf hash from opened data to verify against the Merkle commitment.
-            let leaf_hash = self.hash(rows.iter_rows().chain(core::iter::once(salt.as_slice())));
+            let leaf_hash = if SALT_ELEMS > 0 {
+                let salt: [PF::Value; SALT_ELEMS] = channel.receive_hint_field_array()?;
+                self.hash(rows.iter_rows().chain([salt.as_slice()]))
+            } else {
+                self.hash(rows.iter_rows())
+            };
 
             openings_by_index.insert(index, (rows, leaf_hash));
-        }
-
-        if openings_by_index.is_empty() {
-            return Err(LmcsError::InvalidProof);
         }
 
         // Recompute root from known leaves and streamed siblings.
@@ -307,6 +310,10 @@ where
             indices,
             channel,
         )?)
+    }
+
+    fn alignment(&self) -> usize {
+        <H as Alignable<PF::Value, PD::Value>>::ALIGNMENT
     }
 }
 // ============================================================================
@@ -461,5 +468,66 @@ mod tests {
             ),
             Err(LmcsError::InvalidProof)
         );
+    }
+
+    /// Reproduces the "root mismatch" bug when using Goldilocks + Blake3 (byte-based hash).
+    ///
+    /// The lifted STARK only tests with field-based Poseidon2, never with byte-based hashes.
+    /// This test isolates the LMCS layer to confirm that ChainingHasher<Blake3> +
+    /// CompressionFunctionFromHasher<Blake3> work correctly for commit-then-open.
+    #[test]
+    fn goldilocks_blake3_roundtrip() {
+        use alloc::vec;
+        use alloc::vec::Vec;
+
+        use p3_blake3::Blake3;
+        use p3_challenger::{HashChallenger, SerializingChallenger64};
+        use p3_goldilocks::Goldilocks;
+        use p3_miden_stateful_hasher::ChainingHasher;
+        use p3_symmetric::CompressionFunctionFromHasher;
+
+        type F = Goldilocks;
+        type Sponge = ChainingHasher<Blake3>;
+        type Compress = CompressionFunctionFromHasher<Blake3, 2, 32>;
+        const WIDTH: usize = 32;
+        const DIGEST: usize = 32;
+        type Blake3Lmcs = LmcsConfig<F, u8, Sponge, Compress, WIDTH, DIGEST>;
+        type Challenger = SerializingChallenger64<F, HashChallenger<u8, Blake3, 32>>;
+
+        fn challenger() -> Challenger {
+            SerializingChallenger64::from_hasher(vec![], Blake3)
+        }
+
+        let sponge = ChainingHasher::new(Blake3);
+        let compress = CompressionFunctionFromHasher::new(Blake3);
+        let lmcs: Blake3Lmcs = LmcsConfig::new(sponge, compress);
+
+        // Single 4x2 matrix of constant values.
+        let values: Vec<F> = (0..4 * 2).map(|i| F::from_u64(i as u64)).collect();
+        let matrix = RowMajorMatrix::new(values, 2);
+
+        let tree = lmcs.build_tree(vec![matrix]);
+        let widths = tree.widths();
+        let log_max_height = log2_strict_usize(tree.height());
+        let commitment = tree.root();
+
+        // Prove then verify a single index.
+        let mut prover_channel = ProverTranscript::new(challenger());
+        tree.prove_batch([0usize], &mut prover_channel);
+        let transcript = prover_channel.into_data();
+
+        let mut verifier_channel = VerifierTranscript::from_data(challenger(), &transcript);
+        let opened = lmcs
+            .open_batch(
+                &commitment,
+                &widths,
+                log_max_height,
+                [0usize],
+                &mut verifier_channel,
+            )
+            .expect("Goldilocks+Blake3 LMCS roundtrip should verify");
+
+        assert_eq!(opened[&0], tree.rows(0));
+        assert!(verifier_channel.is_empty());
     }
 }

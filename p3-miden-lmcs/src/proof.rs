@@ -101,7 +101,9 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
             .map(|index| {
                 let elems = channel.receive_hint_field_slice(total_width)?.to_vec();
                 let rows = RowList::new(elems, widths);
-                let salt = channel.receive_hint_field_array()?;
+                // When SALT_ELEMS == 0, receive_hint_field_array reads an empty
+                // array (no-op), matching open_batch's conditional read.
+                let salt: [F; SALT_ELEMS] = channel.receive_hint_field_array()?;
                 Ok((index, LeafOpening { rows, salt }))
             })
             .collect::<Result<_, _>>()?;
@@ -148,12 +150,12 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
                 }
             }
 
-            let leaf_hash = lmcs.hash(
-                opening
-                    .rows
-                    .iter_rows()
-                    .chain(core::iter::once(opening.salt.as_slice())),
-            );
+            let rows_iter = opening.rows.iter_rows();
+            let leaf_hash = if SALT_ELEMS > 0 {
+                lmcs.hash(rows_iter.chain([opening.salt.as_slice()]))
+            } else {
+                lmcs.hash(rows_iter)
+            };
 
             proofs.entry(index).or_insert_with(|| Proof {
                 rows: opening.rows.clone(),

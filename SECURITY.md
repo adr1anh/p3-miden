@@ -1,329 +1,273 @@
 # Security Review Guide
 
-This document provides a focused guide for security review of the Lifted FRI PCS implementation,
-with an explicit path toward a composed STARK protocol.
+This document is a practical review guide for the *lifted STARK* stack in this
+workspace.
 
-## Protocol Hierarchy
+It is written for auditors and maintainers who want to understand the trust
+boundaries, transcript/canonicality rules, and "what can go wrong" invariants.
 
-LMCS -> {DEEP, FRI} -> PCS -> STARK (TBD)
+This code has not been independently audited.
 
-- LMCS provides commitments and batch openings.
-- DEEP + FRI implement the low-degree check.
-- PCS orchestrates DEEP + FRI over LMCS commitments.
-- STARK (planned) will bind statement data, enforce canonicality, and define AIR constraints.
-
-## Quick Map
-
-- Threat model: statement metadata is validated and Fiat-Shamir-bound by the outer STARK; attacker controls transcript bytes.
-- APIs: `open_with_channel`, `verify_with_channel`, `LmcsConfig::open_batch`.
-- Data ownership: params/widths/heights are trusted statement data; transcript streams are attacker-controlled.
-- Composition boundary: this layer may leave unread transcript data; outer protocol enforces canonicality.
+## High-Risk Items (Read These First)
 
-## What to Review First
+- Transcript "observed vs unobserved" split: `p3-miden-transcript/src/prover.rs` and `p3-miden-transcript/src/verifier.rs`
+- LMCS batch opening verification and sibling order: `p3-miden-lmcs/src/lmcs.rs`
+- DEEP reduction and domain-point reconstruction: `p3-miden-lifted-fri/src/deep/verifier.rs`
+- FRI round loop (index shifting, `s_inv` computation, final poly check): `p3-miden-lifted-fri/src/fri/verifier.rs`
+- STARK boundary canonicality and OOD identity check: `p3-miden-lifted-verifier/src/verifier.rs`
 
-1) `p3-miden-lifted-fri/src/verifier.rs::verify_with_channel`
-2) `p3-miden-lmcs/src/lmcs.rs::LmcsConfig::open_batch` + `p3-miden-lmcs/src/proof.rs`
-3) DEEP verifier reduction and domain reconstruction
-4) FRI verifier round loop (grind/challenge, folding, index shifting)
-
-## Scope Overview
-
-| Area | Priority | Notes |
-|------|----------|-------|
-| `p3-miden-lmcs` (LMCS) | High | Commitment scheme used by the protocol. |
-| `p3-miden-lmcs/src/mmcs/*` (MMCS wrapper) | Low | Compatibility layer for potential upstreaming; not used by our protocol today. |
-| `p3-miden-lifted-fri` | High | DEEP quotient + FRI + PCS orchestration. |
-| `p3-miden-transcript` | Medium | Transcript channels, parsing shape, PoW witnesses. |
-| `p3-miden-stateful-hasher` | Medium | Stateful hashers and alignment semantics. |
-| `p3-miden-stark` (TBD) | High | Will bind statement data and define protocol-level constraints. |
-
-## Attack Surface and Data Ownership
-
-### Externally used APIs (current trust boundary)
-- `p3-miden-lifted-fri/src/prover.rs::open_with_channel`
-- `p3-miden-lifted-fri/src/verifier.rs::verify_with_channel`
-- `p3-miden-lmcs/src/lmcs.rs::LmcsConfig::open_batch`
-
-These are the APIs expected to be called by the outer STARK.
-
-### Key internal codepaths (not entrypoints)
-- `p3-miden-lifted-fri/src/deep/verifier.rs::DeepOracle::{new,open_batch}`
-- `p3-miden-lifted-fri/src/fri/verifier.rs::FriOracle::{new,test_low_degree}`
-- Shape-only parsing helpers: `p3-miden-lifted-fri/src/proof.rs::PcsTranscript::from_verifier_channel`,
-  `p3-miden-lmcs/src/proof.rs::BatchProof::read_from_channel`, `...::single_proofs`
-
-### Trusted statement data (caller-supplied)
-- Trace commitments (roots) and their matrix widths (including any alignment padding).
-- `log_lde_height` / `log_max_height`.
-- `PcsParams` (domain sizes, blowup, arities, query count, PoW bits).
-- LMCS hash/compress configuration; for MMCS, `Dimensions` and matrix ordering.
-
-Statement metadata (params/widths/heights/commitment roots) is not automatically
-bound into this layer's transcript; the outer STARK must bind it to prevent statement rebinding.
-
-### Attacker-controlled proof bytes
-- Transcript streams (field elements + prover-serialized commitment objects) and LMCS hint data (rows, salts, siblings).
-- PoW witnesses (consumed by `grind`) are part of the transcript field stream.
-- Indices and challenges are derived by the verifier via Fiat-Shamir; they are not
-  provided directly by the prover (but depend on prior transcript data).
-
-## Transcript Model (p3-miden-transcript + typed views)
-
-The transcript crate provides simple channels with explicit structure and parsing:
-
-- `ProverTranscript` stores two streams (fields and commitments). `send_*` records and observes
-  into the challenger; `hint_*` records only (used for LMCS proofs).
-- `VerifierTranscript` consumes slices with explicit lengths and observes them into the challenger.
-  `grind` reads a PoW witness from the field stream and checks it; `is_empty()` is available
-  for canonical-consumption checks.
+## Protocol Hierarchy (This Workspace)
 
-Because verification parses the transcript as it goes, we avoid redundant structural checks.
-This keeps proofs compact but means malformed transcripts typically surface as parse failures
-or evaluation mismatches rather than bespoke "shape" errors.
+```text
+LMCS  ->  DEEP + FRI  ->  PCS (lifted-fri)  ->  Lifted STARK (lifted-{prover,verifier})
+```
 
-### Structured Types (Export Only)
-
-We provide structured transcript views (`PcsTranscript`, `DeepTranscript`, `FriTranscript`,
-`BatchProof`, etc.). These are **not used in production verification**; they exist for:
-- Exporting proofs in a structured format for debugging or analysis.
-- Reconstructing the full prover-verifier interaction (including challenges and PoW witnesses)
-  without re-running verification.
-- Enabling recursive verifiers that need structured proof data.
-
-These types validate parsing shape only and do **not** guarantee proof validity.
-Examples include `LmcsConfig::read_batch_proof_from_channel` and `BatchProof::single_proofs`.
+- **LMCS** (`p3-miden-lmcs`): Merkle commitments + batch openings for multiple
+  matrices, presented as a uniform-height view via virtual upsampling.
+- **DEEP** (`p3-miden-lifted-fri/src/deep`): batches OOD evaluation claims into a
+  single quotient polynomial.
+- **FRI** (`p3-miden-lifted-fri/src/fri`): low-degree testing of that quotient.
+- **PCS** (`p3-miden-lifted-fri`): wires DEEP + FRI together and drives query
+  sampling/opening.
+- **Lifted STARK** (`p3-miden-lifted-{prover,verifier}`): commits traces/aux/Q,
+  samples STARK challenges, evaluates constraints OOD, and checks the quotient
+  identity.
 
-### Future: Transcript Fingerprint
+## Threat Model and Trust Boundaries
 
-A transcript fingerprint (hash squeezed from the challenger after full consumption) may be
-added to verify implementation equivalence: two verifiers processing the same valid proof
-should produce identical fingerprints, providing a lightweight check that transcript
-handling is consistent across implementations.
+Assume:
 
-## Alignment and Padding Contract (LMCS + PCS)
-
-- Hasher absorption padding: sponge-based hashers implicitly zero-pad to their alignment.
-  Honest provers can rely on this instead of materializing zeros.
-- Transcript alignment padding: rows may include extra elements for fixed-width parsing.
-  LMCS does not constrain these values; a malicious prover can materialize non-zero padding.
-- PCS/FRI: padded columns are treated as additional polynomials and are only constrained
-  to be low-degree here. AIRs explicitly ignore them (unused variables); there is no need
-  to check they are zero in this layer.
-- Verifier behavior: alignment only affects the expected widths and how many elements are read
-  from transcript hints. If prover and verifier disagree on alignment, transcript parsing fails.
-
-## Protocol Contracts (High Level)
-
-### LMCS (p3-miden-lmcs)
-
-| What LMCS proves | What LMCS does not prove |
-|---|---|
-| Opened rows are consistent with a commitment under the configured hash/compress functions. | It does not prove the original matrix heights beyond the supplied dimensions. |
-| Openings refer to the lifted, uniform-height view of the input matrices. | It does not enforce periodicity or semantics of columns. |
-| Matrix order is binding in the commitment. | It does not assign meaning to matrix positions; the caller must bind ordering. |
-
-**Trusted statement data**:
-- `widths` (matrix widths, in commitment order).
-- `log_max_height` (Merkle tree height / max domain size).
-- The ordered list of matrices; permutation changes the commitment.
-- For MMCS verification, `Dimensions` (widths already aligned, heights in commitment order) are
-  trusted statement data; verification does not re-check ordering or power-of-two constraints.
-
-**Commitment preimage (StatefulHasher model)**:
-- LMCS leaf hashing is defined in terms of the `StatefulHasher` abstraction:
-  initialize a hasher state, absorb lifted rows in matrix order, optionally absorb
-  salt, then squeeze a digest.
-- We support three hashing modes (see `p3-miden-stateful-hasher`):
-  1) `StatefulSponge`: field-native sponge with proper sponge padding (alignment = rate).
-  2) `SerializingStatefulSponge`: serializes field elements to u8/u32/u64 then sponges; alignment
-     is derived from field size and inner rate.
-  3) `ChainingHasher`: chaining mode `H(state || input)`; no padding (alignment = 1).
-
-### Lifted FRI PCS (p3-miden-lifted-fri)
-
-| What the PCS proves | What the PCS does not prove |
-|---|---|
-| Claimed evaluations are consistent with a low-degree polynomial matching commitments. | It does not validate parameter security levels or domain sizes. |
-| DEEP + FRI enforce consistency of evaluation claims. | It does not reinterpret LMCS lifting; smaller matrices are treated as lifted. |
-
-**Trusted statement data**:
-- Domain sizes, folding arities, and other `PcsParams`.
-- Transcript ordering and challenge sampling must follow the prescribed flow.
-
-## Error Handling Policy
-
-Many prover-side routines assume well-formed inputs (sorted heights, valid params, non-empty
-matrices) and will `panic!` on violations. This is intentional for development and should be
-interpreted as programmer error, not verifier-controlled input. Verification paths return
-`Result`/`Option` on malformed proof bytes; panics should only be reachable via inconsistent
-caller-supplied statement data. If a panic becomes reachable from attacker-controlled proof
-bytes, treat it as a DoS bug.
-
-## Verification Invariants
-
-### 1. LMCS Merkle verification (`p3-miden-lmcs`)
-
-**File**: `p3-miden-lmcs/src/lmcs.rs`
-
-| Function | What to Check |
-|----------|---------------|
-| `LmcsConfig::open_batch` | Root recomputation, sibling consumption order, duplicate indices |
-| `LmcsConfig::read_batch_proof_from_channel` | Transcript parsing shape |
-
-**File**: `p3-miden-lmcs/src/lifted_tree.rs`
-
-| Function | What to Check |
-|----------|---------------|
-| `LiftedMerkleTree::prove_batch` | Canonical sibling emission order |
-
-**File**: `p3-miden-lmcs/src/proof.rs`
-
-| Function | What to Check |
-|----------|---------------|
-| `BatchProof::read_from_channel` | Canonical sibling parsing; no out-of-range indices |
-| `BatchProof::single_proofs` | Deterministic path reconstruction |
-
-**Key invariants to verify**:
-- [ ] Siblings are consumed in canonical order (left-to-right, bottom-to-top)
-- [ ] Missing siblings return `InvalidProof`
-- [ ] Duplicate indices may be coalesced as an optimization; verification should not rely on duplicates being preserved
-- [ ] Out-of-range indices return `InvalidProof`
-- [ ] Extra hints are ignored and left unread (callers can enforce transcript exhaustion)
-
-### 2. LMCS leaf digest computation (`p3-miden-lmcs`)
-
-**File**: `p3-miden-lmcs/src/lmcs.rs`
-
-| Function | What to Check |
-|----------|---------------|
-| `Lmcs::hash` | Width validation (caller), salt absorption order |
-
-**File**: `p3-miden-lmcs/src/lifted_tree.rs`
-
-| Function | What to Check |
-|----------|---------------|
-| `build_leaf_states_upsampled` | Upsampling correctness, state maintenance |
-| `absorb_matrix` | Correct row absorption into states |
-| `validate_heights` | Height ordering enforcement |
-
-**Key invariants to verify**:
-- [ ] Matrices absorbed in height-sorted order (enforced by panic)
-- [ ] Upsampling duplicates states correctly when height increases
-- [ ] Salt absorbed after all matrix rows
-- [ ] SIMD path produces identical results to scalar path
+- The attacker controls all proof/transcript bytes.
+- Hash/compression primitives are collision-resistant.
+- Fiat-Shamir is modeled as a random oracle (or an appropriate heuristic).
 
-### 3. DEEP quotient invariants (`p3-miden-lifted-fri/deep`)
+Caller-provided "statement data" is *not* consistently observed into the
+challenger by these libraries. In particular, **public inputs** are passed
+out-of-band to prover/verifier APIs. If an input can vary per statement, the
+application must bind it into Fiat-Shamir on *both* prover and verifier.
 
-**Files**: `p3-miden-lifted-fri/src/deep/prover.rs`, `.../deep/verifier.rs`,
-`.../deep/interpolate.rs`, `.../proof.rs`, `.../utils.rs`
+## Normative Requirements (MUST)
 
-The DEEP quotient is a protocol invariant shared by prover and verifier: the constructed
-quotient must be low-degree iff all evaluation claims are correct. Review the symmetry of
-the reduction and the mapping from evaluation points to domain points.
+These are requirements on *applications* composing these crates.
 
-**Key invariants to verify**:
-- [ ] Evaluations are observed into the transcript before grinding and challenge sampling.
-- [ ] Challenge sampling order (grind -> sample) is consistent and uses the same transcript view.
-- [ ] Coefficients `alpha` and `beta` are applied in the same Horner order on both sides.
-- [ ] Domain points are reconstructed identically (bit-reversal + coset shift).
-- [ ] Alignment/padding: evaluation vectors are serialized with aligned widths; padded columns are
-      treated as extra polynomials. For sponge-based hashers, explicit zero padding is equivalent
-      to implicit sponge padding; for chaining hashers, alignment is 1.
-- [ ] Lifting semantics: smaller matrices are evaluated via `z^r` with the correct `r`, and the
-      barycentric weight folding matches that lifted view.
-- [ ] Evaluation points are outside the LDE domain (no division by zero).
+- You MUST bind all per-statement out-of-band inputs (notably `public_values`,
+  AIR identity/version tags, commitment roots, widths/heights metadata, and any
+  statement metadata) into the Fiat-Shamir challenger state, identically on both
+  prover and verifier.
+- You MUST enforce transcript boundaries / canonicality at the protocol boundary.
+  The lifted STARK verifier rejects trailing data; if you compose the PCS
+  separately, use `verify_strict` or check `channel.is_empty()` at
+  the outer layer.
+- You MUST cap proof sizes / transcript lengths when deserializing from bytes.
+  These libraries operate on already-deserialized streams and do not enforce
+  global size limits.
+- You MUST ensure evaluation points used by DEEP/PCS lie outside the trace
+  subgroup `H` and outside the LDE coset `gK`.
+- You MUST only use LMCS lifting with AIRs that are compatible with the lifted
+  view (see `docs/lifting.md`).
 
-### 4. FRI protocol invariants (`p3-miden-lifted-fri/fri`)
+Concrete examples of statement data that the application must treat explicitly:
 
-**Files**: `p3-miden-lifted-fri/src/fri/mod.rs`, `.../fri/prover.rs`,
-`.../fri/verifier.rs`, `.../fri/fold/*`
+- `public_values`
+- AIR identity / version tags (if multiple AIRs exist)
+- configuration choices not already committed inside the transcript
 
-Treat FRI as a single protocol: check that the prover/verification logic implements the same
-sequence of folds, indices, and checks.
+## Transcript Model (Observed vs Hinted)
 
-**Key invariants to verify**:
-- [ ] Round count and domain sizes are derived correctly from params (loop termination is correct).
-- [ ] Per-round commitment -> grind -> challenge order is preserved.
-- [ ] Query indices are shifted correctly each round (`log_arity * (round + 1)`).
-- [ ] `s_inv` values are computed identically (bit-reversed positions).
-- [ ] Folding formulas for arity 2/4/8 match the intended interpolation.
-- [ ] Final polynomial evaluation uses the correct point and degree bounds.
+`p3-miden-transcript` stores two streams (fields and commitments) and provides
+two kinds of writes/reads:
 
-### 5. PCS orchestration invariants (`p3-miden-lifted-fri`)
+- **Observed** (`send_*` / `receive_*`): data is appended/consumed and fed into
+  the challenger state.
+- **Hints** (`hint_*` / `receive_hint_*`): data is appended/consumed but is *not*
+  observed into the challenger. LMCS openings are hints.
 
-- [ ] Transcript operations occur in the correct order.
-- [ ] All proofs are verified (none skipped).
-- [ ] Error types are propagated correctly.
-- [ ] Statement data is bound into the transcript by the caller before sampling challenges.
-- [ ] Canonicality is enforced at composition boundaries (e.g., `is_empty()` if required).
+This split is security-critical:
 
-## STARK Protocol (TBD)
+- Anything that must affect challenge sampling must be **observed**.
+- Hints are only safe for data whose integrity is checked cryptographically
+  against an already-observed commitment.
 
-Assumptions for the composed STARK layer:
-- Statement metadata is validated and Fiat-Shamir-bound to prevent statement rebinding.
-- Proof bytes are serialized/deserialized with size caps.
-- Canonicality is enforced at protocol boundaries (transcript exhaustion).
-- AIR constraints define whether padded columns are ignored or must be zero.
+Important detail: PoW witnesses produced/consumed by `grind` are also **unobserved**.
+They are stored in the transcript field stream but are not absorbed into the
+challenger state.
 
-Placeholders for STARK responsibilities:
-- Bind statement data (commitment roots, widths, heights, params) into Fiat-Shamir.
-- Define serialization/deserialization of proof bytes and enforce size caps.
-- Enforce transcript exhaustion and proof canonicality at protocol boundaries.
-- Specify AIR constraints, including whether padded columns must be zero.
-- Define the full proof layout and interaction flow around `open_with_channel` and
-  `verify_with_channel`.
+## Canonicality / Proof Malleability
 
-## Dependencies
+The lifted STARK verifier (`p3-miden-lifted-verifier`) rejects trailing
+transcript data.
 
-We rely on upstream Plonky3 primitives (`p3-field`, `p3-symmetric`, `p3-challenger`, `p3-dft`).
-Assume these are correct for the purposes of this review.
+The PCS verifier (`p3-miden-lifted-fri`) provides both:
 
-## Appendix
+- `verify` (does not require transcript exhaustion; intended for composition),
+- `verify_strict` (rejects trailing data), and
+- `verify_aligned` (handles LMCS alignment; does not check transcript exhaustion).
 
-### DoS / size-bound considerations
+If you use `verify` or `verify_aligned` directly, you must define transcript boundaries
+at the outer protocol layer.
 
-Proof parsing allocates based on statement data (widths, number of matrices, `num_queries`)
-and transcript data (LMCS hints, FRI commitments). This layer does not deserialize raw bytes;
-size caps and transcript length limits belong to the outer protocol. Verification cost and
-allocations scale with transcript lengths provided via the channel; upstream must cap them.
+## Composition Rules
 
-### Tests and reference points
+- LMCS openings are hints: they must only be used when verified against an
+  already-observed commitment root.
+- If you attach extra data before/after a proof in the same transcript, you must
+  define and enforce explicit boundaries.
 
-- LMCS lifting and equivalence: `p3-miden-lmcs/src/lifted_tree.rs` (`upsampled_equivalence`).
-- LMCS batch openings / duplicate indices: `p3-miden-lmcs/src/tests.rs`.
-- PCS end-to-end and FRI arities: `p3-miden-lifted-fri/src/tests.rs`, `.../fri/tests.rs`.
-- DEEP tests: `p3-miden-lifted-fri/src/deep/tests.rs`.
-- Sponge alignment semantics: `p3-miden-stateful-hasher/src/field_sponge.rs`,
-  `p3-miden-stateful-hasher/src/serializing_sponge.rs`.
+## What To Review First (Suggested Order)
 
-## Soundness Analysis
+1. `p3-miden-lifted-verifier/src/verifier.rs` (`verify_multi`)
+2. `p3-miden-lifted-fri/src/verifier.rs` (`verify`)
+3. `p3-miden-lmcs/src/lmcs.rs` (`LmcsConfig::open_batch`)
+4. `p3-miden-lifted-fri/src/deep/verifier.rs` (DEEP reduction + quotient eval)
+5. `p3-miden-lifted-fri/src/fri/verifier.rs` (FRI round loop)
 
-### DEEP Quotient Soundness
+## Security-Critical Invariants (Checklist)
 
-TODO
+### Transcript Order
 
-### FRI Soundness
+- [ ] Commitments are observed before sampling challenges that depend on them.
+- [ ] For each "grind then sample" boundary, the prover observes the same data
+      the verifier replays before checking the PoW witness.
+- [ ] Hints are never used as a source of entropy.
 
-TODO
+### LMCS (`p3-miden-lmcs`)
 
-### Upsampling Soundness
+- [ ] Leaf hashing absorption order is fixed and matches verifier recomputation.
+- [ ] Batch proof sibling consumption is canonical (left-to-right, bottom-to-top).
+- [ ] Duplicate indices are handled safely (coalesced is fine; callers must not
+      rely on duplicates being preserved).
+- [ ] `widths`/`log_max_height` are treated as statement data; if they mismatch
+      the committed tree, verification must fail by root mismatch or parse error
+      (never by accepting an incorrect opening).
 
-TODO
+### DEEP (`p3-miden-lifted-fri/src/deep`)
 
-Key argument: the verifier sees only equal-height matrices (via upsampling). A cheating
-prover cannot exploit height differences because all openings occur at the uniform height.
-The upsampling operation preserves polynomial evaluations under the lifting map f(X) → f(X^r).
+- [ ] OOD evaluations are observed *before* sampling `alpha`/`beta`.
+- [ ] Column batching uses the same Horner convention everywhere
+      (first column gets the highest power).
+- [ ] The verifier reconstructs the queried domain point from the tree index in
+      the same way the prover committed (bit-reversal + coset shift).
+- [ ] Evaluation points are distinct and lie outside the LDE domain (division
+      by zero must be rejected).
 
-### Overall PCS Soundness
+### FRI (`p3-miden-lifted-fri/src/fri`)
 
-TODO
+- [ ] For each round: commitment observed -> PoW verified -> folding challenge
+      sampled.
+- [ ] Query indices are shifted consistently across rounds.
+- [ ] The `s_inv` computation matches the prover's bit-reversed coset structure.
+- [ ] Final polynomial coefficients are read in the intended order and evaluated
+      at the intended points.
 
-## Security Parameters
+### Lifted STARK (`p3-miden-lifted-{prover,verifier}`)
 
-TODO: To be filled with the composed STARK protocol.
+- [ ] Instances are provided in ascending height order; heights are powers of two.
+- [ ] The verifier's OOD evaluation point projection `y_j = z^{r_j}` matches
+      the prover's lifted commitment domains.
+- [ ] Quotient chunk reconstruction (`reconstruct_quotient`) matches the prover's
+      quotient decomposition.
+- [ ] Transcript exhaustion is enforced at the STARK boundary.
 
-Placeholder for guidance on:
-- Query count selection
-- `log_blowup` recommendations
-- `log_final_degree` bounds
-- PoW bits for grinding
+## Soundness Sketches (High Level, Non-Formal)
+
+These sketches explain *why* the composition is intended to work. Formal
+security bounds should come from a dedicated soundness calculator.
+
+### LMCS Binding
+
+If the hash and compression functions are collision-resistant, then (except with
+negligible probability) a Merkle root binds the prover to exactly one set of leaf
+preimages. LMCS openings are hints, but the verifier recomputes hashes and checks
+the root.
+
+LMCS additionally defines a *lifted view*: shorter matrices are indistinguishable
+from explicit repetition at the max height. This is a feature, not a bug: the
+outer protocol must ensure that this lifted view is the one it intends to prove.
+
+### DEEP Batching
+
+DEEP reduces many claimed evaluations to one quotient polynomial by taking random
+linear combinations (via `alpha` across columns and `beta` across points).
+
+Intuition:
+
+- If all claims are correct, the constructed quotient is a low-degree polynomial.
+- If any claim is incorrect, the rational function has a "pole-like" obstruction
+  (a non-canceling term) that makes it extremely unlikely to agree with a
+  low-degree polynomial on the whole domain.
+
+The two challenges matter: `alpha` prevents the prover from "hiding" a bad column
+inside a cancellation across columns, and `beta` prevents cancellation across
+multiple evaluation points.
+
+### FRI Low-Degree Testing
+
+FRI is a standard proximity test: it checks that the committed evaluation vector
+is close to a Reed-Solomon codeword of bounded degree. Soundness depends on
+domain blowup, folding strategy, and the number of queries.
+
+This implementation is a conventional "commit, then query" FRI with per-round
+Fiat-Shamir challenges and a final polynomial sent explicitly.
+
+### Lifting
+
+Lifting is the map `f(X) -> f(X^r)`.
+
+- LMCS upsampling in bit-reversed order corresponds to evaluating the lifted
+  polynomial on the max domain.
+- Openings at a global point `z` implicitly provide openings at projected
+  points `y_j = z^{r_j}` for each smaller trace.
+
+The lifted STARK verifier evaluates each AIR instance at its projected point.
+If the AIR is *liftable* (roughly: it does not depend on wrap-around "next row"
+semantics unless explicitly constrained), then proving the lifted identity is as
+sound as proving the non-lifted identity.
+
+For more detail on liftable AIR conditions and periodicity constraints, see
+`docs/lifting.md`.
+
+## Parameter Guidance (Non-Normative)
+
+This workspace contains benchmark configurations (e.g. `log_blowup = 1`,
+`num_queries = 100`) that are aimed at performance exploration, not
+production-grade security.
+
+Soundness is primarily controlled by:
+
+- `p3-miden-lifted-fri/src/fri/mod.rs::FriParams`:
+  - `log_blowup`
+  - `fold` (arity)
+  - `log_final_degree`
+- `p3-miden-lifted-fri/src/params.rs::PcsParams`:
+  - `num_queries`
+- grinding parameters:
+  - `DeepParams::deep_pow_bits`
+  - `FriParams::folding_pow_bits`
+  - `PcsParams::query_pow_bits`
+
+Notes:
+
+- Grinding/PoW does not replace algebraic soundness; it is an anti-grinding
+  mechanism to make "searching for favorable challenges" expensive.
+- Hash security (Merkle and Fiat-Shamir sponge) must meet your target security
+  level independently of PCS soundness.
+
+## DoS / Size-Bound Considerations
+
+Verification allocates based on a combination of:
+
+- statement data (matrix widths, number of commitment groups, `log_lde_height`,
+  `num_queries`), and
+- transcript data (LMCS hints, FRI commitments, final polynomial coefficients).
+
+These libraries operate on already-deserialized transcript streams; they do not
+enforce global size limits. Applications that deserialize proof bytes must cap
+proof sizes and/or cap transcript lengths before constructing verifier channels.
+
+## Tests and Reference Points
+
+- LMCS lifting equivalence: `p3-miden-lmcs/src/lifted_tree.rs` (tests)
+- LMCS batch openings: `p3-miden-lmcs/src/tests.rs`
+- PCS end-to-end: `p3-miden-lifted-fri/src/tests.rs`
+- DEEP tests: `p3-miden-lifted-fri/src/deep/tests.rs`
+- FRI tests: `p3-miden-lifted-fri/src/fri/tests.rs`

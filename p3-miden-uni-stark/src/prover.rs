@@ -290,24 +290,24 @@ where
     //
     // Soundness Error:
     // This sample will be used to check the equality: `C(X) = ZH(X)Q(X)`. If a prover is malicious
-    // and this equality is false, the probability that it is true at the point `zeta` will be
+    // and this equality is false, the probability that it is true at the point `z` will be
     // deg(C(X))/|EF| = dN/|EF| where `N` is the trace length and our constraints have degree `d`.
     //
     // Completeness Error:
-    // If zeta happens to lie in the domain `gK`, then when opening at zeta we will run into division
+    // If z happens to lie in the domain `gK`, then when opening at z we will run into division
     // by zero errors. This doesn't lead to a soundness issue as the verifier will just reject in those
     // cases but it is a completeness issue and contributes a completeness error of |gK| = 2N/|EF|.
-    let zeta: SC::Challenge = challenger.sample_algebra_element();
-    let zeta_next = trace_domain
-        .next_point(zeta)
+    let z: SC::Challenge = challenger.sample_algebra_element();
+    let z_next = trace_domain
+        .next_point(z)
         .expect("domain should support next_point operation");
 
     let is_random = opt_r_data.is_some();
     let (opened_values, opening_proof) = info_span!("open").in_scope(|| {
-        let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![zeta]]));
-        let round1 = (&trace_data, vec![vec![zeta, zeta_next]]);
-        let round2 = (&quotient_data, vec![vec![zeta]; num_quotient_chunks]); // open every chunk at zeta
-        let round3 = preprocessed_data_ref.map(|data| (data, vec![vec![zeta, zeta_next]]));
+        let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![z]]));
+        let round1 = (&trace_data, vec![vec![z, z_next]]);
+        let round2 = (&quotient_data, vec![vec![z]; num_quotient_chunks]); // open every chunk at z
+        let round3 = preprocessed_data_ref.map(|data| (data, vec![vec![z, z_next]]));
 
         let rounds = round0
             .into_iter()
