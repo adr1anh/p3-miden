@@ -9,7 +9,7 @@ readme.workspace = true
 homepage.workspace = true
 
 [features]
-parallel = ["p3-maybe-rayon/parallel"]
+parallel = ["p3-uni-stark/parallel"]
 
 [dependencies]
 p3-air.workspace = true
@@ -18,13 +18,10 @@ p3-commit.workspace = true
 p3-dft.workspace = true
 p3-field.workspace = true
 p3-matrix.workspace = true
-p3-maybe-rayon.workspace = true
 p3-uni-stark.workspace = true
 p3-util.workspace = true
 
 itertools.workspace = true
-serde = { workspace = true, features = ["derive", "alloc"] }
-thiserror = { version = "2.0", default-features = false }
 tracing.workspace = true
 
 [dev-dependencies]
