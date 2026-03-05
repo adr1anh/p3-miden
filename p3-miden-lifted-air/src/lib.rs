@@ -19,10 +19,10 @@ mod builder;
 mod instance;
 mod periodic;
 
-pub use air::LiftedAir;
+pub use air::{AirValidationError, BuilderMismatchError, LiftedAir};
 pub use auxiliary::{AuxBuilder, ReducedAuxValues, ReductionError, VarLenPublicInputs};
 pub use builder::LiftedAirBuilder;
-pub use instance::{AirInstance, AirWitness, ValidationError, validate_instances};
+pub use instance::{AirInstance, AirWitness, validate_instances};
 pub use periodic::AirWithPeriodicColumns;
 
 // Re-export upstream traits for convenience so users don't need to depend on p3-air directly.

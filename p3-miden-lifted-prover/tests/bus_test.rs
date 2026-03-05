@@ -43,13 +43,6 @@ extern crate alloc;
 // Both must agree for the proof to verify.
 // ---------------------------------------------------------------------------
 
-/// Error for bus test input validation.
-#[derive(Clone, Debug, thiserror::Error)]
-enum BusTestError {
-    #[error("expected {expected} inputs, got {actual}")]
-    InputCount { expected: usize, actual: usize },
-}
-
 #[derive(Clone, Debug)]
 struct BusTestAir;
 
@@ -93,14 +86,6 @@ impl LiftedAir<bb::F, bb::EF> for BusTestAir {
         _public_values: &[bb::F],
         var_len_public_inputs: VarLenPublicInputs<'_, bb::F>,
     ) -> Result<ReducedAuxValues<bb::EF>, p3_miden_lifted_air::ReductionError> {
-        if var_len_public_inputs.len() != 2 {
-            return Err(BusTestError::InputCount {
-                expected: 2,
-                actual: var_len_public_inputs.len(),
-            }
-            .into());
-        }
-
         // Bus 0 (multiset): prod = aux_values[0] * (challenges[0] + pi_0)
         // aux_values[0] = 1/(pi_0 + c0), so prod == 1 when pi_0 matches.
         let pi_0 = bb::EF::from(var_len_public_inputs[0][0]);
@@ -361,20 +346,13 @@ fn bus_wrong_input_count_fails() {
     let err = verify_multi(&config, &[(&air, instance)], &mut verifier_channel)
         .expect_err("wrong input count should fail verification");
 
-    let p3_miden_lifted_verifier::VerifierError::Reduction(boxed) = err else {
-        panic!("expected Reduction, got {err:?}");
-    };
-    let re = boxed
-        .downcast_ref::<BusTestError>()
-        .expect("expected BusTestError");
     assert!(
         matches!(
-            re,
-            BusTestError::InputCount {
-                expected: 2,
-                actual: 1,
-            }
+            err,
+            p3_miden_lifted_verifier::VerifierError::Air(
+                p3_miden_lifted_verifier::AirValidationError::VarLenPublicInputsMismatch { .. }
+            )
         ),
-        "expected InputCount, got {re:?}"
+        "expected VarLenPublicInputsMismatch, got {err:?}"
     );
 }

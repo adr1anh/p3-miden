@@ -167,6 +167,9 @@ pub(crate) fn evaluate_constraints_into<F, EF, A, M>(
                     _phantom: PhantomData,
                 };
 
+            #[cfg(debug_assertions)]
+            air.is_valid_builder(&folder)
+                .expect("builder dimensions must match AIR");
             air.eval(&mut folder);
             let folded = folder.finalize_constraints();
 

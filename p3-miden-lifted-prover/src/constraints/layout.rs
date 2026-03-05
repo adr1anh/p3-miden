@@ -7,7 +7,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_field::{ExtensionField, Field};
-use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::{
     AirBuilder, ExtensionBuilder, LiftedAir, PeriodicAirBuilder, PermutationAirBuilder,
@@ -101,9 +100,7 @@ where
     EF: ExtensionField<F>,
     A: LiftedAir<F, EF>,
 {
-    let preprocessed_width = air.preprocessed_trace().map_or(0, |t| t.width());
     let mut builder = ConstraintLayoutBuilder::<F>::new(
-        preprocessed_width,
         air.width(),
         num_public_values,
         air.aux_width(),
@@ -111,6 +108,7 @@ where
         air.num_randomness(),
         air.periodic_columns().len(),
     );
+    debug_assert!(air.is_valid_builder(&builder).is_ok());
     air.eval(&mut builder);
     builder.into_layout()
 }
@@ -121,7 +119,6 @@ where
 /// tracking, no `Arc` allocations. Builds a [`ConstraintLayout`] directly by recording
 /// which `assert_*` method is called for each constraint.
 struct ConstraintLayoutBuilder<F: Field> {
-    preprocessed: RowMajorMatrix<F>,
     main: RowMajorMatrix<F>,
     public_values: Vec<F>,
     periodic_values: Vec<F>,
@@ -134,7 +131,6 @@ struct ConstraintLayoutBuilder<F: Field> {
 
 impl<F: Field> ConstraintLayoutBuilder<F> {
     fn new(
-        preprocessed_width: usize,
         width: usize,
         num_public_values: usize,
         permutation_width: usize,
@@ -143,10 +139,6 @@ impl<F: Field> ConstraintLayoutBuilder<F> {
         num_periodic_columns: usize,
     ) -> Self {
         Self {
-            preprocessed: RowMajorMatrix::new(
-                vec![F::ZERO; 2 * preprocessed_width],
-                preprocessed_width,
-            ),
             main: RowMajorMatrix::new(vec![F::ZERO; 2 * width], width),
             public_values: vec![F::ZERO; num_public_values],
             periodic_values: vec![F::ZERO; num_periodic_columns],
@@ -178,7 +170,7 @@ impl<F: Field> AirBuilder for ConstraintLayoutBuilder<F> {
     }
 
     fn preprocessed(&self) -> Option<Self::M> {
-        Some(self.preprocessed.clone())
+        None
     }
 
     fn public_values(&self) -> &[Self::PublicVar] {

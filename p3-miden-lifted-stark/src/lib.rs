@@ -8,6 +8,48 @@
 //! - [`Selectors`]: Constraint selectors for OOD and coset evaluation
 //! - [`AirWitness`]: Prover witness (trace + public values)
 //! - [`AirInstance`]: Verifier instance (log height + public values)
+//!
+//! # AIR Trust Model
+//!
+//! The lifted STARK has three trust domains:
+//!
+//! 1. **AIR = trusted** — [`LiftedAir`](p3_miden_lifted_air::LiftedAir) implementations are
+//!    correct application code. It is the AIR implementer's responsibility to satisfy the
+//!    contract below. [`LiftedAir::validate`](p3_miden_lifted_air::LiftedAir::validate)
+//!    checks the statically-verifiable subset.
+//!
+//! 2. **Instance = validated** — The prover validates that its witness matches the AIR spec
+//!    The verifier validates instance metadata.
+//!    Both return structured errors.
+//!
+//! 3. **Proof = untrusted** — Transcript data is verified cryptographically (PCS errors,
+//!    constraint mismatch, etc.).
+//!
+//! ## Validated properties
+//!
+//! These are checked by [`LiftedAir::validate`](p3_miden_lifted_air::LiftedAir::validate)
+//! and [`AirInstance::validate`](p3_miden_lifted_air::AirInstance::validate), and enforced
+//! by both prover and verifier before proceeding:
+//!
+//! - **No preprocessed trace** — the lifted protocol does not support them.
+//! - **Positive aux width** — every AIR must have an auxiliary trace.
+//! - **Periodic columns** — each has positive, power-of-two length ≤ trace height.
+//! - **Constraint degree** — `log_quotient_degree() ≤ log_blowup`.
+//! - **Instance dimensions** — trace width, public values length, var-len public
+//!   inputs count, and trace height (power of two) all match the AIR specification.
+//!
+//! ## Unchecked trust assumptions
+//!
+//! These cannot be verified statically and are the AIR implementer's responsibility:
+//!
+//! 1. **Window size** — Only transition window size 2.
+//! 2. **Deterministic constraints** — `eval()` emits the same number and types of
+//!    constraints regardless of builder implementation.
+//! 3. **Consistent aux builder** — `AuxBuilder::build_aux_trace` returns
+//!    width = `aux_width()`, height = main trace height, and exactly
+//!    `num_aux_values()` values. (The prover asserts these at runtime as a
+//!    defense-in-depth sanity check.)
+//! 4. **Sound `reduced_aux_values`** — Returns correct bus contributions for valid inputs.
 
 #![no_std]
 
@@ -15,13 +57,12 @@ extern crate alloc;
 
 mod config;
 mod coset;
-mod instance;
 mod selectors;
 mod util;
 
 pub use config::*;
 pub use coset::*;
-pub use instance::*;
+pub use p3_miden_lifted_air::{AirInstance, AirWitness};
 pub use selectors::*;
 pub use util::*;
 

@@ -143,7 +143,7 @@ fn multi_trace_with_aux_padding() {
 
     let verifier_instances: Vec<_> = prover_instances
         .iter()
-        .map(|(a, w, _)| (*a, w.to_instance()))
+        .map(|(a, w, _)| (*a, w.to_instance().unwrap()))
         .collect();
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
@@ -178,7 +178,7 @@ fn multi_trace_rejects_trailing_transcript_data() {
 
     let verifier_instances: Vec<_> = prover_instances
         .iter()
-        .map(|(a, w, _)| (*a, w.to_instance()))
+        .map(|(a, w, _)| (*a, w.to_instance().unwrap()))
         .collect();
 
     let mut bad_channel = VerifierTranscript::from_data(bb::test_challenger(), &bad_transcript);

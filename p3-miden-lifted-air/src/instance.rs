@@ -2,15 +2,13 @@
 //!
 //! - [`AirWitness`]: Prover witness — trace + public values
 //! - [`AirInstance`]: Verifier instance — log trace height + public values
-//! - [`validate_instances`]: Shared validation for a slice of instances
 
+use crate::air::AirValidationError;
+use crate::{LiftedAir, VarLenPublicInputs};
 use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_strict_usize;
-use thiserror::Error;
-
-use crate::VarLenPublicInputs;
 
 /// Prover witness: trace matrix, public values, and variable-length public inputs.
 ///
@@ -54,15 +52,21 @@ impl<'a, F> AirWitness<'a, F> {
     }
 
     /// Convert to a verifier instance (drops the trace, keeps log height).
-    pub fn to_instance(&self) -> AirInstance<'a, F>
+    ///
+    /// Returns an error if the trace height is not a power of two.
+    pub fn to_instance(&self) -> Result<AirInstance<'a, F>, AirValidationError>
     where
         F: Clone + Send + Sync,
     {
-        AirInstance {
-            log_trace_height: log2_strict_usize(self.trace.height()),
+        let height = self.trace.height();
+        if !height.is_power_of_two() {
+            return Err(AirValidationError::InvalidTraceHeight { height });
+        }
+        Ok(AirInstance {
+            log_trace_height: log2_strict_usize(height),
             public_values: self.public_values,
             var_len_public_inputs: self.var_len_public_inputs,
-        }
+        })
     }
 }
 
@@ -81,32 +85,69 @@ pub struct AirInstance<'a, F> {
     pub var_len_public_inputs: VarLenPublicInputs<'a, F>,
 }
 
-/// Errors from instance validation.
-#[derive(Debug, Error)]
-pub enum ValidationError {
-    #[error("no instances provided")]
-    Empty,
-    #[error("instances not in ascending height order")]
-    NotAscending,
-    #[error("trace width mismatch")]
-    WidthMismatch,
-    #[error("var-len public inputs count mismatch")]
-    VarLenPublicInputsMismatch,
+/// Validate AIR and instance dimensions for a slice of `(air, instance)` pairs.
+///
+/// Checks that instances are non-empty, sorted by ascending log height, and that
+/// the maximum trace height is at least 2 (required for the 2-row transition window).
+/// Runs [`LiftedAir::validate`] + [`AirInstance::validate`] on each pair.
+///
+/// Returns the log of the maximum trace height.
+pub fn validate_instances<F, EF, A>(
+    instances: &[(&A, AirInstance<'_, F>)],
+) -> Result<usize, AirValidationError>
+where
+    F: Field,
+    A: LiftedAir<F, EF>,
+{
+    let mut log_prev_height = 0;
+    for (air, inst) in instances {
+        air.validate()?;
+        inst.validate(*air)?;
+        if inst.log_trace_height < log_prev_height {
+            return Err(AirValidationError::NotAscending);
+        }
+        log_prev_height = inst.log_trace_height;
+    }
+    // log_prev_height == 0 means either no instances or all traces have height 1,
+    // both invalid for a protocol with a 2-row transition window.
+    if log_prev_height == 0 {
+        return Err(AirValidationError::Empty);
+    }
+    Ok(log_prev_height)
 }
 
-/// Validate that instances are non-empty and sorted by ascending log height.
-pub fn validate_instances<F>(instances: &[AirInstance<'_, F>]) -> Result<(), ValidationError> {
-    if instances.is_empty() {
-        return Err(ValidationError::Empty);
-    }
-
-    let mut prev = 0;
-    for inst in instances {
-        if inst.log_trace_height < prev {
-            return Err(ValidationError::NotAscending);
+impl<'a, F> AirInstance<'a, F> {
+    /// Validate that this instance matches an AIR's specification.
+    ///
+    /// Checks public values length, var-len public inputs count, and that the
+    /// trace height is at least the max periodic column length.
+    pub fn validate<EF>(&self, air: &impl LiftedAir<F, EF>) -> Result<(), AirValidationError>
+    where
+        F: Field,
+    {
+        let expected = air.num_public_values();
+        let actual = self.public_values.len();
+        if actual != expected {
+            return Err(AirValidationError::PublicValuesMismatch { expected, actual });
         }
-        prev = inst.log_trace_height;
+        let expected = air.num_var_len_public_inputs();
+        let actual = self.var_len_public_inputs.len();
+        if actual != expected {
+            return Err(AirValidationError::VarLenPublicInputsMismatch { expected, actual });
+        }
+        let trace_height = 1usize << self.log_trace_height;
+        let max_period = air
+            .periodic_columns()
+            .iter()
+            .map(|c| c.len())
+            .max()
+            .unwrap_or(0);
+        if trace_height < max_period {
+            return Err(AirValidationError::TraceHeightBelowPeriod {
+                trace_height,
+                max_period,
+            });
+        }
+        Ok(())
     }
-
-    Ok(())
 }

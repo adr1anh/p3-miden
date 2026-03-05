@@ -51,15 +51,16 @@ use core::marker::PhantomData;
 
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_lifted_air::{LiftedAir, ReducedAuxValues, ReductionError, VarLenPublicInputs};
+use p3_miden_lifted_air::{
+    AirValidationError, BuilderMismatchError, LiftedAir, ReducedAuxValues, ReductionError,
+    VarLenPublicInputs, validate_instances,
+};
 use p3_miden_lifted_fri::verifier::{PcsError, verify_aligned};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use thiserror::Error;
 
-use p3_miden_lifted_stark::{
-    AirInstance, LiftedCoset, StarkConfig, ValidationError, sample_ood_point,
-};
+use p3_miden_lifted_stark::{AirInstance, LiftedCoset, StarkConfig, sample_ood_point};
 
 use crate::constraints::{ConstraintFolder, reconstruct_quotient, row_to_packed_ext};
 use crate::periodic::PeriodicPolys;
@@ -67,20 +68,28 @@ use crate::periodic::PeriodicPolys;
 /// Errors that can occur during verification.
 #[derive(Debug, Error)]
 pub enum VerifierError {
-    #[error("invalid instances: {0}")]
-    Validation(#[from] ValidationError),
+    #[error("AIR validation failed: {0}")]
+    Air(#[from] AirValidationError),
     #[error("PCS verification failed: {0}")]
     Pcs(#[from] PcsError),
     #[error("transcript error: {0}")]
     Transcript(#[from] TranscriptError),
+    #[error("builder dimensions do not match AIR: {0}")]
+    BuilderMismatch(#[from] BuilderMismatchError),
     #[error("invalid aux shape")]
     InvalidAuxShape,
     #[error("constraint mismatch: quotient * vanishing != folded constraints")]
     ConstraintMismatch,
+    #[error(
+        "constraint degree exceeds blowup: \
+         log_quotient_degree {log_quotient_degree} > log_blowup {log_blowup}"
+    )]
+    ConstraintDegreeTooHigh {
+        log_quotient_degree: usize,
+        log_blowup: usize,
+    },
     #[error("transcript not fully consumed")]
     TranscriptNotConsumed,
-    #[error("invalid periodic table")]
-    InvalidPeriodicTable,
     #[error("global reduced aux identity check failed")]
     InvalidReducedAux,
     #[error("aux value reduction failed: {0}")]
@@ -169,25 +178,29 @@ where
     A: LiftedAir<F, EF>,
     Ch: VerifierChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>,
 {
-    let air_instances: Vec<_> = instances.iter().map(|(_, inst)| *inst).collect();
-    p3_miden_lifted_stark::validate_instances(&air_instances)?;
+    // Validate AIR properties, instance dimensions, and ascending height.
+    let log_max_trace_height = validate_instances(instances)?;
 
     let log_blowup = config.pcs().fri.log_blowup;
 
-    // Infer constraint degree from symbolic AIR analysis (max across all AIRs)
-    let constraint_degree = instances
+    // Infer constraint degree from symbolic AIR analysis (max across all AIRs).
+    // NOTE: `log_quotient_degree()` runs symbolic eval and may panic if the AIR is
+    // invalid. Callers must ensure `validate_instances` (above) passes first.
+    let log_constraint_degree = instances
         .iter()
-        .map(|(air, _)| air.constraint_degree())
+        .map(|(air, _)| air.log_quotient_degree())
         .max()
-        .unwrap_or(2);
+        .unwrap_or(1);
 
-    // Max trace height determines the LDE domain
-    // validate_instances rejects empty input, so last() is always Some.
-    let log_max_trace_height = instances
-        .last()
-        .expect("non-empty instances")
-        .1
-        .log_trace_height;
+    if log_constraint_degree > log_blowup {
+        return Err(VerifierError::ConstraintDegreeTooHigh {
+            log_quotient_degree: log_constraint_degree,
+            log_blowup,
+        });
+    }
+
+    let constraint_degree = 1 << log_constraint_degree;
+
     let max_trace_height = 1usize << log_max_trace_height;
     let log_lde_height = log_max_trace_height + log_blowup;
 
@@ -293,8 +306,7 @@ where
         // Using (max_trace_height, z) gives z^{max_n / p}, which equals
         // y_j^{n_j / p} = (z^{max_n/n_j})^{n_j/p} = z^{max_n/p}. This avoids
         // computing y_j = z^{r_j} explicitly.
-        let periodic_polys = PeriodicPolys::new(air.periodic_columns())
-            .ok_or(VerifierError::InvalidPeriodicTable)?;
+        let periodic_polys = PeriodicPolys::new(air.periodic_columns());
         let periodic_values = periodic_polys.eval_at::<EF>(max_trace_height, z);
 
         let aux_values_j = &all_aux_values[j];
@@ -313,12 +325,13 @@ where
             _phantom: PhantomData,
         };
 
+        air.is_valid_builder(&folder)?;
         air.eval(&mut folder);
 
         // Accumulate: acc = acc * beta + folded_j
         accumulated = accumulated * beta + folder.accumulator;
 
-        // Compute reduced aux contribution and accumulate
+        // Compute reduced aux contribution and accumulate.
         let contribution = air
             .reduced_aux_values(
                 aux_values_j,

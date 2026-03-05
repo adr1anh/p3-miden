@@ -25,22 +25,24 @@ impl<F: TwoAdicField> PeriodicPolys<F> {
     ///
     /// Converts subgroup evaluations to polynomial coefficients via inverse DFT.
     ///
-    /// # Returns
-    /// `None` if any column length is zero or not a power of two.
-    pub fn new(column_evals: &[Vec<F>]) -> Option<Self> {
+    /// # Panics
+    /// Panics if any column length is zero or not a power of two.
+    /// This is a trusted path — the AIR should pass [`LiftedAir::validate`](p3_miden_lifted_air::LiftedAir::validate).
+    pub fn new(column_evals: &[Vec<F>]) -> Self {
         let dft = NaiveDft;
         let mut polys = Vec::with_capacity(column_evals.len());
 
-        for column in column_evals {
+        for (i, column) in column_evals.iter().enumerate() {
             let p = column.len();
-            if p == 0 || !p.is_power_of_two() {
-                return None;
-            }
+            assert!(
+                p > 0 && p.is_power_of_two(),
+                "periodic column {i}: length must be positive power of two, got {p}"
+            );
             let coeffs = dft.idft(column.clone());
             polys.push(coeffs);
         }
 
-        Some(Self { polys })
+        Self { polys }
     }
 
     /// Evaluate all periodic polynomials at the OOD point.

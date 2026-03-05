@@ -127,14 +127,14 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_field::{BasedVectorSpace, ExtensionField, Field, TwoAdicField};
+use p3_field::{BasedVectorSpace, ExtensionField, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_lifted_air::{AuxBuilder, LiftedAir, VarLenPublicInputs};
-use p3_miden_lifted_fri::prover::open_with_channel;
-use p3_miden_lifted_stark::{
-    AirWitness, LiftedCoset, StarkConfig, ValidationError, sample_ood_point,
+use p3_miden_lifted_air::{
+    AirValidationError, AuxBuilder, LiftedAir, VarLenPublicInputs, validate_instances,
 };
+use p3_miden_lifted_fri::prover::open_with_channel;
+use p3_miden_lifted_stark::{AirWitness, LiftedCoset, StarkConfig, sample_ood_point};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::ProverChannel;
 use p3_util::log2_strict_usize;
@@ -150,8 +150,16 @@ use crate::periodic::PeriodicLde;
 /// Errors that can occur during proving.
 #[derive(Debug, Error)]
 pub enum ProverError {
-    #[error("invalid instances: {0}")]
-    Validation(#[from] ValidationError),
+    #[error("AIR validation failed: {0}")]
+    Air(#[from] AirValidationError),
+    #[error(
+        "constraint degree exceeds blowup: \
+         log_quotient_degree {log_quotient_degree} > log_blowup {log_blowup}"
+    )]
+    ConstraintDegreeTooHigh {
+        log_quotient_degree: usize,
+        log_blowup: usize,
+    },
 }
 
 /// Prove a single AIR.
@@ -229,8 +237,20 @@ where
     B: AuxBuilder<F, EF>,
     Ch: ProverChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>,
 {
-    validate_inputs(instances)?;
-
+    // Validate AIR properties, witness dimensions, and ascending height.
+    // Prover additionally checks that each trace width matches its AIR.
+    let verifier_instances: Vec<_> = instances
+        .iter()
+        .map(|(air, w, _)| {
+            let expected = air.width();
+            let actual = w.trace.width();
+            if actual != expected {
+                return Err(AirValidationError::WidthMismatch { expected, actual });
+            }
+            Ok((*air, w.to_instance()?))
+        })
+        .collect::<Result<_, _>>()?;
+    let log_max_trace_height = validate_instances(&verifier_instances)?;
     let log_blowup = config.pcs().fri.log_blowup;
 
     // Infer constraint degree from symbolic AIR analysis (max across all AIRs)
@@ -240,9 +260,13 @@ where
         .max()
         .unwrap_or(1);
 
-    // Max trace height determines the LDE domain
-    let max_trace_height = instances.last().unwrap().1.trace.height();
-    let log_max_trace_height = log2_strict_usize(max_trace_height);
+    if log_constraint_degree > log_blowup {
+        return Err(ProverError::ConstraintDegreeTooHigh {
+            log_quotient_degree: log_constraint_degree,
+            log_blowup,
+        });
+    }
+
     let log_lde_height = log_max_trace_height + log_blowup;
 
     // Max LDE coset (for the largest trace, no lifting)
@@ -435,29 +459,5 @@ where
         )
     });
 
-    Ok(())
-}
-
-/// Validate prover inputs: width match, non-empty, ascending height.
-///
-/// Power-of-two height is enforced by [`AirWitness::new`].
-fn validate_inputs<F, EF, A, B>(
-    instances: &[(&A, AirWitness<'_, F>, &B)],
-) -> Result<(), ProverError>
-where
-    F: Field,
-    EF: ExtensionField<F>,
-    A: LiftedAir<F, EF>,
-{
-    for (air, w, _) in instances {
-        if w.trace.width() != air.width() {
-            return Err(ValidationError::WidthMismatch.into());
-        }
-        if w.var_len_public_inputs.len() != air.num_var_len_public_inputs() {
-            return Err(ValidationError::VarLenPublicInputsMismatch.into());
-        }
-    }
-    let verifier_instances: Vec<_> = instances.iter().map(|(_, w, _)| w.to_instance()).collect();
-    p3_miden_lifted_stark::validate_instances(&verifier_instances)?;
     Ok(())
 }
