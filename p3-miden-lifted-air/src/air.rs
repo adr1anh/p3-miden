@@ -106,14 +106,20 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
 
     /// Validate that this AIR satisfies the [`LiftedAir`] contract.
     ///
-    /// Checks the statically-verifiable subset of the trust assumptions
-    /// (see module docs in `p3-miden-lifted-stark`). Both the prover and verifier
-    /// call this before proceeding.
+    /// The lifted STARK protocol relies on several structural properties of the AIR
+    /// that can be checked statically (i.e. without a witness). This method verifies
+    /// the subset that is machine-checkable; the full list of trust assumptions is
+    /// documented in the module docs of `p3-miden-lifted-stark`. Both the prover and
+    /// verifier call this before proceeding, so a malformed AIR is caught early.
     ///
-    /// Checks:
-    /// - No preprocessed trace
-    /// - Positive aux width
-    /// - Periodic columns have positive, power-of-two length
+    /// # Checked properties
+    ///
+    /// - **No preprocessed trace** — the lifted STARK protocol does not support
+    ///   preprocessed (fixed) columns; their presence is an error.
+    /// - **Positive auxiliary width** — every lifted AIR must declare at least one
+    ///   auxiliary column (`aux_width() > 0`).
+    /// - **Well-formed periodic columns** — each periodic column must be non-empty
+    ///   and have a power-of-two length.
     fn validate(&self) -> Result<(), AirValidationError> {
         if self.preprocessed_trace().is_some() {
             return Err(AirValidationError::PreprocessedTrace);
