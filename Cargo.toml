@@ -1,6 +1,5 @@
 [workspace]
 members = [
-  "p3-miden-air",
   "p3-miden-dev-utils",
   "p3-miden-fri",
   "p3-miden-lifted-air",
@@ -10,7 +9,6 @@ members = [
   "p3-miden-lifted-stark",
   "p3-miden-lifted-verifier",
   "p3-miden-lmcs",
-  "p3-miden-prover",
   "p3-miden-stateful-hasher",
   "p3-miden-transcript",
 ]
@@ -68,7 +66,6 @@ p3-uni-stark = { default-features = false, git = "https://github.com/Plonky3/Plo
 p3-util = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "808fb9e2" }
 
 # Internal p3-miden crates
-p3-miden-air = { path = "p3-miden-air", version = "0.4.2" }
 p3-miden-dev-utils = { path = "p3-miden-dev-utils", version = "0.4.2" }
 p3-miden-fri = { path = "p3-miden-fri", version = "0.4.2" }
 p3-miden-lifted-air = { path = "p3-miden-lifted-air", version = "0.4.2" }
@@ -78,7 +75,6 @@ p3-miden-lifted-prover = { path = "p3-miden-lifted-prover", version = "0.4.2" }
 p3-miden-lifted-stark = { path = "p3-miden-lifted-stark", version = "0.4.2" }
 p3-miden-lifted-verifier = { path = "p3-miden-lifted-verifier", version = "0.4.2" }
 p3-miden-lmcs = { path = "p3-miden-lmcs", version = "0.4.2" }
-p3-miden-prover = { path = "p3-miden-prover", version = "0.4.2" }
 p3-miden-stateful-hasher = { path = "p3-miden-stateful-hasher", version = "0.4.2" }
 p3-miden-transcript = { path = "p3-miden-transcript", version = "0.4.2" }
 
