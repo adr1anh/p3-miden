@@ -58,9 +58,7 @@ where
 {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
-        let preprocessed = builder
-            .preprocessed()
-            .expect("MulFibPAir requires preprocessed columns");
+        let preprocessed = builder.preprocessed().clone();
 
         let local_slice = main.row_slice(0).expect("Matrix is empty?");
         let next_slice = main.row_slice(1).expect("Matrix only has 1 row?");

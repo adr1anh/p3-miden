@@ -305,6 +305,7 @@ where
         let num_rand = air.num_randomness();
         let mut folder = ConstraintFolder {
             main: main_pair,
+            preprocessed: RowMajorMatrix::new(Vec::new(), 0),
             aux: aux_pair,
             randomness: &randomness[..num_rand],
             public_values: inst.public_values,

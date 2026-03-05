@@ -47,6 +47,7 @@ where
     pub randomness: &'a [EF],
     pub public_values: &'a [F],
     pub periodic_values: &'a [EF],
+    pub preprocessed: RowMajorMatrix<EF>,
     pub selectors: Selectors<EF>,
     pub alpha: EF,
     pub accumulator: EF,
@@ -88,8 +89,8 @@ where
         self.accumulator = self.accumulator * self.alpha + x.into();
     }
 
-    fn preprocessed(&self) -> Option<Self::M> {
-        None
+    fn preprocessed(&self) -> &Self::M {
+        &self.preprocessed
     }
 
     fn public_values(&self) -> &[Self::PublicVar] {

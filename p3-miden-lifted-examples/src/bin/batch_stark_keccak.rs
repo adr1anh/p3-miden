@@ -89,7 +89,7 @@ impl<AB: AirBuilder> Air<AB> for KeccakWithLookup {
     {
         self.num_lookups = 0;
 
-        let symbolic = SymbolicAirBuilder::<AB::F>::new(0, NUM_KECCAK_COLS, 0, 0, 0);
+        let symbolic = SymbolicAirBuilder::<AB::F>::new(0, NUM_KECCAK_COLS, 0, 0, 0, 0);
         let main = symbolic.main();
         let local = main.row_slice(0).unwrap();
         let col0: SymbolicExpression<AB::F> = local[0].into();

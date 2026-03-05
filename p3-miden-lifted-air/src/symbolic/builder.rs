@@ -396,8 +396,8 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
         SymbolicExpression::IsLastRow
     }
 
-    fn preprocessed(&self) -> Option<Self::M> {
-        Some(self.preprocessed.clone())
+    fn preprocessed(&self) -> &Self::M {
+        &self.preprocessed
     }
 
     fn public_values(&self) -> &[Self::PublicVar] {
@@ -602,7 +602,7 @@ mod tests {
                     self.assert_with_condition(builder, expr);
                 }
                 VariableKind::Preprocessed => {
-                    let prep = builder.preprocessed().expect("Preprocessed is empty?");
+                    let prep = builder.preprocessed().clone();
                     let local = prep.row_slice(0).expect("matrix has rows");
                     let mut expr: SymbolicExpression<BabyBear> = local[0].into();
                     for _ in 1..self.exponent {

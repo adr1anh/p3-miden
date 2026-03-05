@@ -288,8 +288,8 @@ impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
         self.base_constraints.push(x.into());
     }
 
-    fn preprocessed(&self) -> Option<Self::M> {
-        Some(self.preprocessed.clone())
+    fn preprocessed(&self) -> &Self::M {
+        &self.preprocessed
     }
 }
 

@@ -203,6 +203,7 @@ pub fn evaluate_constraints_into<F, EF, A, M>(
             let mut folder: ProverConstraintFolder<'_, F, EF, P<F>, PE<F, EF>> =
                 ProverConstraintFolder {
                     main: main.as_view(),
+                    preprocessed: RowMajorMatrixView::new(&[], 0),
                     aux: aux.as_view(),
                     packed_randomness: &packed_randomness,
                     public_values,
@@ -255,6 +256,9 @@ where
 {
     /// Main trace matrix view (packed base field)
     pub main: RowMajorMatrixView<'a, P>,
+    /// The preprocessed columns as a [`RowMajorMatrixView`].
+    /// Zero-width when the AIR has no preprocessed trace.
+    pub preprocessed: RowMajorMatrixView<'a, P>,
     /// Aux/permutation trace matrix view (packed extension field)
     pub aux: RowMajorMatrixView<'a, PE>,
     /// Randomness for aux trace (packed extension field)
@@ -371,8 +375,8 @@ where
     }
 
     #[inline]
-    fn preprocessed(&self) -> Option<Self::M> {
-        None
+    fn preprocessed(&self) -> &Self::M {
+        &self.preprocessed
     }
 
     #[inline]

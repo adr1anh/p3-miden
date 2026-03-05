@@ -48,12 +48,15 @@ where
         let preprocessed_pair = if let Some(prep) = preprocessed.as_ref() {
             prep_local = unsafe { prep.row_slice_unchecked(row_index) };
             prep_next = unsafe { prep.row_slice_unchecked(row_index_next) };
-            Some(ViewPair::new(
+            ViewPair::new(
                 RowMajorMatrixView::new_row(&*prep_local),
                 RowMajorMatrixView::new_row(&*prep_next),
-            ))
+            )
         } else {
-            None
+            ViewPair::new(
+                RowMajorMatrixView::new_row(&[]),
+                RowMajorMatrixView::new_row(&[]),
+            )
         };
 
         let mut builder = DebugConstraintBuilder {
@@ -80,8 +83,8 @@ pub struct DebugConstraintBuilder<'a, F: Field> {
     row_index: usize,
     /// A view of the current and next row as a vertical pair.
     main: ViewPair<'a, F>,
-    /// A view of the preprocessed current and next row as a vertical pair (if present).
-    preprocessed: Option<ViewPair<'a, F>>,
+    /// A view of the preprocessed current and next row as a vertical pair.
+    preprocessed: ViewPair<'a, F>,
     /// The public values provided for constraint validation (e.g. inputs or outputs).
     public_values: &'a [F],
     /// A flag indicating whether this is the first row.
@@ -143,8 +146,8 @@ where
         );
     }
 
-    fn preprocessed(&self) -> Option<Self::M> {
-        self.preprocessed
+    fn preprocessed(&self) -> &Self::M {
+        &self.preprocessed
     }
 
     fn public_values(&self) -> &[Self::F] {
