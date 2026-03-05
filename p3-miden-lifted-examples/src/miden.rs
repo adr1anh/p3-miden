@@ -57,7 +57,7 @@ impl DummyMidenAir {
 fn eval_miden_constraints<AB: AirBuilder>(builder: &mut AB) {
     let main = builder.main();
     let local = main.row_slice(0).unwrap();
-    let product = (0..9).fold(AB::Expr::ONE, |acc, j| acc * local[j].clone().into());
+    let product = (0..9).fold(AB::Expr::ONE, |acc, j| acc * local[j].into());
     builder.assert_zero(product);
 }
 

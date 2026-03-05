@@ -74,10 +74,8 @@ impl LiftedAir<bb::F, bb::EF> for PaddingAir {
             main.row_slice(1).expect("single row matrix"),
         );
 
-        builder.when_first_row().assert_eq(local[0].clone(), start);
-        builder
-            .when_transition()
-            .assert_eq(next[0].clone(), local[0].clone());
+        builder.when_first_row().assert_eq(local[0], start);
+        builder.when_transition().assert_eq(next[0], local[0]);
 
         let aux = builder.permutation();
         let aux_local = aux.row_slice(0).expect("empty aux");
