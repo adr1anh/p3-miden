@@ -4,6 +4,7 @@
 - [BREAKING] Remove forced conversion of periodic values from F to EF.
 - Fix length issue in boundary data length check (#21).
 - Add Lifted STARK implementation
+- Bump Plonky3 dependencies to v0.5.0
 
 ## 0.4.2 (2025-01-14)
 
