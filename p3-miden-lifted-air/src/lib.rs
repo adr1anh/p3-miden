@@ -3,32 +3,36 @@
 //! This crate provides:
 //! - [`LiftedAir`]: Super-trait for AIR definitions (inherits upstream + adds aux trace support)
 //! - [`LiftedAirBuilder`]: Super-trait for constraint builders (blanket impl over upstream traits)
-//! - [`PeriodicAirBuilder`] / [`AirWithPeriodicColumns`]: Periodic column support (copied from
-//!   upstream, not yet in published p3-air 0.4.2)
-//! - [`symbolic`]: Symbolic constraint analysis (expression trees, degree computation)
+//! - [`AirWithPeriodicColumns`]: Periodic column data trait (column periods and evaluations)
+//! - [`auxiliary`]: Auxiliary trace types (builder, cross-AIR identity checking).
 
 #![no_std]
 
 extern crate alloc;
 
 mod air;
+pub mod auxiliary;
 mod builder;
+mod instance;
 mod periodic;
-pub mod symbolic;
 
-pub use air::LiftedAir;
+pub use air::{AirValidationError, BuilderMismatchError, LiftedAir};
+pub use auxiliary::{AuxBuilder, ReducedAuxValues, ReductionError, VarLenPublicInputs};
 pub use builder::LiftedAirBuilder;
+pub use instance::{AirInstance, AirWitness, validate_instances};
 pub use periodic::AirWithPeriodicColumns;
 
 pub use p3_air::{
-    Air, AirBuilder, BaseAir, ExtensionBuilder, FilteredAirBuilder, PeriodicAirBuilder,
-    PermutationAirBuilder,
+    Air, AirBuilder, AirBuilderWithContext, BaseAir, ExtensionBuilder, FilteredAirBuilder,
+    PeriodicAirBuilder, PermutationAirBuilder,
 };
 
-// Re-export key symbolic types at crate root for ergonomic imports.
-pub use symbolic::{
-    ConstraintLayout, Entry, SymbolicAirBuilder, SymbolicExpression, SymbolicVariable,
-    get_constraint_layout,
+// Re-export fork symbolic types at crate root for ergonomic imports.
+pub use p3_air::symbolic::{
+    BaseEntry, ExtEntry, SymbolicAirBuilder, SymbolicExpression, SymbolicExpressionExt,
+    SymbolicVariable, SymbolicVariableExt, get_all_symbolic_constraints, get_max_constraint_degree,
+    get_max_constraint_degree_extension, get_symbolic_constraints,
+    get_symbolic_constraints_extension,
 };
 
 // Re-export commonly used field/matrix types.

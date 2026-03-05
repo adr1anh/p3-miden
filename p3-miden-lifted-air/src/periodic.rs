@@ -1,5 +1,7 @@
-//! Periodic column traits (copied from upstream `0xMiden/Plonky3` branch `periodic-air-builder`,
-//! not yet available in published p3-air 0.4.2).
+//! Periodic column data trait — extends `BaseAir` with periodic table metadata.
+//!
+//! This module only provides [`AirWithPeriodicColumns`], which carries the *data*
+//! (column periods and evaluations).
 
 use alloc::vec::Vec;
 

@@ -11,7 +11,7 @@ use core::marker::PhantomData;
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::{
-    AirBuilder, ExtensionBuilder, LiftedAirBuilder, PeriodicAirBuilder, PermutationAirBuilder,
+    AirBuilder, ExtensionBuilder, PeriodicAirBuilder, PermutationAirBuilder,
 };
 use p3_miden_lifted_stark::{LiftedCoset, Selectors};
 use p3_util::log2_strict_usize;
@@ -48,6 +48,7 @@ where
     pub public_values: &'a [F],
     pub periodic_values: &'a [EF],
     pub preprocessed: RowMajorMatrix<EF>,
+    pub permutation_values: &'a [EF],
     pub selectors: Selectors<EF>,
     pub alpha: EF,
     pub accumulator: EF,
@@ -69,6 +70,14 @@ where
         self.main.clone()
     }
 
+    fn preprocessed(&self) -> Option<Self::M> {
+        None
+    }
+
+    fn public_values(&self) -> &[Self::PublicVar] {
+        self.public_values
+    }
+
     fn is_first_row(&self) -> Self::Expr {
         self.selectors.is_first_row
     }
@@ -87,14 +96,6 @@ where
 
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
         self.accumulator = self.accumulator * self.alpha + x.into();
-    }
-
-    fn preprocessed(&self) -> &Self::M {
-        &self.preprocessed
-    }
-
-    fn public_values(&self) -> &[Self::PublicVar] {
-        self.public_values
     }
 }
 
@@ -122,6 +123,7 @@ where
 {
     type MP = RowMajorMatrix<EF>;
     type RandomVar = EF;
+    type PermutationVal = EF;
 
     fn permutation(&self) -> Self::MP {
         self.aux.clone()
@@ -129,6 +131,10 @@ where
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.randomness
+    }
+
+    fn permutation_values(&self) -> &[Self::PermutationVal] {
+        self.permutation_values
     }
 }
 
@@ -142,13 +148,6 @@ where
     fn periodic_values(&self) -> &[Self::PeriodicVar] {
         self.periodic_values
     }
-}
-
-impl<'a, F, EF> LiftedAirBuilder for ConstraintFolder<'a, F, EF>
-where
-    F: Field,
-    EF: ExtensionField<F>,
-{
 }
 
 // ============================================================================
