@@ -13,7 +13,6 @@ members = [
   "p3-miden-prover",
   "p3-miden-stateful-hasher",
   "p3-miden-transcript",
-  "p3-miden-uni-stark",
 ]
 resolver = "3"
 
@@ -82,7 +81,6 @@ p3-miden-lmcs = { path = "p3-miden-lmcs", version = "0.4.2" }
 p3-miden-prover = { path = "p3-miden-prover", version = "0.4.2" }
 p3-miden-stateful-hasher = { path = "p3-miden-stateful-hasher", version = "0.4.2" }
 p3-miden-transcript = { path = "p3-miden-transcript", version = "0.4.2" }
-p3-miden-uni-stark = { path = "p3-miden-uni-stark", version = "0.4.2" }
 
 rand = { version = "0.10.0", default-features = false }
 serde = { version = "1.0", default-features = false, features = [
