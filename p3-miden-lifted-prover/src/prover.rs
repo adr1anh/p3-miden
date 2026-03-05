@@ -366,7 +366,7 @@ where
     // Pre-compute constraint layouts for each AIR (base/ext index mapping)
     let layouts: Vec<_> = instances
         .iter()
-        .map(|(air, w, _)| get_constraint_layout::<F, EF, A>(*air, w.public_values.len()))
+        .map(|(air, _, _)| get_constraint_layout::<F, EF, A>(*air))
         .collect();
 
     info_span!("evaluate constraints").in_scope(|| {

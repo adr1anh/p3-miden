@@ -27,8 +27,7 @@ use thiserror::Error;
 
 use crate::auxiliary::{ReducedAuxValues, ReductionError, VarLenPublicInputs};
 use crate::{
-    AirLayout, AirWithPeriodicColumns, LiftedAirBuilder, SymbolicAirBuilder, SymbolicExpression,
-    SymbolicExpressionExt,
+    AirLayout, AirWithPeriodicColumns, LiftedAirBuilder, SymbolicAirBuilder, SymbolicExpressionExt,
 };
 
 /// Super-trait for AIR definitions used by the lifted STARK prover/verifier.
@@ -189,7 +188,7 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
         let base_degree = builder
             .base_constraints()
             .iter()
-            .map(|c: &SymbolicExpression<F>| c.degree_multiple())
+            .map(|c| c.degree_multiple())
             .max()
             .unwrap_or(0);
         let ext_degree = builder

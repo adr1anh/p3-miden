@@ -24,7 +24,7 @@ use tracing::instrument;
 /// for all variables. This discovers which constraints are base-field vs extension-field
 /// without building symbolic expression trees — only the emission order matters.
 #[instrument(name = "compute constraint layout", skip_all, level = "debug")]
-pub(crate) fn get_constraint_layout<F, EF, A>(air: &A, num_public_values: usize) -> ConstraintLayout
+pub(crate) fn get_constraint_layout<F, EF, A>(air: &A) -> ConstraintLayout
 where
     F: Field,
     EF: ExtensionField<F>,
@@ -33,7 +33,7 @@ where
     let layout = AirLayout {
         preprocessed_width: 0,
         main_width: air.width(),
-        num_public_values,
+        num_public_values: air.num_public_values(),
         permutation_width: air.aux_width(),
         num_permutation_challenges: air.num_randomness(),
         num_permutation_values: air.num_aux_values(),

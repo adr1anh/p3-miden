@@ -6,8 +6,7 @@ use crate::{AirBuilder, ExtensionBuilder, PeriodicAirBuilder, PermutationAirBuil
 ///
 /// Every type that already satisfies the four upstream builder traits automatically
 /// implements this trait via the blanket impl below. No additional methods or
-/// associated types are required — `permutation_values()` is now part of the
-/// upstream [`PermutationAirBuilder`].
+/// associated types are required .
 pub trait LiftedAirBuilder:
     AirBuilder + ExtensionBuilder + PermutationAirBuilder + PeriodicAirBuilder
 {
