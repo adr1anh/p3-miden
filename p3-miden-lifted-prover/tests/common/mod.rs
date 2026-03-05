@@ -61,7 +61,7 @@ pub fn prove_and_verify<A, B>(
 
     let verifier_instances: Vec<_> = prover_instances
         .iter()
-        .map(|(a, w, _)| (*a, w.to_instance()))
+        .map(|(a, w, _)| (*a, w.to_instance().unwrap()))
         .collect();
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);

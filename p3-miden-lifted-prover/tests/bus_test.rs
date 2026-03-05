@@ -8,8 +8,8 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_air::{
-    AirBuilder, AirWithPeriodicColumns, AuxBuilder, BaseAir, BaseAirWithPublicValues,
-    ExtensionBuilder, LiftedAir, LiftedAirBuilder, ReducedAuxValues, VarLenPublicInputs,
+    AirBuilder, AirWithPeriodicColumns, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir,
+    LiftedAirBuilder, ReducedAuxValues, VarLenPublicInputs,
 };
 use p3_miden_lifted_prover::prove_multi;
 use p3_miden_lifted_stark::AirInstance;
@@ -43,13 +43,6 @@ extern crate alloc;
 // Both must agree for the proof to verify.
 // ---------------------------------------------------------------------------
 
-/// Error for bus test input validation.
-#[derive(Clone, Debug, thiserror::Error)]
-enum BusTestError {
-    #[error("expected {expected} inputs, got {actual}")]
-    InputCount { expected: usize, actual: usize },
-}
-
 #[derive(Clone, Debug)]
 struct BusTestAir;
 
@@ -57,9 +50,7 @@ impl BaseAir<bb::F> for BusTestAir {
     fn width(&self) -> usize {
         1
     }
-}
 
-impl BaseAirWithPublicValues<bb::F> for BusTestAir {
     fn num_public_values(&self) -> usize {
         3 // [start, pi_0, pi_1]
     }
@@ -95,14 +86,6 @@ impl LiftedAir<bb::F, bb::EF> for BusTestAir {
         _public_values: &[bb::F],
         var_len_public_inputs: VarLenPublicInputs<'_, bb::F>,
     ) -> Result<ReducedAuxValues<bb::EF>, p3_miden_lifted_air::ReductionError> {
-        if var_len_public_inputs.len() != 2 {
-            return Err(BusTestError::InputCount {
-                expected: 2,
-                actual: var_len_public_inputs.len(),
-            }
-            .into());
-        }
-
         // Bus 0 (multiset): prod = aux_values[0] * (challenges[0] + pi_0)
         // aux_values[0] = 1/(pi_0 + c0), so prod == 1 when pi_0 matches.
         let pi_0 = bb::EF::from(var_len_public_inputs[0][0]);
@@ -129,17 +112,15 @@ impl LiftedAir<bb::F, bb::EF> for BusTestAir {
         );
 
         // Main trace: power-of-4 chain
-        builder.when_first_row().assert_eq(local[0].clone(), pv0);
-        let main_pow4: AB::Expr = local[0].clone().into().exp_power_of_2(2);
-        builder
-            .when_transition()
-            .assert_eq(next[0].clone(), main_pow4);
+        builder.when_first_row().assert_eq(local[0], pv0);
+        let main_pow4: AB::Expr = local[0].into().exp_power_of_2(2);
+        builder.when_transition().assert_eq(next[0], main_pow4);
 
         // Copy challenges and aux values (RandomVar/VarEF: Copy) to release borrow.
         let c0: AB::RandomVar = builder.permutation_randomness()[0];
         let c1: AB::RandomVar = builder.permutation_randomness()[1];
-        let av0: AB::VarEF = builder.aux_values()[0];
-        let av1: AB::VarEF = builder.aux_values()[1];
+        let av0: AB::PermutationVal = builder.permutation_values()[0];
+        let av1: AB::PermutationVal = builder.permutation_values()[1];
 
         let aux = builder.permutation();
         let aux_local = aux.row_slice(0).expect("empty aux");
@@ -365,20 +346,13 @@ fn bus_wrong_input_count_fails() {
     let err = verify_multi(&config, &[(&air, instance)], &mut verifier_channel)
         .expect_err("wrong input count should fail verification");
 
-    let p3_miden_lifted_verifier::VerifierError::Reduction(boxed) = err else {
-        panic!("expected Reduction, got {err:?}");
-    };
-    let re = boxed
-        .downcast_ref::<BusTestError>()
-        .expect("expected BusTestError");
     assert!(
         matches!(
-            re,
-            BusTestError::InputCount {
-                expected: 2,
-                actual: 1,
-            }
+            err,
+            p3_miden_lifted_verifier::VerifierError::Air(
+                p3_miden_lifted_verifier::AirValidationError::VarLenPublicInputsMismatch { .. }
+            )
         ),
-        "expected InputCount, got {re:?}"
+        "expected VarLenPublicInputsMismatch, got {err:?}"
     );
 }
