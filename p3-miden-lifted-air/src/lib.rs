@@ -18,10 +18,11 @@ pub mod symbolic;
 
 pub use air::LiftedAir;
 pub use builder::LiftedAirBuilder;
-pub use periodic::{AirWithPeriodicColumns, PeriodicAirBuilder};
+pub use periodic::AirWithPeriodicColumns;
 
 pub use p3_air::{
-    Air, AirBuilder, BaseAir, ExtensionBuilder, FilteredAirBuilder, PermutationAirBuilder,
+    Air, AirBuilder, BaseAir, ExtensionBuilder, FilteredAirBuilder, PeriodicAirBuilder,
+    PermutationAirBuilder,
 };
 
 // Re-export key symbolic types at crate root for ergonomic imports.
