@@ -51,7 +51,7 @@ use core::marker::PhantomData;
 
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_lifted_air::LiftedAir;
+use p3_miden_lifted_air::{LiftedAir, ReducedAuxValues, ReductionError, VarLenPublicInputs};
 use p3_miden_lifted_fri::verifier::{PcsError, verify_aligned};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
@@ -81,8 +81,10 @@ pub enum VerifierError {
     TranscriptNotConsumed,
     #[error("invalid periodic table")]
     InvalidPeriodicTable,
-    #[error("mixed aux traces: either all AIRs must have aux columns or none")]
-    MixedAuxTraces,
+    #[error("global reduced aux identity check failed")]
+    InvalidReducedAux,
+    #[error("aux value reduction failed: {0}")]
+    Reduction(ReductionError),
 }
 
 /// Verify a single AIR.
@@ -98,6 +100,7 @@ pub enum VerifierError {
 /// - `air`: The AIR definition
 /// - `log_trace_height`: Log₂ of the trace height
 /// - `public_values`: Public values for this AIR
+/// - `var_len_public_inputs`: Variable-length public inputs for bus identity checks
 /// - `channel`: Verifier channel for transcript
 ///
 /// # Returns
@@ -107,6 +110,7 @@ pub fn verify_single<F, EF, A, SC, Ch>(
     air: &A,
     log_trace_height: usize,
     public_values: &[F],
+    var_len_public_inputs: VarLenPublicInputs<'_, F>,
     channel: &mut Ch,
 ) -> Result<(), VerifierError>
 where
@@ -116,7 +120,11 @@ where
     A: LiftedAir<F, EF>,
     Ch: VerifierChannel<F = F, Commitment = <SC::Lmcs as Lmcs>::Commitment>,
 {
-    let instance = AirInstance::new(log_trace_height, public_values);
+    let instance = AirInstance {
+        log_trace_height,
+        public_values,
+        var_len_public_inputs,
+    };
     verify_multi(config, &[(air, instance)], channel)
 }
 
@@ -164,12 +172,6 @@ where
     let air_instances: Vec<_> = instances.iter().map(|(_, inst)| *inst).collect();
     p3_miden_lifted_stark::validate_instances(&air_instances)?;
 
-    let aux_widths: Vec<_> = instances.iter().map(|(air, _)| air.aux_width()).collect();
-    if !(aux_widths.iter().all(|&w| w > 0) || aux_widths.iter().all(|&w| w == 0)) {
-        return Err(VerifierError::MixedAuxTraces);
-    }
-    let has_aux = aux_widths.iter().any(|&w| w > 0);
-
     let log_blowup = config.pcs().fri.log_blowup;
 
     // Infer constraint degree from symbolic AIR analysis (max across all AIRs)
@@ -206,12 +208,20 @@ where
         .map(|_| channel.sample_algebra_element::<EF>())
         .collect();
 
-    // 3. Receive aux trace commitment (only when AIRs have aux columns)
-    let aux_commit = if has_aux {
-        Some(channel.receive_commitment()?.clone())
-    } else {
-        None
-    };
+    // 3. Receive aux trace commitment
+    let aux_commit = channel.receive_commitment()?.clone();
+
+    // Receive aux values from the transcript (one EF element per aux value, per instance).
+    // When no AIR has aux columns, each entry is empty so nothing is received.
+    let all_aux_values: Vec<Vec<EF>> = instances
+        .iter()
+        .map(|(air, _)| {
+            let count = air.num_aux_values();
+            (0..count)
+                .map(|_| channel.receive_algebra_element::<EF>())
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     // 4. Sample constraint folding alpha and accumulation beta
     let alpha: EF = channel.sample_algebra_element::<EF>();
@@ -235,17 +245,11 @@ where
 
     // Build commitments with original (unpadded) widths.
     // The PCS aligned wrapper handles alignment and truncation internally.
-    let commitments = match aux_commit {
-        Some(aux_commit) => vec![
-            (main_commit, main_widths),
-            (aux_commit, aux_widths),
-            (quotient_commit, quotient_widths),
-        ],
-        None => vec![
-            (main_commit, main_widths),
-            (quotient_commit, quotient_widths),
-        ],
-    };
+    let commitments = vec![
+        (main_commit, main_widths),
+        (aux_commit, aux_widths),
+        (quotient_commit, quotient_widths),
+    ];
 
     // 8. Verify PCS openings (returns per-matrix RowMajorMatrix<EF>, truncated to original widths)
     let opened = verify_aligned::<F, EF, SC::Lmcs, _, 2>(
@@ -257,20 +261,17 @@ where
         channel,
     )?;
 
-    // Group indices for accessing opened matrices.
-    let (main_g, aux_g, quot_g) = if has_aux {
-        (0, Some(1), 2)
-    } else {
-        (0, None, 1)
-    };
+    // 9. Group indices for accessing opened matrices: [main, aux, quotient].
+    let (main_g, aux_g, quot_g) = (0, 1, 2);
 
     // 10. Per-AIR constraint evaluation and beta accumulation
     //
     // opened[g] has one matrix per AIR (for main/aux) or one matrix total (quotient).
     // Each matrix has N=2 rows: row 0 = local (z), row 1 = next (z·h).
     debug_assert_eq!(opened[main_g].len(), instances.len());
-    debug_assert!(aux_g.is_none_or(|g| opened[g].len() == instances.len()));
+    debug_assert_eq!(opened[aux_g].len(), instances.len());
     let mut accumulated = EF::ZERO;
+    let mut reduced_aux = ReducedAuxValues::<EF>::identity();
 
     for (j, (air, inst)) in instances.iter().enumerate() {
         let coset_j = LiftedCoset::new(inst.log_trace_height, log_blowup, log_max_trace_height);
@@ -280,15 +281,9 @@ where
 
         // Extract aux trace opened values (reconstitute EF from base field components).
         let aux_ef_width = air.aux_width();
-        let (aux_local, aux_next) = match aux_g {
-            Some(g) => {
-                let mut rows = opened[g][j].row_slices();
-                let local = row_to_packed_ext::<F, EF>(rows.next().expect("row 0 (local)"))?;
-                let next = row_to_packed_ext::<F, EF>(rows.next().expect("row 1 (next)"))?;
-                (local, next)
-            }
-            None => (vec![], vec![]),
-        };
+        let mut aux_rows = opened[aux_g][j].row_slices();
+        let aux_local = row_to_packed_ext::<F, EF>(aux_rows.next().expect("row 0 (local)"))?;
+        let aux_next = row_to_packed_ext::<F, EF>(aux_rows.next().expect("row 1 (next)"))?;
         let aux_pair = RowMajorMatrix::new([aux_local, aux_next].concat(), aux_ef_width);
 
         // Selectors at the lifted OOD point yⱼ = z^{rⱼ} (encapsulated in LiftedCoset).
@@ -302,6 +297,8 @@ where
             .ok_or(VerifierError::InvalidPeriodicTable)?;
         let periodic_values = periodic_polys.eval_at::<EF>(max_trace_height, z);
 
+        let aux_values_j = &all_aux_values[j];
+
         let num_rand = air.num_randomness();
         let mut folder = ConstraintFolder {
             main: main_pair,
@@ -309,6 +306,7 @@ where
             randomness: &randomness[..num_rand],
             public_values: inst.public_values,
             periodic_values: &periodic_values,
+            aux_values: aux_values_j,
             selectors,
             alpha,
             accumulator: EF::ZERO,
@@ -319,6 +317,17 @@ where
 
         // Accumulate: acc = acc * beta + folded_j
         accumulated = accumulated * beta + folder.accumulator;
+
+        // Compute reduced aux contribution and accumulate
+        let contribution = air
+            .reduced_aux_values(
+                aux_values_j,
+                &randomness[..num_rand],
+                inst.public_values,
+                inst.var_len_public_inputs,
+            )
+            .map_err(VerifierError::Reduction)?;
+        reduced_aux.combine_in_place(&contribution);
     }
 
     // 11. Reconstruct Q(z) and check quotient identity Q(z) * Z_{H_max}(z)
@@ -332,7 +341,12 @@ where
         return Err(VerifierError::ConstraintMismatch);
     }
 
-    // 12. Ensure transcript is fully consumed
+    // 12. Check global reduced aux identity (all bus contributions combine to identity)
+    if !reduced_aux.is_identity() {
+        return Err(VerifierError::InvalidReducedAux);
+    }
+
+    // 13. Ensure transcript is fully consumed
     if !channel.is_empty() {
         return Err(VerifierError::TranscriptNotConsumed);
     }

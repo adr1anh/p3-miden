@@ -21,6 +21,7 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_air::{AirWithPeriodicColumns, LiftedAir, LiftedAirBuilder};
+use p3_miden_lifted_examples::DummyAuxBuilder;
 use p3_miden_lifted_examples::blake3::{LiftedBlake3Air, generate_blake3_trace};
 use p3_miden_lifted_examples::keccak::{LiftedKeccakAir, generate_keccak_trace};
 use p3_miden_lifted_examples::poseidon2::{LiftedPoseidon2Air, generate_poseidon2_trace};
@@ -91,6 +92,18 @@ impl AirWithPeriodicColumns<Val> for HashAir {
 }
 
 impl<EF: Field> LiftedAir<Val, EF> for HashAir {
+    fn num_randomness(&self) -> usize {
+        1
+    }
+
+    fn aux_width(&self) -> usize {
+        1
+    }
+
+    fn num_aux_values(&self) -> usize {
+        0
+    }
+
     fn eval<AB: LiftedAirBuilder<F = Val>>(&self, builder: &mut AB) {
         match self {
             HashAir::Poseidon2(a) => LiftedAir::<Val, EF>::eval(a.as_ref(), builder),
@@ -189,10 +202,23 @@ fn main() {
         }
 
         // Ascending height order: blake3 (2^15) < keccak (2^18) < poseidon2 (2^19).
-        let instances: Vec<(&HashAir, AirWitness<'_, Val>)> = vec![
-            (&air_blake3, AirWitness::new(&trace_blake3, &[])),
-            (&air_keccak, AirWitness::new(&trace_keccak, &[])),
-            (&air_poseidon2, AirWitness::new(&trace_poseidon2, &[])),
+        let dummy_aux = DummyAuxBuilder;
+        let instances: Vec<(&HashAir, AirWitness<'_, Val>, &DummyAuxBuilder)> = vec![
+            (
+                &air_blake3,
+                AirWitness::new(&trace_blake3, &[], &[]),
+                &dummy_aux,
+            ),
+            (
+                &air_keccak,
+                AirWitness::new(&trace_keccak, &[], &[]),
+                &dummy_aux,
+            ),
+            (
+                &air_poseidon2,
+                AirWitness::new(&trace_poseidon2, &[], &[]),
+                &dummy_aux,
+            ),
         ];
 
         let mut channel = ProverTranscript::new(bb::test_challenger());
@@ -213,9 +239,30 @@ fn main() {
 
         info_span!("verify").in_scope(|| {
             let verifier_instances: Vec<(&HashAir, AirInstance<'_, Val>)> = vec![
-                (&air_blake3, AirInstance::new(log_b, &[])),
-                (&air_keccak, AirInstance::new(log_k, &[])),
-                (&air_poseidon2, AirInstance::new(log_p, &[])),
+                (
+                    &air_blake3,
+                    AirInstance {
+                        log_trace_height: log_b,
+                        public_values: &[],
+                        var_len_public_inputs: &[],
+                    },
+                ),
+                (
+                    &air_keccak,
+                    AirInstance {
+                        log_trace_height: log_k,
+                        public_values: &[],
+                        var_len_public_inputs: &[],
+                    },
+                ),
+                (
+                    &air_poseidon2,
+                    AirInstance {
+                        log_trace_height: log_p,
+                        public_values: &[],
+                        var_len_public_inputs: &[],
+                    },
+                ),
             ];
             let mut verifier_channel =
                 VerifierTranscript::from_data(bb::test_challenger(), &transcript);

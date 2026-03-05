@@ -5,8 +5,8 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_air::{
-    AirBuilder, AirWithPeriodicColumns, BaseAir, BaseAirWithPublicValues, ExtensionBuilder,
-    LiftedAir, LiftedAirBuilder,
+    AirBuilder, AirWithPeriodicColumns, AuxBuilder, BaseAir, BaseAirWithPublicValues,
+    ExtensionBuilder, LiftedAir, LiftedAirBuilder,
 };
 use p3_miden_lifted_prover::AirWitness;
 use p3_miden_lifted_verifier::{VerifierError, verify_multi};
@@ -50,23 +50,12 @@ impl LiftedAir<bb::F, bb::EF> for PaddingAir {
         self.aux_width
     }
 
-    fn num_randomness(&self) -> usize {
-        1
+    fn num_aux_values(&self) -> usize {
+        0
     }
 
-    fn build_aux_trace(
-        &self,
-        main: &RowMajorMatrix<bb::F>,
-        challenges: &[bb::EF],
-    ) -> Option<RowMajorMatrix<bb::EF>> {
-        let height = main.height();
-        let mut values = Vec::with_capacity(height * self.aux_width);
-        let challenge = challenges[0];
-        for _ in 0..height {
-            values.push(challenge);
-            values.extend(std::iter::repeat_n(bb::EF::ZERO, self.aux_width - 1));
-        }
-        Some(RowMajorMatrix::new(values, self.aux_width))
+    fn num_randomness(&self) -> usize {
+        1
     }
 
     fn eval<AB: LiftedAirBuilder<F = bb::F>>(&self, builder: &mut AB) {
@@ -92,6 +81,23 @@ impl LiftedAir<bb::F, bb::EF> for PaddingAir {
         builder
             .when_transition()
             .assert_eq_ext(aux_next[0].into(), aux_local[0].into());
+    }
+}
+
+impl AuxBuilder<bb::F, bb::EF> for PaddingAir {
+    fn build_aux_trace(
+        &self,
+        main: &RowMajorMatrix<bb::F>,
+        challenges: &[bb::EF],
+    ) -> (RowMajorMatrix<bb::EF>, Vec<bb::EF>) {
+        let height = main.height();
+        let mut values = Vec::with_capacity(height * self.aux_width);
+        let challenge = challenges[0];
+        for _ in 0..height {
+            values.push(challenge);
+            values.extend(std::iter::repeat_n(bb::EF::ZERO, self.aux_width - 1));
+        }
+        (RowMajorMatrix::new(values, self.aux_width), vec![])
     }
 }
 
@@ -121,7 +127,7 @@ fn multi_trace_with_aux_padding() {
 
     let prover_instances: Vec<_> = instances
         .iter()
-        .map(|(t, pv)| (&air, AirWitness::new(t, pv)))
+        .map(|(t, pv)| (&air, AirWitness::new(t, pv, &[]), &air))
         .collect();
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
@@ -131,7 +137,7 @@ fn multi_trace_with_aux_padding() {
 
     let verifier_instances: Vec<_> = prover_instances
         .iter()
-        .map(|(a, w)| (*a, w.to_instance()))
+        .map(|(a, w, _)| (*a, w.to_instance()))
         .collect();
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
@@ -151,7 +157,7 @@ fn multi_trace_rejects_trailing_transcript_data() {
 
     let prover_instances: Vec<_> = instances
         .iter()
-        .map(|(t, pv)| (&air, AirWitness::new(t, pv)))
+        .map(|(t, pv)| (&air, AirWitness::new(t, pv, &[]), &air))
         .collect();
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
@@ -165,7 +171,7 @@ fn multi_trace_rejects_trailing_transcript_data() {
 
     let verifier_instances: Vec<_> = prover_instances
         .iter()
-        .map(|(a, w)| (*a, w.to_instance()))
+        .map(|(a, w, _)| (*a, w.to_instance()))
         .collect();
 
     let mut bad_channel = VerifierTranscript::from_data(bb::test_challenger(), &bad_transcript);

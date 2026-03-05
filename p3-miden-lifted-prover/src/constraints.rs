@@ -4,7 +4,6 @@
 //! - [`evaluate_constraints_into`]: SIMD-parallel constraint evaluation on the quotient domain
 //! - [`ProverConstraintFolder`]: SIMD-optimized folder for constraint evaluation
 
-use alloc::vec;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
@@ -120,13 +119,14 @@ pub fn evaluate_constraints_into<F, EF, A, M>(
     output: &mut [EF],
     air: &A,
     main_on_gj: &M,
-    aux_on_gj: Option<&M>,
+    aux_on_gj: &M,
     coset: &LiftedCoset,
     alpha: EF,
     randomness: &[EF],
     public_values: &[F],
     periodic_lde: &PeriodicLde<F>,
     layout: &ConstraintLayout,
+    aux_values: &[EF],
 ) where
     F: TwoAdicField + PrimeCharacteristicRing,
     EF: ExtensionField<F>,
@@ -163,6 +163,9 @@ pub fn evaluate_constraints_into<F, EF, A, M>(
     // Pack randomness for aux trace
     let packed_randomness: Vec<PE<F, EF>> = randomness.iter().copied().map(Into::into).collect();
 
+    // Pack aux values
+    let packed_aux_values: Vec<PE<F, EF>> = aux_values.iter().copied().map(Into::into).collect();
+
     // Parallel iteration over quotient domain points, step by WIDTH.
     // Write directly into output slice via par_chunks_mut.
     output
@@ -180,10 +183,8 @@ pub fn evaluate_constraints_into<F, EF, A, M>(
             let main = RowMajorMatrix::new(main_packed, main_width);
 
             // Get aux trace as packed row pair and convert to packed extension field
-            let aux_base_packed: Vec<P<F>> = match aux_on_gj {
-                Some(aux) => aux.vertically_packed_row_pair(i_start, constraint_degree),
-                None => vec![],
-            };
+            let aux_base_packed: Vec<P<F>> =
+                aux_on_gj.vertically_packed_row_pair(i_start, constraint_degree);
 
             // Convert from packed base field to packed extension field
             // Each EF element is formed from DIMENSION consecutive base field elements
@@ -207,6 +208,7 @@ pub fn evaluate_constraints_into<F, EF, A, M>(
                     packed_randomness: &packed_randomness,
                     public_values,
                     periodic_values: &periodic_values,
+                    aux_values: &packed_aux_values,
                     selectors,
                     base_alpha_powers: &base_alpha_powers,
                     ext_alpha_powers: &ext_alpha_powers,
@@ -263,6 +265,8 @@ where
     pub public_values: &'a [F],
     /// Periodic column values (packed base field)
     pub periodic_values: &'a [P],
+    /// Aux values (packed extension field)
+    pub aux_values: &'a [PE],
     /// Constraint selectors (packed base field)
     pub selectors: Selectors<P>,
     /// Base-field alpha powers, reordered to match base constraint emission order.
@@ -461,4 +465,7 @@ where
     P: PackedField<Scalar = F>,
     PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
 {
+    fn aux_values(&self) -> &[Self::VarEF] {
+        self.aux_values
+    }
 }

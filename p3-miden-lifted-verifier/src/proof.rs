@@ -31,7 +31,7 @@ use crate::VerifierError;
 /// the PCS sub-transcript (DEEP evals, FRI rounds, query openings).
 ///
 /// Constructed via [`from_verifier_channel`](Self::from_verifier_channel), which
-/// mirrors steps 1–8 of [`verify_multi`](crate::verify_multi) (parse only, no
+/// mirrors steps 1–9 of [`verify_multi`](crate::verify_multi) (parse only, no
 /// constraint checks).
 pub struct StarkTranscript<EF, L>
 where
@@ -43,8 +43,10 @@ where
     pub main_commit: L::Commitment,
     /// Randomness sampled for auxiliary traces.
     pub randomness: Vec<EF>,
-    /// Auxiliary trace commitment (present only when AIRs have aux columns).
-    pub aux_commit: Option<L::Commitment>,
+    /// Auxiliary trace commitment.
+    pub aux_commit: L::Commitment,
+    /// Aux values per AIR instance, observed into the transcript after the aux commitment.
+    pub all_aux_values: Vec<Vec<EF>>,
     /// Constraint folding challenge alpha.
     pub alpha: EF,
     /// AIR accumulation challenge beta.
@@ -65,15 +67,16 @@ where
 {
     /// Parse a STARK transcript from a verifier channel without constraint checks.
     ///
-    /// Mirrors steps 1–8 of [`verify_multi`](crate::verify_multi):
+    /// Mirrors steps 1–9 of [`verify_multi`](crate::verify_multi):
     /// 1. Receive main trace commitment
     /// 2. Sample randomness for auxiliary traces
-    /// 3. Receive auxiliary trace commitment (if present)
-    /// 4. Sample constraint folding alpha and accumulation beta
-    /// 5. Receive quotient commitment
-    /// 6. Sample OOD point z
-    /// 7. Build commitment widths for PCS
-    /// 8. Parse PCS sub-transcript via [`PcsTranscript::from_verifier_channel`]
+    /// 3. Receive auxiliary trace commitment
+    /// 4. Receive aux values (per AIR instance)
+    /// 5. Sample constraint folding alpha and accumulation beta
+    /// 6. Receive quotient commitment
+    /// 7. Sample OOD point z
+    /// 8. Build commitment widths for PCS
+    /// 9. Parse PCS sub-transcript via [`PcsTranscript::from_verifier_channel`]
     ///
     /// Does **not** verify constraints or check the quotient identity.
     pub fn from_verifier_channel<A, SC, Ch>(
@@ -86,9 +89,6 @@ where
         SC: StarkConfig<L::F, EF, Lmcs = L>,
         Ch: VerifierChannel<F = L::F, Commitment = L::Commitment>,
     {
-        let aux_widths: Vec<_> = instances.iter().map(|(air, _)| air.aux_width()).collect();
-        let has_aux = aux_widths.iter().any(|&w| w > 0);
-
         let log_blowup = config.pcs().fri.log_blowup;
         let alignment = config.lmcs().alignment();
 
@@ -120,51 +120,57 @@ where
             .map(|_| channel.sample_algebra_element::<EF>())
             .collect();
 
-        // 3. Receive aux trace commitment (only when AIRs have aux columns)
-        let aux_commit = if has_aux {
-            Some(channel.receive_commitment()?.clone())
-        } else {
-            None
-        };
+        // 3. Receive aux trace commitment
+        let aux_commit = channel.receive_commitment()?.clone();
 
-        // 4. Sample constraint folding alpha and accumulation beta
+        // 4. Receive aux values from the transcript (one EF element per aux value, per instance).
+        let all_aux_values: Vec<Vec<EF>> = instances
+            .iter()
+            .map(|(air, _)| {
+                let count = air.num_aux_values();
+                (0..count)
+                    .map(|_| channel.receive_algebra_element::<EF>())
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // 5. Sample constraint folding alpha and accumulation beta
         let alpha: EF = channel.sample_algebra_element::<EF>();
         let beta: EF = channel.sample_algebra_element::<EF>();
 
-        // 5. Receive quotient commitment
+        // 6. Receive quotient commitment
         let quotient_commit = channel.receive_commitment()?.clone();
 
-        // 6. Sample OOD point (outside max trace domain H and max LDE coset gK)
+        // 7. Sample OOD point (outside max trace domain H and max LDE coset gK)
         let z: EF = sample_ood_point(channel, &max_lde_coset);
         let h = L::F::two_adic_generator(log_max_trace_height);
         let z_next = z * h;
 
-        // 7. Build commitment widths for PCS
+        // 8. Build commitment widths for PCS.
+        //
+        // The LMCS commits to rows padded to `alignment` boundary, so DEEP evals and
+        // batch openings are stored at aligned widths in the transcript. We must use
+        // aligned widths here to parse the transcript correctly.
+        // (The verifier's `verify_aligned` does the same alignment internally, then
+        // truncates the returned evals back to original widths for constraint checking.)
         let main_widths: Vec<usize> = instances
             .iter()
             .map(|(air, _)| aligned_len(air.width(), alignment))
             .collect();
         let quotient_width = aligned_len(constraint_degree * EF::DIMENSION, alignment);
 
-        let commitments = match &aux_commit {
-            Some(aux_commit) => {
-                let aux_committed_widths: Vec<usize> = instances
-                    .iter()
-                    .map(|(air, _)| aligned_len(air.aux_width() * EF::DIMENSION, alignment))
-                    .collect();
-                vec![
-                    (main_commit.clone(), main_widths),
-                    (aux_commit.clone(), aux_committed_widths),
-                    (quotient_commit.clone(), vec![quotient_width]),
-                ]
-            }
-            None => vec![
-                (main_commit.clone(), main_widths),
-                (quotient_commit.clone(), vec![quotient_width]),
-            ],
-        };
+        let aux_widths: Vec<usize> = instances
+            .iter()
+            .map(|(air, _)| aligned_len(air.aux_width() * EF::DIMENSION, alignment))
+            .collect();
 
-        // 8. Parse PCS sub-transcript
+        let commitments = vec![
+            (main_commit.clone(), main_widths),
+            (aux_commit.clone(), aux_widths),
+            (quotient_commit.clone(), vec![quotient_width]),
+        ];
+
+        // 9. Parse PCS sub-transcript
         let pcs_transcript = PcsTranscript::from_verifier_channel::<Ch, 2>(
             config.pcs(),
             config.lmcs(),
@@ -182,6 +188,7 @@ where
             main_commit,
             randomness,
             aux_commit,
+            all_aux_values,
             alpha,
             beta,
             quotient_commit,
