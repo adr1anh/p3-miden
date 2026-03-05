@@ -59,8 +59,6 @@ use tracing::{debug_span, info_span};
 
 use p3_miden_lmcs::RowList;
 
-use crate::utils::MatrixExt;
-
 /// Precomputed `1/(zⱼ − xᵢ)` for N evaluation points.
 ///
 /// This enables batched `O(d)` barycentric evaluation and DEEP quotient construction
