@@ -90,6 +90,7 @@ where
 
         let siblings_cap: Vec<Self::Commitment> =
             siblings.into_iter().map(MerkleCap::from).collect();
+        // Convert RowList to Vec<Vec<F>> at the Mmcs trait boundary.
         let rows_vec: Vec<Vec<PF::Value>> = rows.iter_rows().map(|r| r.to_vec()).collect();
         BatchOpening::new(rows_vec, (salt, siblings_cap))
     }
