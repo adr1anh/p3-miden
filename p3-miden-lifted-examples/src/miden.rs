@@ -7,12 +7,12 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_air::{AirBuilder, BaseAir};
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::{
     AirBuilder, AirWithPeriodicColumns, AuxBuilder, BaseAir, LiftedAir, LiftedAirBuilder,
+    WindowAccess,
 };
 
 // ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ impl DummyMidenAir {
 /// Shared constraint logic: `local[0] * local[1] * ... * local[8] == 0`.
 fn eval_miden_constraints<AB: AirBuilder>(builder: &mut AB) {
     let main = builder.main();
-    let local = main.row_slice(0).unwrap();
+    let local = main.current_slice();
     let product = (0..9).fold(AB::Expr::ONE, |acc, j| acc * local[j].into());
     builder.assert_zero(product);
 }

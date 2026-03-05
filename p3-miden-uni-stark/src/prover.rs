@@ -3,11 +3,12 @@ use alloc::vec::Vec;
 
 use itertools::Itertools;
 use p3_air::Air;
+use p3_air::RowWindow;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing};
+use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_matrix::{Matrix, dense::RowMajorMatrixView};
 use p3_maybe_rayon::prelude::*;
 use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
@@ -446,11 +447,14 @@ where
             });
 
             let accumulator = PackedChallenge::<SC>::ZERO;
+            let empty: &[PackedVal<SC>] = &[];
+            let preprocessed_window = preprocessed.as_ref().map_or_else(
+                || RowWindow::from_two_rows(empty, empty),
+                |m| RowWindow::from_view(&m.as_view()),
+            );
             let mut folder = ProverConstraintFolder {
-                main: main.as_view(),
-                preprocessed: preprocessed
-                    .as_ref()
-                    .map_or_else(|| RowMajorMatrixView::new(&[], 0), |m| m.as_view()),
+                main: RowWindow::from_view(&main.as_view()),
+                preprocessed: preprocessed_window,
                 public_values,
                 is_first_row,
                 is_last_row,

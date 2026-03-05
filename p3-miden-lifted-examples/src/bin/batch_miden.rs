@@ -9,7 +9,10 @@
 //!   cargo run -p p3-miden-lifted-examples --release --features parallel --bin batch_miden
 //! ```
 
-use p3_air::{Air, AirBuilder, BaseAir, BaseLeaf, PermutationAirBuilder, SymbolicExpression};
+use p3_air::{
+    Air, AirBuilder, AirLayout, BaseAir, BaseLeaf, PermutationAirBuilder, SymbolicExpression,
+    WindowAccess,
+};
 use p3_batch_stark::{ProverData, StarkInstance, prove_batch, verify_batch};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
@@ -73,7 +76,7 @@ impl<AB: AirBuilder> Air<AB> for MidenWithLookups {
     fn eval(&self, builder: &mut AB) {
         // Same degree-9 constraint as DummyMidenAir.
         let main = builder.main();
-        let local = main.row_slice(0).unwrap();
+        let local = main.current_slice();
         let product = (0..9).fold(AB::Expr::ONE, |acc, j| acc * local[j].into());
         builder.assert_zero(product);
     }
@@ -90,9 +93,12 @@ impl<AB: AirBuilder> Air<AB> for MidenWithLookups {
     {
         self.num_lookups = 0;
 
-        let symbolic = SymbolicAirBuilder::<AB::F>::new(0, self.width, 0, 0, 0, 0);
+        let symbolic = SymbolicAirBuilder::<AB::F>::new(AirLayout {
+            main_width: self.width,
+            ..AirLayout::default()
+        });
         let main = symbolic.main();
-        let local = main.row_slice(0).unwrap();
+        let local = main.current_slice();
         let col0: SymbolicExpression<AB::F> = local[0].into();
 
         let one = SymbolicExpression::Leaf(BaseLeaf::Constant(AB::F::ONE));

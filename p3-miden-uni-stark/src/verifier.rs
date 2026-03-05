@@ -6,11 +6,10 @@ use alloc::{format, vec};
 
 use itertools::Itertools;
 use p3_air::Air;
+use p3_air::RowWindow;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing};
-use p3_matrix::dense::RowMajorMatrixView;
-use p3_matrix::stack::VerticalPair;
 use p3_util::zip_eq::zip_eq;
 use thiserror::Error;
 use tracing::instrument;
@@ -91,20 +90,11 @@ where
 {
     let sels = trace_domain.selectors_at_point(z);
 
-    let main = VerticalPair::new(
-        RowMajorMatrixView::new_row(trace_local),
-        RowMajorMatrixView::new_row(trace_next),
-    );
+    let main = RowWindow::from_two_rows(trace_local, trace_next);
 
     let preprocessed = match (preprocessed_local, preprocessed_next) {
-        (Some(local), Some(next)) => VerticalPair::new(
-            RowMajorMatrixView::new_row(local),
-            RowMajorMatrixView::new_row(next),
-        ),
-        _ => VerticalPair::new(
-            RowMajorMatrixView::new_row(&[]),
-            RowMajorMatrixView::new_row(&[]),
-        ),
+        (Some(local), Some(next)) => RowWindow::from_two_rows(local, next),
+        _ => RowWindow::from_two_rows(&[], &[]),
     };
 
     let mut folder = VerifierConstraintFolder {

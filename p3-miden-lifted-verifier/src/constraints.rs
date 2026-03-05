@@ -70,8 +70,8 @@ where
         self.main.clone()
     }
 
-    fn preprocessed(&self) -> Option<Self::M> {
-        None
+    fn preprocessed(&self) -> &Self::M {
+        &self.preprocessed
     }
 
     fn public_values(&self) -> &[Self::PublicVar] {
@@ -123,7 +123,7 @@ where
 {
     type MP = RowMajorMatrix<EF>;
     type RandomVar = EF;
-    type PermutationVal = EF;
+    type PermutationVar = EF;
 
     fn permutation(&self) -> Self::MP {
         self.aux.clone()
@@ -133,7 +133,7 @@ where
         self.randomness
     }
 
-    fn permutation_values(&self) -> &[Self::PermutationVal] {
+    fn permutation_values(&self) -> &[Self::PermutationVar] {
         self.permutation_values
     }
 }

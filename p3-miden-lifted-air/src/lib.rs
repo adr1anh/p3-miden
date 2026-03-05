@@ -2,7 +2,7 @@
 //!
 //! This crate provides:
 //! - [`LiftedAir`]: Super-trait for AIR definitions (inherits upstream + adds aux trace support)
-//! - [`LiftedAirBuilder`]: Super-trait for constraint builders (blanket impl over upstream traits)
+//! - [`LiftedAirBuilder`]: Super-trait for constraint builders
 //! - [`AirWithPeriodicColumns`]: Periodic column data trait (column periods and evaluations)
 //! - [`auxiliary`]: Auxiliary trace types (builder, cross-AIR identity checking).
 
@@ -24,15 +24,14 @@ pub use periodic::AirWithPeriodicColumns;
 
 pub use p3_air::{
     Air, AirBuilder, AirBuilderWithContext, BaseAir, ExtensionBuilder, FilteredAirBuilder,
-    PeriodicAirBuilder, PermutationAirBuilder,
+    PeriodicAirBuilder, PermutationAirBuilder, RowWindow, WindowAccess,
 };
 
-// Re-export fork symbolic types at crate root for ergonomic imports.
 pub use p3_air::symbolic::{
-    BaseEntry, ExtEntry, SymbolicAirBuilder, SymbolicExpression, SymbolicExpressionExt,
-    SymbolicVariable, SymbolicVariableExt, get_all_symbolic_constraints, get_max_constraint_degree,
-    get_max_constraint_degree_extension, get_symbolic_constraints,
-    get_symbolic_constraints_extension,
+    AirLayout, BaseEntry, ConstraintLayout, ExtEntry, SymbolicAirBuilder, SymbolicExpression,
+    SymbolicExpressionExt, SymbolicVariable, SymbolicVariableExt, get_all_symbolic_constraints,
+    get_constraint_layout, get_max_constraint_degree, get_max_constraint_degree_extension,
+    get_symbolic_constraints, get_symbolic_constraints_extension,
 };
 
 // Re-export commonly used field/matrix types.

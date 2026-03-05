@@ -314,8 +314,8 @@ where
     SymbolicExpression<EF>: Algebra<SymbolicExpression<F>>,
 {
     type MP = RowMajorMatrix<Self::VarEF>;
-
     type RandomVar = SymbolicVariable<EF>;
+    type PermutationVar = SymbolicVariable<EF>;
 
     fn permutation(&self) -> Self::MP {
         self.permutation.clone()
@@ -323,6 +323,10 @@ where
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         &self.permutation_challenges
+    }
+
+    fn permutation_values(&self) -> &[Self::PermutationVar] {
+        &[]
     }
 }
 

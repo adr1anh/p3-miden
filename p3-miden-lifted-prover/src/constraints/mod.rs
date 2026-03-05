@@ -21,6 +21,7 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 use p3_miden_lifted_air::LiftedAir;
+use p3_miden_lifted_air::RowWindow;
 use p3_miden_lifted_stark::LiftedCoset;
 
 use crate::periodic::PeriodicLde;
@@ -149,10 +150,12 @@ pub(crate) fn evaluate_constraints_into<F, EF, A, M>(
             let periodic_values: Vec<P<F>> = periodic_lde.packed_values_at(i_start).collect();
 
             // Build packed folder and evaluate constraints
+            let empty_p: &[P<F>] = &[];
             let mut folder: ProverConstraintFolder<'_, F, EF, P<F>, PE<F, EF>> =
                 ProverConstraintFolder {
-                    main: main.as_view(),
-                    aux: aux.as_view(),
+                    preprocessed: RowWindow::from_two_rows(empty_p, empty_p),
+                    main: RowWindow::from_view(&main.as_view()),
+                    aux: RowWindow::from_view(&aux.as_view()),
                     packed_randomness: &packed_randomness,
                     public_values,
                     periodic_values: &periodic_values,

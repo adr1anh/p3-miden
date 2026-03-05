@@ -2,13 +2,10 @@
 
 use alloc::vec::Vec;
 
-use p3_air::{Air, BaseAir};
 use p3_blake3_air::{Blake3Air, NUM_BLAKE3_COLS};
 use p3_field::{Field, PrimeField64};
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_lifted_air::{AirWithPeriodicColumns, BaseAir, LiftedAir, LiftedAirBuilder};
-
-use crate::compat::UpstreamCompat;
+use p3_miden_lifted_air::{Air, AirWithPeriodicColumns, BaseAir, LiftedAir, LiftedAirBuilder};
 
 /// [`Blake3Air`] adapted for the lifted STARK prover.
 ///
@@ -48,7 +45,7 @@ impl<F: PrimeField64, EF: Field> LiftedAir<F, EF> for LiftedBlake3Air {
     }
 
     fn eval<AB: LiftedAirBuilder<F = F>>(&self, builder: &mut AB) {
-        Air::eval(&Blake3Air {}, &mut UpstreamCompat(builder));
+        Air::eval(&Blake3Air {}, builder);
     }
 }
 

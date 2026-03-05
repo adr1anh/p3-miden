@@ -1,9 +1,8 @@
 use alloc::vec::Vec;
 
-use p3_air::AirBuilder;
+use p3_air::{AirBuilder, RowWindow};
 use p3_field::{BasedVectorSpace, PackedField};
 use p3_matrix::dense::RowMajorMatrixView;
-use p3_matrix::stack::ViewPair;
 
 use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
 
@@ -14,10 +13,10 @@ use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
 /// `C_0 + alpha C_1 + alpha^2 C_2 + ...`
 #[derive(Debug)]
 pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
-    /// The [`RowMajorMatrixView`] containing rows on which the constraint polynomial is evaluated.
-    pub main: RowMajorMatrixView<'a, PackedVal<SC>>,
-    /// The preprocessed columns as a [`RowMajorMatrixView`].
-    pub preprocessed: RowMajorMatrixView<'a, PackedVal<SC>>,
+    /// The two-row window over the main trace.
+    pub main: RowWindow<'a, PackedVal<SC>>,
+    /// The preprocessed columns as a two-row window.
+    pub preprocessed: RowWindow<'a, PackedVal<SC>>,
     /// Public inputs to the [AIR](`p3_air::Air`) implementation.
     pub public_values: &'a [Val<SC>],
     /// Evaluations of the Selector polynomial for the first row of the trace
@@ -43,10 +42,10 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
 /// using a more efficient accumulation method for verification.
 #[derive(Debug)]
 pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
-    /// Pair of consecutive rows from the committed polynomial evaluations as a [`ViewPair`].
-    pub main: ViewPair<'a, SC::Challenge>,
-    /// The preprocessed columns as a [`ViewPair`].
-    pub preprocessed: ViewPair<'a, SC::Challenge>,
+    /// Two-row window over the committed polynomial evaluations.
+    pub main: RowWindow<'a, SC::Challenge>,
+    /// The preprocessed columns as a two-row window.
+    pub preprocessed: RowWindow<'a, SC::Challenge>,
     /// Public values that are inputs to the computation
     pub public_values: &'a [Val<SC>],
     /// Evaluations of the Selector polynomial for the first row of the trace
@@ -65,7 +64,7 @@ impl<'a, SC: StarkGenericConfig> AirBuilder for ProverConstraintFolder<'a, SC> {
     type F = Val<SC>;
     type Expr = PackedVal<SC>;
     type Var = PackedVal<SC>;
-    type M = RowMajorMatrixView<'a, PackedVal<SC>>;
+    type M = RowWindow<'a, PackedVal<SC>>;
     type PublicVar = Self::F;
 
     #[inline]
@@ -129,7 +128,7 @@ impl<'a, SC: StarkGenericConfig> AirBuilder for VerifierConstraintFolder<'a, SC>
     type F = Val<SC>;
     type Expr = SC::Challenge;
     type Var = SC::Challenge;
-    type M = ViewPair<'a, SC::Challenge>;
+    type M = RowWindow<'a, SC::Challenge>;
     type PublicVar = Self::F;
 
     fn main(&self) -> Self::M {
@@ -168,4 +167,9 @@ impl<'a, SC: StarkGenericConfig> AirBuilder for VerifierConstraintFolder<'a, SC>
     fn public_values(&self) -> &[Self::F] {
         self.public_values
     }
+}
+
+/// Construct a [`RowWindow`] from a [`RowMajorMatrixView`] with exactly 2 rows.
+pub fn window_from_view<'a, T>(view: &'a RowMajorMatrixView<'a, T>) -> RowWindow<'a, T> {
+    RowWindow::from_view(view)
 }

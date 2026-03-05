@@ -10,10 +10,8 @@ use core::marker::PhantomData;
 use p3_field::{
     Algebra, BasedVectorSpace, ExtensionField, Field, PackedField, PrimeCharacteristicRing,
 };
-use p3_matrix::dense::RowMajorMatrixView;
 use p3_miden_lifted_air::{
-    AirBuilder, ConstraintLayout, ExtensionBuilder,
-    PeriodicAirBuilder, PermutationAirBuilder,
+    AirBuilder, ExtensionBuilder, PeriodicAirBuilder, PermutationAirBuilder, RowWindow,
 };
 use p3_miden_lifted_stark::Selectors;
 
@@ -91,13 +89,13 @@ where
     P: PackedField<Scalar = F>,
     PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
 {
-    /// Main trace matrix view (packed base field)
-    pub main: RowMajorMatrixView<'a, P>,
-    /// The preprocessed columns as a [`RowMajorMatrixView`].
+    /// Main trace two-row window (packed base field)
+    pub main: RowWindow<'a, P>,
+    /// The preprocessed columns as a two-row window.
     /// Zero-width when the AIR has no preprocessed trace.
-    pub preprocessed: RowMajorMatrixView<'a, P>,
-    /// Aux/permutation trace matrix view (packed extension field)
-    pub aux: RowMajorMatrixView<'a, PE>,
+    pub preprocessed: RowWindow<'a, P>,
+    /// Aux/permutation trace two-row window (packed extension field)
+    pub aux: RowWindow<'a, PE>,
     /// Randomness for aux trace (packed extension field)
     pub packed_randomness: &'a [PE],
     /// Public values (base field scalars)
@@ -173,7 +171,7 @@ where
     type F = F;
     type Expr = P;
     type Var = P;
-    type M = RowMajorMatrixView<'a, P>;
+    type M = RowWindow<'a, P>;
     type PublicVar = F;
 
     #[inline]
@@ -181,8 +179,8 @@ where
         self.main
     }
 
-    fn preprocessed(&self) -> Option<Self::M> {
-        None
+    fn preprocessed(&self) -> &Self::M {
+        &self.preprocessed
     }
 
     #[inline]
@@ -251,9 +249,9 @@ where
     P: PackedField<Scalar = F>,
     PE: Algebra<EF> + Algebra<P> + BasedVectorSpace<P> + Copy + Send + Sync,
 {
-    type MP = RowMajorMatrixView<'a, PE>;
+    type MP = RowWindow<'a, PE>;
     type RandomVar = PE;
-    type PermutationVal = PE;
+    type PermutationVar = PE;
 
     #[inline]
     fn permutation(&self) -> Self::MP {
@@ -266,7 +264,7 @@ where
     }
 
     #[inline]
-    fn permutation_values(&self) -> &[Self::PermutationVal] {
+    fn permutation_values(&self) -> &[Self::PermutationVar] {
         self.permutation_values
     }
 }

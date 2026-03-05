@@ -3,12 +3,11 @@ mod common;
 use alloc::vec::Vec;
 
 use p3_field::PrimeCharacteristicRing;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_air::{
     AirBuilder, AirWithPeriodicColumns, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir,
-    LiftedAirBuilder,
+    LiftedAirBuilder, WindowAccess,
 };
 use p3_miden_lifted_prover::prove_single;
 use p3_miden_lifted_verifier::{VerifierError, verify_single};
@@ -78,10 +77,7 @@ impl LiftedAir<bb::F, bb::EF> for TinyAir {
         let main = builder.main();
         let start = builder.public_values()[0];
         let periodic = builder.periodic_values().to_vec();
-        let (local, next) = (
-            main.row_slice(0).expect("empty matrix"),
-            main.row_slice(1).expect("single row matrix"),
-        );
+        let (local, next) = (main.current_slice(), main.next_slice());
 
         // First row: main[0] = public_values[0]
         builder.when_first_row().assert_eq(local[0], start);
@@ -99,8 +95,8 @@ impl LiftedAir<bb::F, bb::EF> for TinyAir {
 
         // Aux trace constraints
         let aux = builder.permutation();
-        let aux_local = aux.row_slice(0).expect("empty aux");
-        let aux_next = aux.row_slice(1).expect("single row aux");
+        let aux_local = aux.current_slice();
+        let aux_next = aux.next_slice();
         let challenge: AB::ExprEF = builder.permutation_randomness()[0].into();
 
         let aux_local_ef: AB::ExprEF = aux_local[0].into();

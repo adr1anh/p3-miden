@@ -10,14 +10,13 @@
 
 use core::marker::PhantomData;
 
-use p3_air::{Air, AirBuilder, BaseAir};
+use p3_air::{Air, AirBuilder, AirLayout, BaseAir, WindowAccess};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::DuplexChallenger;
 use p3_commit::testing::TrivialPcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::PrimeCharacteristicRing;
 use p3_field::extension::BinomialExtensionField;
-use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_uni_stark::{StarkConfig, SubAirBuilder, SymbolicAirBuilder, prove, verify};
 use rand::SeedableRng;
@@ -42,7 +41,7 @@ where
 {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
-        let local = main.row_slice(0).expect("matrix should have a local row");
+        let local = main.current_slice();
 
         let value = local[0];
         let bits = &local[1..];
@@ -83,8 +82,8 @@ where
 
         // Evaluate the parent AIR
         let main = builder.main();
-        let local = main.row_slice(0).expect("matrix should have a local row");
-        let next = main.row_slice(1).expect("matrix only has 1 row?");
+        let local = main.current_slice();
+        let next = main.next_slice();
 
         let accumulator = local[0];
         let range_value = local[1];
@@ -125,7 +124,10 @@ impl RangeCheckAir {
 #[test]
 fn range_checked_sub_builder() {
     let air = RangeCheckAir;
-    let mut builder = SymbolicAirBuilder::<BabyBear>::new(0, TRACE_WIDTH, 0, 0, 0, 0);
+    let mut builder = SymbolicAirBuilder::<BabyBear>::new(AirLayout {
+        main_width: TRACE_WIDTH,
+        ..AirLayout::default()
+    });
     air.eval(&mut builder);
 
     let constraints = builder.base_constraints();

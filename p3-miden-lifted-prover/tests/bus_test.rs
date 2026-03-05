@@ -4,12 +4,11 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_field::{Field, PrimeCharacteristicRing};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_air::{
     AirBuilder, AirWithPeriodicColumns, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir,
-    LiftedAirBuilder, ReducedAuxValues, VarLenPublicInputs,
+    LiftedAirBuilder, ReducedAuxValues, VarLenPublicInputs, WindowAccess,
 };
 use p3_miden_lifted_prover::prove_multi;
 use p3_miden_lifted_stark::AirInstance;
@@ -106,10 +105,7 @@ impl LiftedAir<bb::F, bb::EF> for BusTestAir {
         let pv2 = builder.public_values()[2];
 
         let main = builder.main();
-        let (local, next) = (
-            main.row_slice(0).expect("empty matrix"),
-            main.row_slice(1).expect("single row matrix"),
-        );
+        let (local, next) = (main.current_slice(), main.next_slice());
 
         // Main trace: power-of-4 chain
         builder.when_first_row().assert_eq(local[0], pv0);
@@ -119,12 +115,12 @@ impl LiftedAir<bb::F, bb::EF> for BusTestAir {
         // Copy challenges and aux values (RandomVar/VarEF: Copy) to release borrow.
         let c0: AB::RandomVar = builder.permutation_randomness()[0];
         let c1: AB::RandomVar = builder.permutation_randomness()[1];
-        let av0: AB::PermutationVal = builder.permutation_values()[0];
-        let av1: AB::PermutationVal = builder.permutation_values()[1];
+        let av0: AB::PermutationVar = builder.permutation_values()[0].clone();
+        let av1: AB::PermutationVar = builder.permutation_values()[1].clone();
 
         let aux = builder.permutation();
-        let aux_local = aux.row_slice(0).expect("empty aux");
-        let aux_next = aux.row_slice(1).expect("single row aux");
+        let aux_local = aux.current_slice();
+        let aux_next = aux.next_slice();
 
         // pi_0 = public_values[1], pi_1 = public_values[2]
         let pi_0: AB::ExprEF = Into::<AB::Expr>::into(pv1).into();

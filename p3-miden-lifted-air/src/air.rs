@@ -20,14 +20,16 @@
 //! Use [`LiftedAir::is_valid_builder`] to verify that a concrete builder's
 //! dimensions match the AIR before calling `eval()`.
 
-use p3_air::BaseAir;
+use p3_air::{BaseAir, WindowAccess};
 use p3_field::{ExtensionField, Field};
-use p3_matrix::{Dimensions, Matrix};
 use p3_util::log2_ceil_usize;
 use thiserror::Error;
 
 use crate::auxiliary::{ReducedAuxValues, ReductionError, VarLenPublicInputs};
-use crate::{AirWithPeriodicColumns, LiftedAirBuilder, SymbolicAirBuilder};
+use crate::{
+    AirLayout, AirWithPeriodicColumns, LiftedAirBuilder, SymbolicAirBuilder, SymbolicExpression,
+    SymbolicExpressionExt,
+};
 
 /// Super-trait for AIR definitions used by the lifted STARK prover/verifier.
 ///
@@ -172,28 +174,28 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
     where
         Self: Sized,
     {
-        let preprocessed_width = self.preprocessed_trace().map_or(0, |t| t.width());
-        let mut builder = SymbolicAirBuilder::<F>::new(
-            preprocessed_width,
-            self.width(),
-            self.num_public_values(),
-            self.aux_width(),
-            self.num_randomness(),
-            self.num_aux_values(),
-            self.periodic_columns().len(),
-        );
+        let layout = AirLayout {
+            preprocessed_width: self.preprocessed_trace().map_or(0, |t| t.width),
+            main_width: self.width(),
+            num_public_values: self.num_public_values(),
+            permutation_width: self.aux_width(),
+            num_permutation_challenges: self.num_randomness(),
+            num_permutation_values: self.num_aux_values(),
+            num_periodic_columns: self.periodic_columns().len(),
+        };
+        let mut builder = SymbolicAirBuilder::<F>::new(layout);
         self.eval(&mut builder);
 
         let base_degree = builder
             .base_constraints()
             .iter()
-            .map(|c| c.degree_multiple())
+            .map(|c: &SymbolicExpression<F>| c.degree_multiple())
             .max()
             .unwrap_or(0);
         let ext_degree = builder
             .extension_constraints()
             .iter()
-            .map(|c| c.degree_multiple())
+            .map(|c: &SymbolicExpressionExt<F, F>| c.degree_multiple())
             .max()
             .unwrap_or(0);
         let constraint_degree = base_degree.max(ext_degree).max(2);
@@ -223,27 +225,17 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
         &self,
         builder: &AB,
     ) -> Result<(), BuilderMismatchError> {
-        let expected = Dimensions {
-            width: self.width(),
-            height: 2,
-        };
-        let actual = builder.main().dimensions();
+        let (expected, actual) = (self.width(), builder.main().current_slice().len());
         if actual != expected {
-            return Err(BuilderMismatchError::MainDimensions { expected, actual });
+            return Err(BuilderMismatchError::MainWidth { expected, actual });
         }
 
-        let expected = Dimensions {
-            width: self.aux_width(),
-            height: 2,
-        };
-        let actual = builder.permutation().dimensions();
+        let (expected, actual) = (
+            self.aux_width(),
+            builder.permutation().current_slice().len(),
+        );
         if actual != expected {
-            return Err(BuilderMismatchError::AuxDimensions { expected, actual });
-        }
-
-        // LiftedAir rejects preprocessed traces (checked by validate()).
-        if builder.preprocessed() {
-            return Err(BuilderMismatchError::PreprocessedPresent);
+            return Err(BuilderMismatchError::AuxWidth { expected, actual });
         }
 
         let (expected, actual) = (self.num_public_values(), builder.public_values().len());
@@ -283,18 +275,10 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
 /// has dimensions incompatible with the AIR.
 #[derive(Debug, Error)]
 pub enum BuilderMismatchError {
-    #[error("main trace dimensions: expected {expected:?}, got {actual:?}")]
-    MainDimensions {
-        expected: Dimensions,
-        actual: Dimensions,
-    },
-    #[error("aux trace dimensions: expected {expected:?}, got {actual:?}")]
-    AuxDimensions {
-        expected: Dimensions,
-        actual: Dimensions,
-    },
-    #[error("preprocessed trace must not be present")]
-    PreprocessedPresent,
+    #[error("main trace width: expected {expected}, got {actual}")]
+    MainWidth { expected: usize, actual: usize },
+    #[error("aux trace width: expected {expected}, got {actual}")]
+    AuxWidth { expected: usize, actual: usize },
     #[error("public values length: expected {expected}, got {actual}")]
     PublicValuesLength { expected: usize, actual: usize },
     #[error("randomness length: expected {expected}, got {actual}")]

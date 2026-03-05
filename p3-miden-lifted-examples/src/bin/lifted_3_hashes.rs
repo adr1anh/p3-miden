@@ -12,7 +12,6 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_air::BaseAir;
 use p3_baby_bear::BabyBear;
 use p3_dft::Radix2DitParallel;
 use p3_field::Field;

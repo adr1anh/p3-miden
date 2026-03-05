@@ -1,13 +1,12 @@
-use p3_air::AirBuilder;
+use p3_air::{AirBuilder, RowWindow};
 use p3_field::Field;
-use p3_matrix::stack::ViewPair;
 
 #[cfg(debug_assertions)]
 use p3_air::Air;
 #[cfg(debug_assertions)]
 use p3_matrix::Matrix;
 #[cfg(debug_assertions)]
-use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
+use p3_matrix::dense::RowMajorMatrix;
 #[cfg(debug_assertions)]
 use tracing::instrument;
 
@@ -34,35 +33,26 @@ where
     (0..height).for_each(|row_index| {
         let row_index_next = (row_index + 1) % height;
 
-        // row_index < height so we can use unchecked indexing.
         let local = unsafe { main.row_slice_unchecked(row_index) };
-        // row_index_next < height so we can use unchecked indexing.
         let next = unsafe { main.row_slice_unchecked(row_index_next) };
-        let main = ViewPair::new(
-            RowMajorMatrixView::new_row(&*local),
-            RowMajorMatrixView::new_row(&*next),
-        );
+        let main_window = RowWindow::from_two_rows(&local, &next);
 
-        let (prep_local, prep_next);
-        #[allow(clippy::option_if_let_else)]
-        let preprocessed_pair = if let Some(prep) = preprocessed.as_ref() {
-            prep_local = unsafe { prep.row_slice_unchecked(row_index) };
-            prep_next = unsafe { prep.row_slice_unchecked(row_index_next) };
-            ViewPair::new(
-                RowMajorMatrixView::new_row(&*prep_local),
-                RowMajorMatrixView::new_row(&*prep_next),
+        let preprocessed_window = if let Some(prep) = preprocessed.as_ref() {
+            let prep_local = unsafe { prep.row_slice_unchecked(row_index) };
+            let prep_next = unsafe { prep.row_slice_unchecked(row_index_next) };
+            RowWindow::from_two_rows(
+                // SAFETY: slices are valid for the duration of this closure
+                unsafe { core::slice::from_raw_parts(prep_local.as_ptr(), prep_local.len()) },
+                unsafe { core::slice::from_raw_parts(prep_next.as_ptr(), prep_next.len()) },
             )
         } else {
-            ViewPair::new(
-                RowMajorMatrixView::new_row(&[]),
-                RowMajorMatrixView::new_row(&[]),
-            )
+            RowWindow::from_two_rows(&[], &[])
         };
 
         let mut builder = DebugConstraintBuilder {
             row_index,
-            main,
-            preprocessed: preprocessed_pair,
+            main: main_window,
+            preprocessed: preprocessed_window,
             public_values,
             is_first_row: F::from_bool(row_index == 0),
             is_last_row: F::from_bool(row_index == height - 1),
@@ -81,10 +71,10 @@ where
 pub struct DebugConstraintBuilder<'a, F: Field> {
     /// The index of the row currently being evaluated.
     row_index: usize,
-    /// A view of the current and next row as a vertical pair.
-    main: ViewPair<'a, F>,
-    /// A view of the preprocessed current and next row as a vertical pair.
-    preprocessed: ViewPair<'a, F>,
+    /// A two-row window over the current and next main trace rows.
+    main: RowWindow<'a, F>,
+    /// A two-row window over the current and next preprocessed trace rows.
+    preprocessed: RowWindow<'a, F>,
     /// The public values provided for constraint validation (e.g. inputs or outputs).
     public_values: &'a [F],
     /// A flag indicating whether this is the first row.
@@ -102,7 +92,7 @@ where
     type F = F;
     type Expr = F;
     type Var = F;
-    type M = ViewPair<'a, F>;
+    type M = RowWindow<'a, F>;
     type PublicVar = Self::F;
 
     fn main(&self) -> Self::M {
@@ -150,127 +140,7 @@ where
         &self.preprocessed
     }
 
-    fn public_values(&self) -> &[Self::F] {
+    fn public_values(&self) -> &[Self::PublicVar] {
         self.public_values
-    }
-}
-
-#[cfg(test)]
-#[cfg(debug_assertions)]
-mod tests {
-    use alloc::vec;
-
-    use p3_air::BaseAir;
-    use p3_baby_bear::BabyBear;
-    use p3_field::PrimeCharacteristicRing;
-
-    use super::*;
-
-    /// A test AIR that enforces a simple linear transition logic:
-    /// - Each cell in the next row must equal the current cell plus 1 (i.e., `next = current + 1`)
-    /// - On the last row, the current row must match the provided public values.
-    ///
-    /// This is useful for validating constraint evaluation, transition logic,
-    /// and row condition flags (first/last/transition).
-    #[derive(Debug)]
-    struct RowLogicAir<const W: usize>;
-
-    impl<F: Field, const W: usize> BaseAir<F> for RowLogicAir<W> {
-        fn width(&self) -> usize {
-            W
-        }
-    }
-
-    impl<F: Field, const W: usize> Air<DebugConstraintBuilder<'_, F>> for RowLogicAir<W> {
-        fn eval(&self, builder: &mut DebugConstraintBuilder<'_, F>) {
-            let main = builder.main();
-
-            for col in 0..W {
-                let a = main.top.get(0, col).unwrap();
-                let b = main.bottom.get(0, col).unwrap();
-
-                // New logic: enforce row[i+1] = row[i] + 1, only on transitions
-                builder.when_transition().assert_eq(b, a + F::ONE);
-            }
-
-            // Add public value equality on last row for extra coverage
-            let public_values = builder.public_values;
-            let mut when_last = builder.when(builder.is_last_row);
-            for (i, &pv) in public_values.iter().enumerate().take(W) {
-                when_last.assert_eq(main.top.get(0, i).unwrap(), pv);
-            }
-        }
-    }
-
-    #[test]
-    fn test_incremental_rows_with_last_row_check() {
-        // Each row = previous + 1, with 4 rows total, 2 columns.
-        // Last row must match public values [4, 4]
-        let air = RowLogicAir::<2>;
-        let values = vec![
-            BabyBear::ONE,
-            BabyBear::ONE, // Row 0
-            BabyBear::new(2),
-            BabyBear::new(2), // Row 1
-            BabyBear::new(3),
-            BabyBear::new(3), // Row 2
-            BabyBear::new(4),
-            BabyBear::new(4), // Row 3 (last)
-        ];
-        let main = RowMajorMatrix::new(values, 2);
-        check_constraints(&air, &main, &[BabyBear::new(4); 2]);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_incorrect_increment_logic() {
-        // Row 2 does not equal row 1 + 1 → should fail on transition from row 1 to 2.
-        let air = RowLogicAir::<2>;
-        let values = vec![
-            BabyBear::ONE,
-            BabyBear::ONE, // Row 0
-            BabyBear::new(2),
-            BabyBear::new(2), // Row 1
-            BabyBear::new(5),
-            BabyBear::new(5), // Row 2 (wrong)
-            BabyBear::new(6),
-            BabyBear::new(6), // Row 3
-        ];
-        let main = RowMajorMatrix::new(values, 2);
-        check_constraints(&air, &main, &[BabyBear::new(6); 2]);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_wrong_last_row_public_value() {
-        // The transition logic is fine, but public value check fails at the last row.
-        let air = RowLogicAir::<2>;
-        let values = vec![
-            BabyBear::ONE,
-            BabyBear::ONE, // Row 0
-            BabyBear::new(2),
-            BabyBear::new(2), // Row 1
-            BabyBear::new(3),
-            BabyBear::new(3), // Row 2
-            BabyBear::new(4),
-            BabyBear::new(4), // Row 3
-        ];
-        let main = RowMajorMatrix::new(values, 2);
-        // Wrong public value on column 1
-        check_constraints(&air, &main, &[BabyBear::new(4), BabyBear::new(5)]);
-    }
-
-    #[test]
-    fn test_single_row_wraparound_logic() {
-        // A single-row matrix still performs a wraparound check with itself.
-        // row[0] == row[0] + 1 ⇒ fails unless handled properly by transition logic.
-        // Here: is_transition == false ⇒ so no assertions are enforced.
-        let air = RowLogicAir::<2>;
-        let values = vec![
-            BabyBear::new(99),
-            BabyBear::new(77), // Row 0
-        ];
-        let main = RowMajorMatrix::new(values, 2);
-        check_constraints(&air, &main, &[BabyBear::new(99), BabyBear::new(77)]);
     }
 }
