@@ -38,6 +38,10 @@ pub trait LiftedAir<F: Field, EF>:
     /// Each input is a slice of base-field elements that
     /// [`reduced_aux_values`](Self::reduced_aux_values) reduces to a single value.
     /// The prover validates that witnesses provide exactly this many slices.
+    ///
+    /// Implementors of [`reduced_aux_values`](Self::reduced_aux_values) should verify
+    /// that `var_len_public_inputs` contains exactly this many slices, returning
+    /// [`ReductionError`] otherwise.
     fn num_var_len_public_inputs(&self) -> usize {
         0
     }

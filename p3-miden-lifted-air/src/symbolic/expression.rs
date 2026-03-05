@@ -229,9 +229,9 @@ impl<F: Field> PrimeCharacteristicRing for SymbolicExpression<F> {
     }
 }
 
-/// `SymbolicExpression<F>` forms an algebra over `F` (field constants) and over
-/// `SymbolicVariable<F>` (symbolic column references), enabling mixed arithmetic
-/// in constraint definitions.
+/// `SymbolicExpression<F>` forms an algebra over any algebraic extension of `F`
+/// (including `F` itself) and over `SymbolicVariable<F>` (symbolic column references),
+/// enabling mixed arithmetic in constraint definitions.
 impl<F: Field> Algebra<F> for SymbolicExpression<F> {}
 
 impl<F: Field> Algebra<SymbolicVariable<F>> for SymbolicExpression<F> {}
