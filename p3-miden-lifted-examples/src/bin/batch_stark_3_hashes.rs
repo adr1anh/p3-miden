@@ -219,8 +219,7 @@ fn main() {
             tracing::info!(iteration = i, total = bench_iters, "bench iteration");
         }
 
-        let trace_clones: Vec<RowMajorMatrix<Val>> = traces.iter().map(|t| (*t).clone()).collect();
-        let instances = StarkInstance::new_multiple(&airs, &trace_clones, &pvs, common);
+        let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, common);
 
         let proof = info_span!("prove").in_scope(|| prove_batch(&config, &instances, &prover_data));
 

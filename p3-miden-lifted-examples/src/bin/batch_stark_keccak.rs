@@ -185,12 +185,10 @@ fn main() {
         );
         let common = &prover_data.common;
 
-        let instances = StarkInstance::new_multiple(
-            &airs,
-            &[trace_s.clone(), trace_a.clone(), trace_b.clone()],
-            &[vec![], vec![], vec![]],
-            common,
-        );
+        let traces = [&trace_s, &trace_a, &trace_b];
+
+        let instances =
+            StarkInstance::new_multiple(&airs, &traces, &[vec![], vec![], vec![]], common);
 
         let proof = info_span!("prove").in_scope(|| prove_batch(&config, &instances, &prover_data));
 
