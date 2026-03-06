@@ -47,7 +47,7 @@ type MmcsSponge = PaddingFreeSponge<Perm, { bb::WIDTH }, { bb::RATE }, { bb::DIG
 type Compress = bb::Compress;
 type ValMmcs = MerkleTreeMmcs<bb::P, bb::P, MmcsSponge, Compress, 2, { bb::DIGEST }>;
 type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
-type WorkspacePcs = p3_miden_fri::TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
+type WorkspacePcs = p3_fri::TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
 type Challenger = DuplexChallenger<Val, Perm, { bb::WIDTH }, { bb::RATE }>;
 
 // Lifted types
@@ -88,13 +88,14 @@ fn workspace_pcs() -> WorkspacePcs {
     let mmcs_sponge = MmcsSponge::new(perm);
     let mmcs = ValMmcs::new(mmcs_sponge, compress, 0);
     let challenge_mmcs = ChallengeMmcs::new(mmcs.clone());
-    let fri_params = p3_miden_fri::FriParameters {
+    let fri_params = p3_fri::FriParameters {
         log_blowup: LOG_BLOWUP,
         log_final_poly_len: 0,
+        max_log_arity: 1,
         num_queries: 1,
-        proof_of_work_bits: 0,
+        commit_proof_of_work_bits: 0,
+        query_proof_of_work_bits: 0,
         mmcs: challenge_mmcs,
-        log_folding_factor: 1,
     };
     WorkspacePcs::new(Dft::default(), mmcs, fri_params)
 }
