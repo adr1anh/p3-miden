@@ -134,7 +134,7 @@ use p3_miden_lifted_air::{
     AirValidationError, AuxBuilder, LiftedAir, VarLenPublicInputs, validate_instances,
 };
 use p3_miden_lifted_fri::prover::open_with_channel;
-use p3_miden_lifted_stark::{AirWitness, LiftedCoset, StarkConfig, sample_ood_point};
+use p3_miden_lifted_stark::{AirWitness, LiftedCoset, StarkConfig};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::ProverChannel;
 use p3_util::log2_strict_usize;
@@ -437,7 +437,7 @@ where
     channel.send_commitment(quotient_committed.root());
 
     // 8. Sample OOD point (outside H and gK)
-    let z: EF = sample_ood_point(channel, &max_lde_coset);
+    let z: EF = max_lde_coset.sample_ood_point(channel);
     let h = F::two_adic_generator(log_max_trace_height);
     let z_next = z * h;
 

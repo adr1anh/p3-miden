@@ -58,13 +58,10 @@ extern crate alloc;
 mod config;
 mod coset;
 mod selectors;
-mod util;
-
 pub use config::*;
 pub use coset::*;
 pub use p3_miden_lifted_air::{AirInstance, AirWitness};
 pub use selectors::*;
-pub use util::*;
 
 // Re-export PCS parameter types from p3-miden-lifted-fri.
 pub use p3_miden_lifted_fri::PcsParams;
