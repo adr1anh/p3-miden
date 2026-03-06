@@ -50,6 +50,10 @@ where
 /// Uses concrete field zeros for all variables — no symbolic expression trees, no degree
 /// tracking, no `Arc` allocations. Builds a [`ConstraintLayout`] directly by recording
 /// which `assert_*` method is called for each constraint.
+///
+/// Uses `RowMajorMatrix<F>` as `type M` because the builder owns its trace data.
+/// `RowWindow` cannot be used here — it borrows, but the associated type `M` can't
+/// capture the `&self` lifetime from `main()`.
 struct ConstraintLayoutBuilder<F: Field> {
     main: RowMajorMatrix<F>,
     preprocessed: RowMajorMatrix<F>,
@@ -109,10 +113,6 @@ impl<F: Field> AirBuilder for ConstraintLayoutBuilder<F> {
         &self.preprocessed
     }
 
-    fn public_values(&self) -> &[Self::PublicVar] {
-        &self.public_values
-    }
-
     fn is_first_row(&self) -> Self::Expr {
         F::ZERO
     }
@@ -128,6 +128,10 @@ impl<F: Field> AirBuilder for ConstraintLayoutBuilder<F> {
     fn assert_zero<I: Into<Self::Expr>>(&mut self, _x: I) {
         self.layout.base_indices.push(self.constraint_count);
         self.constraint_count += 1;
+    }
+
+    fn public_values(&self) -> &[Self::PublicVar] {
+        &self.public_values
     }
 }
 

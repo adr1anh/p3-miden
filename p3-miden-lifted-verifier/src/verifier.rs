@@ -48,11 +48,10 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
-
 use p3_field::{ExtensionField, TwoAdicField};
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::Matrix;
 use p3_miden_lifted_air::{
-    AirValidationError, LiftedAir, ReducedAuxValues, ReductionError, VarLenPublicInputs,
+    AirValidationError, LiftedAir, ReducedAuxValues, ReductionError, RowWindow, VarLenPublicInputs,
     validate_instances,
 };
 use p3_miden_lifted_fri::verifier::{PcsError, verify_aligned};
@@ -288,14 +287,13 @@ where
         let coset_j = LiftedCoset::new(inst.log_trace_height, log_blowup, log_max_trace_height);
 
         // opened[main_g][j] is a 2-row RowMajorMatrix (local, next) already truncated.
-        let main_pair = opened[main_g][j].clone();
+        let main_window = RowWindow::from_view(&opened[main_g][j].as_view());
 
         // Extract aux trace opened values (reconstitute EF from base field components).
-        let aux_ef_width = air.aux_width();
-        let mut aux_rows = opened[aux_g][j].row_slices();
-        let aux_local = row_to_packed_ext::<F, EF>(aux_rows.next().expect("row 0 (local)"))?;
-        let aux_next = row_to_packed_ext::<F, EF>(aux_rows.next().expect("row 1 (next)"))?;
-        let aux_pair = RowMajorMatrix::new([aux_local, aux_next].concat(), aux_ef_width);
+        let aux_mat = &opened[aux_g][j];
+        let aux_local = row_to_packed_ext::<F, EF>(&aux_mat.row_slice(0).expect("aux row 0"))?;
+        let aux_next = row_to_packed_ext::<F, EF>(&aux_mat.row_slice(1).expect("aux row 1"))?;
+        let aux_window = RowWindow::from_two_rows(&aux_local, &aux_next);
 
         // Selectors at the lifted OOD point yⱼ = z^{rⱼ} (encapsulated in LiftedCoset).
         let selectors = coset_j.selectors_at::<F, _>(z);
@@ -308,12 +306,12 @@ where
         let periodic_values = periodic_polys.eval_at::<EF>(max_trace_height, z);
 
         let aux_values_j = &all_aux_values[j];
-
         let num_rand = air.num_randomness();
+        let empty: &[EF] = &[];
         let mut folder = ConstraintFolder {
-            main: main_pair,
-            preprocessed: RowMajorMatrix::new(Vec::new(), 0),
-            aux: aux_pair,
+            main: main_window,
+            aux: aux_window,
+            preprocessed: RowWindow::from_two_rows(empty, empty),
             randomness: &randomness[..num_rand],
             public_values: inst.public_values,
             periodic_values: &periodic_values,
@@ -344,8 +342,8 @@ where
 
     // 11. Reconstruct Q(z) and check quotient identity Q(z) * Z_{H_max}(z)
     // Quotient group has a single matrix; row 0 is the evaluation at z.
-    let mut quot_rows = opened[quot_g][0].row_slices();
-    let quotient_chunks = row_to_packed_ext::<F, EF>(quot_rows.next().expect("quotient row 0"))?;
+    let quot_row = opened[quot_g][0].row_slice(0).expect("quotient row 0");
+    let quotient_chunks = row_to_packed_ext::<F, EF>(&quot_row)?;
     let quotient_z = reconstruct_quotient::<F, EF>(z, &max_lde_coset, &quotient_chunks);
 
     let vanishing = max_lde_coset.vanishing_at::<F, _>(z);

@@ -9,9 +9,8 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use p3_field::{ExtensionField, Field, TwoAdicField};
-use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::{
-    AirBuilder, ExtensionBuilder, PeriodicAirBuilder, PermutationAirBuilder,
+    AirBuilder, ExtensionBuilder, PeriodicAirBuilder, PermutationAirBuilder, RowWindow,
 };
 use p3_miden_lifted_stark::{LiftedCoset, Selectors};
 use p3_util::log2_strict_usize;
@@ -36,18 +35,18 @@ use crate::VerifierError;
 /// `Σₖ α^{K−1−k}·Cₖ(z)`, but is cheaper for a single-point evaluation.
 /// The prover computes an equivalent fold over the whole quotient domain, optimized
 /// with base-field SIMD where possible.
-#[derive(Clone, Debug)]
-pub struct ConstraintFolder<'a, F, EF>
+pub(crate) struct ConstraintFolder<'a, F, EF>
 where
     F: Field,
     EF: ExtensionField<F>,
 {
-    pub main: RowMajorMatrix<EF>,
-    pub aux: RowMajorMatrix<EF>,
+    pub main: RowWindow<'a, EF>,
+    pub aux: RowWindow<'a, EF>,
+    /// Empty preprocessed window (lifted AIRs have no preprocessed trace).
+    pub preprocessed: RowWindow<'a, EF>,
     pub randomness: &'a [EF],
     pub public_values: &'a [F],
     pub periodic_values: &'a [EF],
-    pub preprocessed: RowMajorMatrix<EF>,
     pub permutation_values: &'a [EF],
     pub selectors: Selectors<EF>,
     pub alpha: EF,
@@ -63,19 +62,15 @@ where
     type F = F;
     type Expr = EF;
     type Var = EF;
-    type M = RowMajorMatrix<EF>;
+    type M = RowWindow<'a, EF>;
     type PublicVar = F;
 
     fn main(&self) -> Self::M {
-        self.main.clone()
+        self.main
     }
 
     fn preprocessed(&self) -> &Self::M {
         &self.preprocessed
-    }
-
-    fn public_values(&self) -> &[Self::PublicVar] {
-        self.public_values
     }
 
     fn is_first_row(&self) -> Self::Expr {
@@ -96,6 +91,10 @@ where
 
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
         self.accumulator = self.accumulator * self.alpha + x.into();
+    }
+
+    fn public_values(&self) -> &[Self::PublicVar] {
+        self.public_values
     }
 }
 
@@ -121,12 +120,12 @@ where
     F: Field,
     EF: ExtensionField<F>,
 {
-    type MP = RowMajorMatrix<EF>;
+    type MP = RowWindow<'a, EF>;
     type RandomVar = EF;
     type PermutationVar = EF;
 
     fn permutation(&self) -> Self::MP {
-        self.aux.clone()
+        self.aux
     }
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {

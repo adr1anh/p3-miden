@@ -184,11 +184,6 @@ where
     }
 
     #[inline]
-    fn public_values(&self) -> &[Self::PublicVar] {
-        self.public_values
-    }
-
-    #[inline]
     fn is_first_row(&self) -> Self::Expr {
         self.selectors.is_first_row
     }
@@ -218,6 +213,11 @@ where
         let expr_array = array.map(Into::into);
         self.base_constraints.extend(expr_array);
         self.constraint_index += N;
+    }
+
+    #[inline]
+    fn public_values(&self) -> &[Self::PublicVar] {
+        self.public_values
     }
 }
 
