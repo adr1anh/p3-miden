@@ -52,8 +52,8 @@ use core::marker::PhantomData;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::{
-    AirValidationError, BuilderMismatchError, LiftedAir, ReducedAuxValues, ReductionError,
-    VarLenPublicInputs, validate_instances,
+    AirValidationError, LiftedAir, ReducedAuxValues, ReductionError, VarLenPublicInputs,
+    validate_instances,
 };
 use p3_miden_lifted_fri::verifier::{PcsError, verify_aligned};
 use p3_miden_lmcs::Lmcs;
@@ -74,8 +74,6 @@ pub enum VerifierError {
     Pcs(#[from] PcsError),
     #[error("transcript error: {0}")]
     Transcript(#[from] TranscriptError),
-    #[error("builder dimensions do not match AIR: {0}")]
-    BuilderMismatch(#[from] BuilderMismatchError),
     #[error("invalid aux shape")]
     InvalidAuxShape,
     #[error("constraint mismatch: quotient * vanishing != folded constraints")]

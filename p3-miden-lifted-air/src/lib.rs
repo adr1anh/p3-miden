@@ -16,7 +16,7 @@ mod builder;
 mod instance;
 mod periodic;
 
-pub use air::{AirValidationError, BuilderMismatchError, LiftedAir};
+pub use air::{AirValidationError, LiftedAir, TracePart};
 pub use auxiliary::{AuxBuilder, ReducedAuxValues, ReductionError, VarLenPublicInputs};
 pub use builder::LiftedAirBuilder;
 pub use instance::{AirInstance, AirWitness, validate_instances};

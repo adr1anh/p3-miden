@@ -223,78 +223,63 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
     fn is_valid_builder<AB: LiftedAirBuilder<F = F>>(
         &self,
         builder: &AB,
-    ) -> Result<(), BuilderMismatchError> {
+    ) -> Result<(), AirValidationError> {
+        let check =
+            |part: TracePart, expected: usize, actual: usize| -> Result<(), AirValidationError> {
+                if actual != expected {
+                    return Err(AirValidationError::BuilderMismatch {
+                        part,
+                        expected,
+                        actual,
+                    });
+                }
+                Ok(())
+            };
+
         let main = builder.main();
         // Check current and next slices of the main trace.
-        let (expected, actual) = (self.width(), main.current_slice().len());
-        if actual != expected {
-            return Err(BuilderMismatchError::MainWidth { expected, actual });
-        }
-        let (expected, actual) = (self.width(), main.next_slice().len());
-        if actual != expected {
-            return Err(BuilderMismatchError::MainWidth { expected, actual });
-        }
+        check(TracePart::Main, self.width(), main.current_slice().len())?;
+        check(TracePart::Main, self.width(), main.next_slice().len())?;
 
         // Check current and next slices of the aux trace.
         let perm = builder.permutation();
-        let (expected, actual) = (self.aux_width(), perm.current_slice().len());
-        if actual != expected {
-            return Err(BuilderMismatchError::AuxWidth { expected, actual });
-        }
-        let (expected, actual) = (self.aux_width(), perm.next_slice().len());
-        if actual != expected {
-            return Err(BuilderMismatchError::AuxWidth { expected, actual });
-        }
+        check(TracePart::Aux, self.aux_width(), perm.current_slice().len())?;
+        check(TracePart::Aux, self.aux_width(), perm.next_slice().len())?;
 
-        let (expected, actual) = (self.num_public_values(), builder.public_values().len());
-        if actual != expected {
-            return Err(BuilderMismatchError::PublicValuesLength { expected, actual });
-        }
-
-        let (expected, actual) = (
+        check(
+            TracePart::PublicValues,
+            self.num_public_values(),
+            builder.public_values().len(),
+        )?;
+        check(
+            TracePart::Randomness,
             self.num_randomness(),
             builder.permutation_randomness().len(),
-        );
-        if actual != expected {
-            return Err(BuilderMismatchError::RandomnessLength { expected, actual });
-        }
-
-        let (expected, actual) = (self.num_aux_values(), builder.permutation_values().len());
-        if actual != expected {
-            return Err(BuilderMismatchError::AuxValuesLength { expected, actual });
-        }
-
-        let (expected, actual) = (
+        )?;
+        check(
+            TracePart::AuxValues,
+            self.num_aux_values(),
+            builder.permutation_values().len(),
+        )?;
+        check(
+            TracePart::PeriodicValues,
             self.periodic_columns().len(),
             builder.periodic_values().len(),
-        );
-        if actual != expected {
-            return Err(BuilderMismatchError::PeriodicValuesLength { expected, actual });
-        }
+        )?;
 
         Ok(())
     }
 }
 
-/// Builder dimensions do not match the AIR specification.
-///
-/// Returned by [`LiftedAir::is_valid_builder`] when any builder accessor
-/// (main trace, aux trace, public values, randomness, aux values, or periodic values)
-/// has dimensions incompatible with the AIR.
-#[derive(Debug, Error)]
-pub enum BuilderMismatchError {
-    #[error("main trace width: expected {expected}, got {actual}")]
-    MainWidth { expected: usize, actual: usize },
-    #[error("aux trace width: expected {expected}, got {actual}")]
-    AuxWidth { expected: usize, actual: usize },
-    #[error("public values length: expected {expected}, got {actual}")]
-    PublicValuesLength { expected: usize, actual: usize },
-    #[error("randomness length: expected {expected}, got {actual}")]
-    RandomnessLength { expected: usize, actual: usize },
-    #[error("aux values length: expected {expected}, got {actual}")]
-    AuxValuesLength { expected: usize, actual: usize },
-    #[error("periodic values length: expected {expected}, got {actual}")]
-    PeriodicValuesLength { expected: usize, actual: usize },
+/// Which part of the trace a builder mismatch refers to.
+#[derive(Copy, Clone, Debug)]
+pub enum TracePart {
+    Main,
+    Aux,
+    PublicValues,
+    Randomness,
+    AuxValues,
+    PeriodicValues,
 }
 
 /// Errors from AIR validation.
@@ -312,6 +297,12 @@ pub enum AirValidationError {
     InvalidPeriodicColumn { index: usize, length: usize },
     #[error("preprocessed traces are not supported")]
     PreprocessedTrace,
+    #[error("{part:?} dimension mismatch: expected {expected}, got {actual}")]
+    BuilderMismatch {
+        part: TracePart,
+        expected: usize,
+        actual: usize,
+    },
     #[error("aux width must be positive")]
     ZeroAuxWidth,
     #[error("trace height {height} is not a power of two")]

@@ -9,8 +9,7 @@ mod proof;
 mod verifier;
 
 pub use p3_miden_lifted_air::{
-    AirValidationError, BuilderMismatchError, LiftedAir, ReducedAuxValues, ReductionError,
-    VarLenPublicInputs,
+    AirValidationError, LiftedAir, ReducedAuxValues, ReductionError, TracePart, VarLenPublicInputs,
 };
 pub use p3_miden_lifted_fri::PcsTranscript;
 pub use p3_miden_lifted_stark::{
