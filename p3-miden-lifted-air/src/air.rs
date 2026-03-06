@@ -224,15 +224,24 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
         &self,
         builder: &AB,
     ) -> Result<(), BuilderMismatchError> {
-        let (expected, actual) = (self.width(), builder.main().current_slice().len());
+        let main = builder.main();
+        // Check current and next slices of the main trace.
+        let (expected, actual) = (self.width(), main.current_slice().len());
+        if actual != expected {
+            return Err(BuilderMismatchError::MainWidth { expected, actual });
+        }
+        let (expected, actual) = (self.width(), main.next_slice().len());
         if actual != expected {
             return Err(BuilderMismatchError::MainWidth { expected, actual });
         }
 
-        let (expected, actual) = (
-            self.aux_width(),
-            builder.permutation().current_slice().len(),
-        );
+        // Check current and next slices of the aux trace.
+        let perm = builder.permutation();
+        let (expected, actual) = (self.aux_width(), perm.current_slice().len());
+        if actual != expected {
+            return Err(BuilderMismatchError::AuxWidth { expected, actual });
+        }
+        let (expected, actual) = (self.aux_width(), perm.next_slice().len());
         if actual != expected {
             return Err(BuilderMismatchError::AuxWidth { expected, actual });
         }
