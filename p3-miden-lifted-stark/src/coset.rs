@@ -304,6 +304,8 @@ impl LiftedCoset {
         z_over_shift.exp_power_of_2(self.log_lde_height) == EF::ONE
     }
 
+    // ============ OOD point sampling ============
+
     /// Sample an OOD evaluation point from the channel that lies outside both the
     /// trace-domain subgroup `H` and the LDE evaluation coset `gK`.
     ///

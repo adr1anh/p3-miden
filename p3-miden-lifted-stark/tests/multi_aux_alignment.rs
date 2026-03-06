@@ -9,8 +9,8 @@ use p3_miden_lifted_air::{
     AirBuilder, AirWithPeriodicColumns, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir,
     LiftedAirBuilder, WindowAccess,
 };
-use p3_miden_lifted_prover::AirWitness;
-use p3_miden_lifted_verifier::{VerifierError, verify_multi};
+use p3_miden_lifted_stark::AirWitness;
+use p3_miden_lifted_stark::{VerifierError, verify_multi};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
 
@@ -133,7 +133,7 @@ fn multi_trace_with_aux_padding() {
         .collect();
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-    p3_miden_lifted_prover::prove_multi(&config, &prover_instances, &mut prover_channel)
+    p3_miden_lifted_stark::prove_multi(&config, &prover_instances, &mut prover_channel)
         .expect("proving should succeed");
     let transcript = prover_channel.into_data();
 
@@ -164,7 +164,7 @@ fn multi_trace_rejects_trailing_transcript_data() {
         .collect();
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-    p3_miden_lifted_prover::prove_multi(&config, &prover_instances, &mut prover_channel)
+    p3_miden_lifted_stark::prove_multi(&config, &prover_instances, &mut prover_channel)
         .expect("proving should succeed");
     let transcript = prover_channel.into_data();
 

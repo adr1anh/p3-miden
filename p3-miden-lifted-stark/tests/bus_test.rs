@@ -10,9 +10,7 @@ use p3_miden_lifted_air::{
     AirBuilder, AirWithPeriodicColumns, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir,
     LiftedAirBuilder, ReducedAuxValues, VarLenPublicInputs, WindowAccess,
 };
-use p3_miden_lifted_prover::prove_multi;
-use p3_miden_lifted_stark::AirInstance;
-use p3_miden_lifted_verifier::verify_multi;
+use p3_miden_lifted_stark::{AirInstance, prove_multi, verify_multi};
 use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
 use p3_util::log2_strict_usize;
 
@@ -231,7 +229,7 @@ fn bus_identity_check() {
     // Prove
     let prover_instances = [(
         &air,
-        p3_miden_lifted_prover::AirWitness::new(&trace, &public_values, &var_len_pi),
+        p3_miden_lifted_stark::AirWitness::new(&trace, &public_values, &var_len_pi),
         &aux_builder,
     )];
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
@@ -271,7 +269,7 @@ fn bus_wrong_var_len_pi_fails() {
 
     let prover_instances = [(
         &air,
-        p3_miden_lifted_prover::AirWitness::new(&trace, &public_values, &var_len_pi),
+        p3_miden_lifted_stark::AirWitness::new(&trace, &public_values, &var_len_pi),
         &aux_builder,
     )];
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
@@ -294,10 +292,7 @@ fn bus_wrong_var_len_pi_fails() {
         .expect_err("wrong var_len_pi should fail verification");
 
     assert!(
-        matches!(
-            err,
-            p3_miden_lifted_verifier::VerifierError::InvalidReducedAux
-        ),
+        matches!(err, p3_miden_lifted_stark::VerifierError::InvalidReducedAux),
         "expected InvalidReducedAux, got {err:?}"
     );
 }
@@ -323,7 +318,7 @@ fn bus_wrong_input_count_fails() {
 
     let prover_instances = [(
         &air,
-        p3_miden_lifted_prover::AirWitness::new(&trace, &public_values, &var_len_pi),
+        p3_miden_lifted_stark::AirWitness::new(&trace, &public_values, &var_len_pi),
         &aux_builder,
     )];
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
@@ -345,8 +340,8 @@ fn bus_wrong_input_count_fails() {
     assert!(
         matches!(
             err,
-            p3_miden_lifted_verifier::VerifierError::Air(
-                p3_miden_lifted_verifier::AirValidationError::VarLenPublicInputsMismatch { .. }
+            p3_miden_lifted_stark::VerifierError::Air(
+                p3_miden_lifted_stark::AirValidationError::VarLenPublicInputsMismatch { .. }
             )
         ),
         "expected VarLenPublicInputsMismatch, got {err:?}"

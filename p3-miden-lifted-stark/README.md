@@ -4,26 +4,21 @@ Multi-trace STARK prover and verifier using LMCS commitments, DEEP quotient
 batching, and lifted FRI for low-degree testing.
 
 This README is protocol-level documentation (intended for maintainers and
-reviewers). Per-crate API details live in the individual crate READMEs.
+reviewers). Per-module API details live in `src/prover/README.md` and
+`src/verifier/README.md`.
 
 ## Overview
 
-The lifted STARK protocol is split across three crates:
-
-| Crate | Role |
-|-------|------|
-| `p3-miden-lifted-stark` | Shared types: `StarkConfig`, `LiftedCoset`, `Selectors` |
-| `p3-miden-lifted-prover` | Proving: trace commitment, constraint evaluation, quotient construction |
-| `p3-miden-lifted-verifier` | Verification: OOD check, quotient reconstruction, transcript canonicality |
-
-All three compose with the lower layers:
+This crate contains the full lifted STARK implementation: shared types,
+prover, and verifier.
 
 ```
-p3-miden-lifted-{prover,verifier}
-└── p3-miden-lifted-stark          ← this crate
-    ├── p3-miden-lifted-fri        ← PCS (DEEP + FRI)
-    │   └── p3-miden-lmcs          ← Merkle commitments with lifting
-    └── p3-miden-air               ← AIR traits (aux columns, periodic columns)
+p3-miden-lifted-stark              ← this crate
+├── src/prover/                    ← Proving: trace commitment, constraint evaluation, quotient construction
+├── src/verifier/                  ← Verification: OOD check, quotient reconstruction, transcript canonicality
+├── p3-miden-lifted-fri            ← PCS (DEEP + FRI)
+│   └── p3-miden-lmcs              ← Merkle commitments with lifting
+└── p3-miden-lifted-air            ← AIR traits (aux columns, periodic columns)
 ```
 
 The system supports **multiple traces of different heights** (power-of-two,
@@ -187,46 +182,35 @@ at `y_j`, and the opened trace values already correspond to `p_j(y_j)`.
 
 ## Entry Points
 
-| Item | Crate | Purpose |
-|------|-------|---------|
-| `prove_single` | `lifted-prover` | Prove a single-AIR STARK |
-| `prove_multi` | `lifted-prover` | Prove a multi-trace STARK (ascending heights) |
-| `AirWitness` | `lifted-prover` | Prover witness (trace + public values) |
-| `verify_single` | `lifted-verifier` | Verify a single-AIR proof |
-| `verify_multi` | `lifted-verifier` | Verify a multi-trace proof |
-| `AirInstance` | `lifted-verifier` | Verifier instance (log height + public values) |
-| `Proof` | `lifted-verifier` | Raw transcript data (the proof artifact) |
-| `StarkConfig` | `lifted-stark` | PCS params + LMCS + DFT configuration |
-| `LiftedCoset` | `lifted-stark` | Domain operations: selectors, vanishing, coset shifts |
-| `Selectors` | `lifted-stark` | `is_first_row`, `is_last_row`, `is_transition` |
+| Item | Purpose |
+|------|---------|
+| `prove_single` | Prove a single-AIR STARK |
+| `prove_multi` | Prove a multi-trace STARK (ascending heights) |
+| `AirWitness` | Prover witness (trace + public values) |
+| `verify_single` | Verify a single-AIR proof |
+| `verify_multi` | Verify a multi-trace proof |
+| `AirInstance` | Verifier instance (log height + public values) |
+| `StarkTranscript` | Structured transcript view (the proof artifact) |
+| `StarkConfig` | PCS params + LMCS + DFT configuration |
+| `LiftedCoset` | Domain operations: selectors, vanishing, coset shifts |
+| `Selectors` | `is_first_row`, `is_last_row`, `is_transition` |
 
 ## Modules
-
-### `p3-miden-lifted-stark`
 
 | Path | Purpose |
 |------|---------|
 | `src/config.rs` | `StarkConfig` — wraps `PcsParams`, LMCS, and DFT |
 | `src/coset.rs` | `LiftedCoset` — domain queries, selector computation, vanishing |
 | `src/selectors.rs` | `Selectors<T>` — generic container for row selectors |
-
-### `p3-miden-lifted-prover`
-
-| Path | Purpose |
-|------|---------|
-| `src/prover.rs` | `prove_single`, `prove_multi` — orchestration and protocol flow |
-| `src/commit.rs` | `Committed` — LDE, bit-reverse, LMCS tree construction |
-| `src/constraints.rs` | Constraint evaluation (SIMD), quotient commitment pipeline |
-| `src/periodic.rs` | `PeriodicLde` — precomputed periodic column LDEs |
-
-### `p3-miden-lifted-verifier`
-
-| Path | Purpose |
-|------|---------|
-| `src/verifier.rs` | `verify_single`, `verify_multi` — orchestration and identity check |
-| `src/constraints.rs` | `ConstraintFolder` — OOD constraint evaluation, quotient reconstruction |
-| `src/periodic.rs` | `PeriodicPolys` — polynomial coefficients for OOD evaluation |
-| `src/proof.rs` | `Proof` — raw transcript wrapper |
+| `src/prover/mod.rs` | `prove_single`, `prove_multi` — orchestration and protocol flow |
+| `src/prover/commit.rs` | `Committed` — LDE, bit-reverse, LMCS tree construction |
+| `src/prover/constraints/` | Constraint evaluation (SIMD) and layout discovery |
+| `src/prover/periodic.rs` | `PeriodicLde` — precomputed periodic column LDEs |
+| `src/prover/quotient.rs` | Quotient construction, cyclic extension, vanishing division |
+| `src/verifier/mod.rs` | `verify_single`, `verify_multi` — orchestration and identity check |
+| `src/verifier/constraints.rs` | `ConstraintFolder` — OOD constraint evaluation, quotient reconstruction |
+| `src/verifier/periodic.rs` | `PeriodicPolys` — polynomial coefficients for OOD evaluation |
+| `src/verifier/proof.rs` | `StarkTranscript` — structured transcript view |
 
 ## Conventions & Assumptions
 
@@ -247,7 +231,7 @@ at `y_j`, and the opened trace values already correspond to `p_j(y_j)`.
 
 ## Tests
 
-The end-to-end test suite lives in `p3-miden-lifted-prover/tests/`:
+The end-to-end test suite lives in `tests/`:
 
 - **`tiny_air.rs`** — `TinyAir` exercising single-trace, multi-trace
   (same and different heights), periodic columns, and malformed transcript
@@ -257,7 +241,7 @@ The end-to-end test suite lives in `p3-miden-lifted-prover/tests/`:
 
 Run with:
 ```bash
-cargo test -p p3-miden-lifted-prover
+cargo test -p p3-miden-lifted-stark
 ```
 
 ## Security
