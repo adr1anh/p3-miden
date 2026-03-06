@@ -178,7 +178,7 @@ mod babybear_fri_pcs {
     type MyCompress = TruncatedPermutation<Perm, 2, 8, 16>;
 
     type ValMmcs =
-        MerkleTreeMmcs<<Val as Field>::Packing, <Val as Field>::Packing, MyHash, MyCompress, 8>;
+        MerkleTreeMmcs<<Val as Field>::Packing, <Val as Field>::Packing, MyHash, MyCompress, 2, 8>;
     type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 
     type Dft = Radix2DitParallel<Val>;

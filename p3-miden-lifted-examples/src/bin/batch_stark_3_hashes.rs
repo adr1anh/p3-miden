@@ -16,9 +16,11 @@ use p3_blake3_air::{Blake3Air, NUM_BLAKE3_COLS};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
+use p3_field::Field;
 use p3_field::extension::BinomialExtensionField;
 use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_keccak_air::{KeccakAir, NUM_KECCAK_COLS};
+use p3_lookup::{Lookup, LookupAir};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
@@ -95,12 +97,31 @@ impl<AB: AirBuilder<F = Val>> Air<AB> for HashAir {
     }
 }
 
+/// Skip defining lookups for these AIRs.
+impl<F: Field> LookupAir<F> for HashAir {
+    fn add_lookup_columns(&mut self) -> Vec<usize> {
+        match self {
+            Self::Poseidon2(_) => vec![],
+            Self::Keccak => vec![],
+            Self::Blake3 => vec![],
+        }
+    }
+
+    fn get_lookups(&mut self) -> Vec<Lookup<F>> {
+        match self {
+            Self::Poseidon2(_) => vec![],
+            Self::Keccak => vec![],
+            Self::Blake3 => vec![],
+        }
+    }
+}
+
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 type Perm = bb::Perm;
 type MmcsSponge = PaddingFreeSponge<Perm, { bb::WIDTH }, { bb::RATE }, { bb::DIGEST }>;
 type Compress = bb::Compress;
-type ValMmcs = MerkleTreeMmcs<bb::P, bb::P, MmcsSponge, Compress, { bb::DIGEST }>;
+type ValMmcs = MerkleTreeMmcs<bb::P, bb::P, MmcsSponge, Compress, 2, { bb::DIGEST }>;
 type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 type Dft = Radix2DitParallel<Val>;
 type BatchPcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;

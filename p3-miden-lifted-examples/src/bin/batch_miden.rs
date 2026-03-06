@@ -9,18 +9,16 @@
 //!   cargo run -p p3-miden-lifted-examples --release --features parallel --bin batch_miden
 //! ```
 
-use p3_air::{
-    Air, AirBuilder, AirLayout, BaseAir, BaseLeaf, PermutationAirBuilder, SymbolicExpression,
-    WindowAccess,
-};
+use p3_air::{Air, AirBuilder, AirLayout, BaseAir, BaseLeaf, SymbolicExpression, WindowAccess};
 use p3_batch_stark::{ProverData, StarkInstance, prove_batch, verify_batch};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
-use p3_field::PrimeCharacteristicRing;
 use p3_field::extension::BinomialExtensionField;
+use p3_field::{Field, PrimeCharacteristicRing};
 use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_goldilocks::Goldilocks;
+use p3_lookup::LookupAir;
 use p3_lookup::lookup_traits::{Direction, Kind, Lookup};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -80,37 +78,34 @@ impl<AB: AirBuilder> Air<AB> for MidenWithLookups {
         let product = (0..9).fold(AB::Expr::ONE, |acc, j| acc * local[j].into());
         builder.assert_zero(product);
     }
+}
 
+impl<F: Field> LookupAir<F> for MidenWithLookups {
     fn add_lookup_columns(&mut self) -> Vec<usize> {
         let idx = self.num_lookups;
         self.num_lookups += 1;
         vec![idx]
     }
 
-    fn get_lookups(&mut self) -> Vec<Lookup<AB::F>>
-    where
-        AB: AirBuilder + PermutationAirBuilder,
-    {
+    fn get_lookups(&mut self) -> Vec<Lookup<F>> {
         self.num_lookups = 0;
 
-        let symbolic = SymbolicAirBuilder::<AB::F>::new(AirLayout {
+        let symbolic = SymbolicAirBuilder::<F>::new(AirLayout {
             main_width: self.width,
             ..AirLayout::default()
         });
         let main = symbolic.main();
         let local = main.current_slice();
-        let col0: SymbolicExpression<AB::F> = local[0].into();
+        let col0: SymbolicExpression<F> = local[0].into();
 
-        let one = SymbolicExpression::Leaf(BaseLeaf::Constant(AB::F::ONE));
+        let one = SymbolicExpression::Leaf(BaseLeaf::Constant(F::ONE));
         let lookup_inputs = vec![
             (vec![col0.clone()], one.clone(), Direction::Send),
             (vec![col0], one, Direction::Receive),
         ];
 
         (0..NUM_LOOKUPS)
-            .map(|_| {
-                <MidenWithLookups as Air<AB>>::register_lookup(self, Kind::Local, &lookup_inputs)
-            })
+            .map(|_| LookupAir::register_lookup(self, Kind::Local, &lookup_inputs))
             .collect()
     }
 }
@@ -122,7 +117,7 @@ impl<AB: AirBuilder> Air<AB> for MidenWithLookups {
 type Perm = gl::Perm;
 type MmcsSponge = PaddingFreeSponge<Perm, { gl::WIDTH }, { gl::RATE }, { gl::DIGEST }>;
 type Compress = gl::Compress;
-type ValMmcs = MerkleTreeMmcs<gl::P, gl::P, MmcsSponge, Compress, { gl::DIGEST }>;
+type ValMmcs = MerkleTreeMmcs<gl::P, gl::P, MmcsSponge, Compress, 2, { gl::DIGEST }>;
 type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 type Dft = Radix2DitParallel<Val>;
 type BatchPcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;

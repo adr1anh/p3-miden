@@ -10,19 +10,17 @@
 //! cargo run -p p3-miden-lifted-examples --release --bin batch_stark_keccak
 //! ```
 
-use p3_air::{
-    Air, AirBuilder, AirLayout, BaseAir, BaseLeaf, PermutationAirBuilder, SymbolicExpression,
-    WindowAccess,
-};
+use p3_air::{Air, AirBuilder, BaseAir, BaseLeaf, SymbolicExpression};
 use p3_baby_bear::BabyBear;
 use p3_batch_stark::{ProverData, StarkInstance, prove_batch, verify_batch};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
-use p3_field::PrimeCharacteristicRing;
+use p3_field::Field;
 use p3_field::extension::BinomialExtensionField;
 use p3_fri::{FriParameters, TwoAdicFriPcs};
-use p3_keccak_air::{KeccakAir, NUM_KECCAK_COLS, generate_trace_rows};
+use p3_keccak_air::{KeccakAir, generate_trace_rows};
+use p3_lookup::LookupAir;
 use p3_lookup::lookup_traits::{Direction, Kind, Lookup};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -30,7 +28,6 @@ use p3_merkle_tree::MerkleTreeMmcs;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_examples::stats;
 use p3_symmetric::PaddingFreeSponge;
-use p3_uni_stark::SymbolicAirBuilder;
 use p3_util::log2_strict_usize;
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
@@ -79,33 +76,24 @@ impl<AB: AirBuilder> Air<AB> for KeccakWithLookup {
     fn eval(&self, builder: &mut AB) {
         Air::eval(&KeccakAir {}, builder);
     }
+}
 
+impl<F: Field> LookupAir<F> for KeccakWithLookup {
     fn add_lookup_columns(&mut self) -> Vec<usize> {
         let idx = self.num_lookups;
         self.num_lookups += 1;
         vec![idx]
     }
 
-    fn get_lookups(&mut self) -> Vec<Lookup<AB::F>>
-    where
-        AB: AirBuilder + PermutationAirBuilder,
-    {
+    fn get_lookups(&mut self) -> Vec<Lookup<F>> {
         self.num_lookups = 0;
-
-        let symbolic = SymbolicAirBuilder::<AB::F>::new(AirLayout {
-            main_width: NUM_KECCAK_COLS,
-            ..AirLayout::default()
-        });
-        let main = symbolic.main();
-        let local = main.current_slice();
-        let col0: SymbolicExpression<AB::F> = local[0].into();
-
-        let one = SymbolicExpression::Leaf(BaseLeaf::Constant(AB::F::ONE));
+        let col0 = SymbolicExpression::Leaf(BaseLeaf::Constant(F::ONE));
+        let one = SymbolicExpression::Leaf(BaseLeaf::Constant(F::ONE));
         let lookup_inputs = vec![
             (vec![col0.clone()], one.clone(), Direction::Send),
             (vec![col0], one, Direction::Receive),
         ];
-        vec![<KeccakWithLookup as Air<AB>>::register_lookup(
+        vec![LookupAir::register_lookup(
             self,
             Kind::Local,
             &lookup_inputs,
@@ -118,7 +106,7 @@ impl<AB: AirBuilder> Air<AB> for KeccakWithLookup {
 type Perm = bb::Perm;
 type MmcsSponge = PaddingFreeSponge<Perm, { bb::WIDTH }, { bb::RATE }, { bb::DIGEST }>;
 type Compress = bb::Compress;
-type ValMmcs = MerkleTreeMmcs<bb::P, bb::P, MmcsSponge, Compress, { bb::DIGEST }>;
+type ValMmcs = MerkleTreeMmcs<bb::P, bb::P, MmcsSponge, Compress, 2, { bb::DIGEST }>;
 type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 type Dft = Radix2DitParallel<Val>;
 type BatchPcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;

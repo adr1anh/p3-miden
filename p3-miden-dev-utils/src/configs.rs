@@ -203,7 +203,7 @@ macro_rules! impl_poseidon2_config {
         pub type Compress = TruncatedPermutation<Perm, 2, DIGEST, WIDTH>;
 
         /// Base Merkle tree MMCS over packed field.
-        pub type BaseMmcs = MerkleTreeMmcs<P, P, MmcsSponge, Compress, DIGEST>;
+        pub type BaseMmcs = MerkleTreeMmcs<P, P, MmcsSponge, Compress, 2, DIGEST>;
 
         /// Duplex challenger for Fiat-Shamir.
         pub type Challenger = DuplexChallenger<F, Perm, WIDTH, RATE>;
@@ -320,7 +320,7 @@ macro_rules! impl_keccak_config {
 
         /// Base Merkle tree MMCS for Keccak (with serialization).
         pub type BaseMmcs =
-            MerkleTreeMmcs<F, u64, SerializingHasher<KeccakMmcsSponge>, KeccakCompress, DIGEST>;
+            MerkleTreeMmcs<F, u64, SerializingHasher<KeccakMmcsSponge>, KeccakCompress, 2, DIGEST>;
 
         // =====================================================================
         // Scenario struct and trait implementation
