@@ -20,6 +20,9 @@ pub use auxiliary::{AuxBuilder, ReducedAuxValues, ReductionError, VarLenPublicIn
 pub use builder::LiftedAirBuilder;
 pub use instance::{AirInstance, AirWitness, validate_instances};
 
+mod empty_window;
+
+pub use empty_window::EmptyWindow;
 pub use p3_air::{
     Air, AirBuilder, AirBuilderWithContext, BaseAir, ExtensionBuilder, FilteredAirBuilder,
     PeriodicAirBuilder, PermutationAirBuilder, RowWindow, WindowAccess,

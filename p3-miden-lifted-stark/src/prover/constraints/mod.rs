@@ -149,10 +149,8 @@ pub(crate) fn evaluate_constraints_into<F, EF, A, M>(
             let periodic_values: Vec<P<F>> = periodic_lde.packed_values_at(i_start).collect();
 
             // Build packed folder and evaluate constraints
-            let empty_p: &[P<F>] = &[];
             let mut folder: ProverConstraintFolder<'_, F, EF, P<F>, PE<F, EF>> =
                 ProverConstraintFolder {
-                    preprocessed: RowWindow::from_two_rows(empty_p, empty_p),
                     main: RowWindow::from_view(&main.as_view()),
                     aux: RowWindow::from_view(&aux.as_view()),
                     packed_randomness: &packed_randomness,

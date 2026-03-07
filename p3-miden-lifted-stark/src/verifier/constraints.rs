@@ -11,7 +11,7 @@ use core::marker::PhantomData;
 use crate::{LiftedCoset, Selectors};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_miden_lifted_air::{
-    AirBuilder, ExtensionBuilder, PeriodicAirBuilder, PermutationAirBuilder, RowWindow,
+    AirBuilder, EmptyWindow, ExtensionBuilder, PeriodicAirBuilder, PermutationAirBuilder, RowWindow,
 };
 use p3_util::log2_strict_usize;
 
@@ -42,8 +42,6 @@ where
 {
     pub main: RowWindow<'a, EF>,
     pub aux: RowWindow<'a, EF>,
-    /// Empty preprocessed window (lifted AIRs have no preprocessed trace).
-    pub preprocessed: RowWindow<'a, EF>,
     pub randomness: &'a [EF],
     pub public_values: &'a [F],
     pub periodic_values: &'a [EF],
@@ -62,15 +60,16 @@ where
     type F = F;
     type Expr = EF;
     type Var = EF;
-    type M = RowWindow<'a, EF>;
+    type PreprocessedWindow = EmptyWindow<EF>;
+    type MainWindow = RowWindow<'a, EF>;
     type PublicVar = F;
 
-    fn main(&self) -> Self::M {
+    fn main(&self) -> Self::MainWindow {
         self.main
     }
 
-    fn preprocessed(&self) -> &Self::M {
-        &self.preprocessed
+    fn preprocessed(&self) -> &Self::PreprocessedWindow {
+        EmptyWindow::empty_ref()
     }
 
     fn is_first_row(&self) -> Self::Expr {

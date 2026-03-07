@@ -139,6 +139,22 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> {
         Ok(ReducedAuxValues::identity())
     }
 
+    /// Return the [`AirLayout`] describing this AIR's dimensions.
+    ///
+    /// This is the single source of truth for building symbolic or layout builders.
+    /// `preprocessed_width` is always 0 because lifted AIRs forbid preprocessed traces.
+    fn air_layout(&self) -> AirLayout {
+        AirLayout {
+            preprocessed_width: 0,
+            main_width: self.width(),
+            num_public_values: self.num_public_values(),
+            permutation_width: self.aux_width(),
+            num_permutation_challenges: self.num_randomness(),
+            num_permutation_values: self.num_aux_values(),
+            num_periodic_columns: self.periodic_columns().len(),
+        }
+    }
+
     /// Validate that this AIR satisfies the [`LiftedAir`] contract.
     ///
     /// The lifted STARK protocol relies on several structural properties of the AIR
@@ -207,16 +223,7 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> {
     where
         Self: Sized,
     {
-        let layout = AirLayout {
-            preprocessed_width: self.preprocessed_trace().map_or(0, |t| t.width),
-            main_width: self.width(),
-            num_public_values: self.num_public_values(),
-            permutation_width: self.aux_width(),
-            num_permutation_challenges: self.num_randomness(),
-            num_permutation_values: self.num_aux_values(),
-            num_periodic_columns: self.periodic_columns().len(),
-        };
-        let mut builder = SymbolicAirBuilder::<F>::new(layout);
+        let mut builder = SymbolicAirBuilder::<F>::new(self.air_layout());
         self.eval(&mut builder);
 
         let base_degree = builder

@@ -12,7 +12,7 @@ use p3_field::{
     Algebra, BasedVectorSpace, ExtensionField, Field, PackedField, PrimeCharacteristicRing,
 };
 use p3_miden_lifted_air::{
-    AirBuilder, ExtensionBuilder, PeriodicAirBuilder, PermutationAirBuilder, RowWindow,
+    AirBuilder, EmptyWindow, ExtensionBuilder, PeriodicAirBuilder, PermutationAirBuilder, RowWindow,
 };
 
 /// Batch size for constraint linear-combination chunks in [`finalize_constraints`].
@@ -91,9 +91,6 @@ where
 {
     /// Main trace two-row window (packed base field)
     pub main: RowWindow<'a, P>,
-    /// The preprocessed columns as a two-row window.
-    /// Zero-width when the AIR has no preprocessed trace.
-    pub preprocessed: RowWindow<'a, P>,
     /// Aux/permutation trace two-row window (packed extension field)
     pub aux: RowWindow<'a, PE>,
     /// Randomness for aux trace (packed extension field)
@@ -171,16 +168,17 @@ where
     type F = F;
     type Expr = P;
     type Var = P;
-    type M = RowWindow<'a, P>;
+    type PreprocessedWindow = EmptyWindow<P>;
+    type MainWindow = RowWindow<'a, P>;
     type PublicVar = F;
 
     #[inline]
-    fn main(&self) -> Self::M {
+    fn main(&self) -> Self::MainWindow {
         self.main
     }
 
-    fn preprocessed(&self) -> &Self::M {
-        &self.preprocessed
+    fn preprocessed(&self) -> &Self::PreprocessedWindow {
+        EmptyWindow::empty_ref()
     }
 
     #[inline]

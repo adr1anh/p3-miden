@@ -10,7 +10,8 @@ use p3_field::{ExtensionField, Field};
 use p3_matrix::dense::RowMajorMatrix;
 pub(crate) use p3_miden_lifted_air::ConstraintLayout;
 use p3_miden_lifted_air::{
-    AirBuilder, AirLayout, ExtensionBuilder, LiftedAir, PeriodicAirBuilder, PermutationAirBuilder,
+    AirBuilder, AirLayout, EmptyWindow, ExtensionBuilder, LiftedAir, PeriodicAirBuilder,
+    PermutationAirBuilder,
 };
 use tracing::instrument;
 
@@ -30,16 +31,7 @@ where
     EF: ExtensionField<F>,
     A: LiftedAir<F, EF>,
 {
-    let layout = AirLayout {
-        preprocessed_width: 0,
-        main_width: air.width(),
-        num_public_values: air.num_public_values(),
-        permutation_width: air.aux_width(),
-        num_permutation_challenges: air.num_randomness(),
-        num_permutation_values: air.num_aux_values(),
-        num_periodic_columns: air.periodic_columns().len(),
-    };
-    let mut builder = ConstraintLayoutBuilder::<F>::new(layout);
+    let mut builder = ConstraintLayoutBuilder::<F>::new(air.air_layout());
     debug_assert!(air.is_valid_builder(&builder).is_ok());
     air.eval(&mut builder);
     builder.into_layout()
@@ -51,12 +43,11 @@ where
 /// tracking, no `Arc` allocations. Builds a [`ConstraintLayout`] directly by recording
 /// which `assert_*` method is called for each constraint.
 ///
-/// Uses `RowMajorMatrix<F>` as `type M` because the builder owns its trace data.
-/// `RowWindow` cannot be used here — it borrows, but the associated type `M` can't
+/// Uses `RowMajorMatrix<F>` as `MainWindow` because the builder owns its trace data.
+/// `RowWindow` cannot be used here — it borrows, but the associated type can't
 /// capture the `&self` lifetime from `main()`.
 struct ConstraintLayoutBuilder<F: Field> {
     main: RowMajorMatrix<F>,
-    preprocessed: RowMajorMatrix<F>,
     public_values: Vec<F>,
     periodic_values: Vec<F>,
     permutation: RowMajorMatrix<F>,
@@ -78,7 +69,6 @@ impl<F: Field> ConstraintLayoutBuilder<F> {
             ..
         } = layout;
         Self {
-            preprocessed: RowMajorMatrix::new(vec![], 0),
             main: RowMajorMatrix::new(vec![F::ZERO; 2 * main_width], main_width),
             public_values: vec![F::ZERO; num_public_values],
             periodic_values: vec![F::ZERO; num_periodic_columns],
@@ -102,15 +92,16 @@ impl<F: Field> AirBuilder for ConstraintLayoutBuilder<F> {
     type F = F;
     type Expr = F;
     type Var = F;
-    type M = RowMajorMatrix<F>;
+    type PreprocessedWindow = EmptyWindow<F>;
+    type MainWindow = RowMajorMatrix<F>;
     type PublicVar = F;
 
-    fn main(&self) -> Self::M {
+    fn main(&self) -> Self::MainWindow {
         self.main.clone()
     }
 
-    fn preprocessed(&self) -> &Self::M {
-        &self.preprocessed
+    fn preprocessed(&self) -> &Self::PreprocessedWindow {
+        EmptyWindow::empty_ref()
     }
 
     fn is_first_row(&self) -> Self::Expr {

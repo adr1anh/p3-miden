@@ -12,7 +12,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
@@ -31,46 +31,46 @@ num-bigint = { version = "0.4", default-features = false }
 paste = { version = "1.0", default-features = false }
 
 # Upstream Plonky3 dependencies
-p3-air = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-baby-bear = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-batch-stark = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-blake3 = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-bn254 = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-challenger = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-circle = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-commit = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-dft = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-field = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-field-testing = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-fri = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-goldilocks = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-interpolation = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-keccak = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-keccak-air = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-lookup = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-koala-bear = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-matrix = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-maybe-rayon = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-mds = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-merkle-tree = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-mersenne-31 = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-poseidon = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-poseidon2 = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-poseidon2-air = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-blake3-air = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-symmetric = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-uni-stark = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
-p3-util = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "637f6239" }
+p3-air = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-baby-bear = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-batch-stark = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-blake3 = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-bn254 = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-challenger = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-circle = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-commit = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-dft = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-field = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-field-testing = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-fri = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-goldilocks = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-interpolation = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-keccak = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-keccak-air = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-lookup = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-koala-bear = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-matrix = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-maybe-rayon = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-mds = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-merkle-tree = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-mersenne-31 = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-poseidon = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-poseidon2 = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-poseidon2-air = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-blake3-air = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-symmetric = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-uni-stark = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
+p3-util = { default-features = false, git = "https://github.com/Plonky3/Plonky3", rev = "7ca1cdff34db49b70fce3e581879b6ef92dec6ef" }
 
 # Internal p3-miden crates
-p3-miden-dev-utils = { path = "p3-miden-dev-utils", version = "0.4.2" }
-p3-miden-lifted-air = { path = "p3-miden-lifted-air", version = "0.4.2" }
-p3-miden-lifted-examples = { path = "p3-miden-lifted-examples", version = "0.4.2" }
-p3-miden-lifted-fri = { path = "p3-miden-lifted-fri", version = "0.4.2" }
-p3-miden-lifted-stark = { path = "p3-miden-lifted-stark", version = "0.4.2" }
-p3-miden-lmcs = { path = "p3-miden-lmcs", version = "0.4.2" }
-p3-miden-stateful-hasher = { path = "p3-miden-stateful-hasher", version = "0.4.2" }
-p3-miden-transcript = { path = "p3-miden-transcript", version = "0.4.2" }
+p3-miden-dev-utils = { path = "p3-miden-dev-utils", version = "0.5.0" }
+p3-miden-lifted-air = { path = "p3-miden-lifted-air", version = "0.5.0" }
+p3-miden-lifted-examples = { path = "p3-miden-lifted-examples", version = "0.5.0" }
+p3-miden-lifted-fri = { path = "p3-miden-lifted-fri", version = "0.5.0" }
+p3-miden-lifted-stark = { path = "p3-miden-lifted-stark", version = "0.5.0" }
+p3-miden-lmcs = { path = "p3-miden-lmcs", version = "0.5.0" }
+p3-miden-stateful-hasher = { path = "p3-miden-stateful-hasher", version = "0.5.0" }
+p3-miden-transcript = { path = "p3-miden-transcript", version = "0.5.0" }
 
 rand = { version = "0.10.0", default-features = false }
 serde = { version = "1.0", default-features = false, features = [

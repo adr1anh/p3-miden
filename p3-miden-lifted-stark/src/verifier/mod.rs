@@ -311,11 +311,9 @@ where
 
         let aux_values_j = &all_aux_values[j];
         let num_rand = air.num_randomness();
-        let empty: &[EF] = &[];
         let mut folder = ConstraintFolder {
             main: main_window,
             aux: aux_window,
-            preprocessed: RowWindow::from_two_rows(empty, empty),
             randomness: &randomness[..num_rand],
             public_values: inst.public_values,
             periodic_values: &periodic_values,
