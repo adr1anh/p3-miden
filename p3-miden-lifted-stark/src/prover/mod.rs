@@ -391,7 +391,8 @@ where
             let aux_on_gj = aux_committed.evals_on_quotient_domain(i, constraint_degree);
 
             // Build periodic LDE for this trace via coset method
-            let periodic_lde = PeriodicLde::build(&this_quotient_coset, air.periodic_columns());
+            let periodic_lde =
+                PeriodicLde::build(&this_quotient_coset, air.periodic_columns_matrix());
 
             // Cyclically extend accumulator to this quotient height and scale by beta.
             // On the first iteration the accumulator is empty, so this is a no-op

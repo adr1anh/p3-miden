@@ -11,8 +11,7 @@ use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lifted_air::{
-    AirBuilder, AirWithPeriodicColumns, AuxBuilder, BaseAir, LiftedAir, LiftedAirBuilder,
-    WindowAccess,
+    AirBuilder, AuxBuilder, BaseAir, LiftedAir, LiftedAirBuilder, WindowAccess,
 };
 
 // ---------------------------------------------------------------------------
@@ -74,12 +73,6 @@ impl<F> BaseAir<F> for DummyMidenAir {
     }
 }
 
-impl<F: Field> AirWithPeriodicColumns<F> for DummyMidenAir {
-    fn periodic_columns(&self) -> &[Vec<F>] {
-        &[]
-    }
-}
-
 impl<F: Field, EF: Field> LiftedAir<F, EF> for DummyMidenAir {
     fn num_randomness(&self) -> usize {
         2
@@ -91,6 +84,10 @@ impl<F: Field, EF: Field> LiftedAir<F, EF> for DummyMidenAir {
 
     fn num_aux_values(&self) -> usize {
         self.num_aux_cols
+    }
+
+    fn num_var_len_public_inputs(&self) -> usize {
+        0
     }
 
     fn eval<AB: LiftedAirBuilder<F = F>>(&self, builder: &mut AB) {

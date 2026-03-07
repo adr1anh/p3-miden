@@ -7,8 +7,8 @@ use p3_field::{Field, PrimeCharacteristicRing};
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_air::{
-    AirBuilder, AirWithPeriodicColumns, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir,
-    LiftedAirBuilder, ReducedAuxValues, VarLenPublicInputs, WindowAccess,
+    AirBuilder, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir, LiftedAirBuilder,
+    ReducedAuxValues, VarLenPublicInputs, WindowAccess,
 };
 use p3_miden_lifted_stark::{AirInstance, prove_multi, verify_multi};
 use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
@@ -53,22 +53,16 @@ impl BaseAir<bb::F> for BusTestAir {
     }
 }
 
-impl AirWithPeriodicColumns<bb::F> for BusTestAir {
-    fn periodic_columns(&self) -> &[Vec<bb::F>] {
-        &[]
-    }
-}
-
 impl LiftedAir<bb::F, bb::EF> for BusTestAir {
+    fn num_randomness(&self) -> usize {
+        2
+    }
+
     fn aux_width(&self) -> usize {
         2
     }
 
     fn num_aux_values(&self) -> usize {
-        2
-    }
-
-    fn num_randomness(&self) -> usize {
         2
     }
 

@@ -136,6 +136,16 @@ where
         RowList::from_rows_aligned(rows_iter, self.alignment)
     }
 
+    fn alignment(&self) -> usize {
+        self.alignment
+    }
+
+    fn widths(&self) -> Vec<usize> {
+        let alignment = self.alignment;
+        let widths = self.leaves.iter().map(|m| m.width()).collect();
+        aligned_widths(widths, alignment)
+    }
+
     /// Prove a batch opening and stream it into a transcript channel.
     ///
     /// Panics if any index is out of range. Rows are padded to `alignment` and those
@@ -210,16 +220,6 @@ where
 
             known = parents;
         }
-    }
-
-    fn alignment(&self) -> usize {
-        self.alignment
-    }
-
-    fn widths(&self) -> Vec<usize> {
-        let alignment = self.alignment;
-        let widths = self.leaves.iter().map(|m| m.width()).collect();
-        aligned_widths(widths, alignment)
     }
 }
 

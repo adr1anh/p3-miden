@@ -7,10 +7,6 @@
 //!
 //! Uses NaiveDft since periodic column periods are typically small.
 
-extern crate alloc;
-
-use alloc::vec::Vec;
-
 use crate::LiftedCoset;
 use p3_dft::{NaiveDft, TwoAdicSubgroupDft};
 use p3_field::{PackedValue, TwoAdicField};
@@ -37,34 +33,25 @@ pub struct PeriodicLde<F: TwoAdicField> {
 }
 
 impl<F: TwoAdicField> PeriodicLde<F> {
-    /// Build periodic LDEs from column evaluations (called by LiftedCoset::periodic_lde).
+    /// Build periodic LDEs from a periodic column matrix.
     ///
+    /// Takes the output of [`LiftedAir::periodic_columns_matrix`], where
+    /// columns with smaller periods have been repeated cyclically to the maximum period.
     /// Uses NaiveDft since periodic column periods are typically small.
-    /// The coset shift is derived from the LiftedCoset's lde_shift().
     ///
     /// # Arguments
     /// - `coset`: The lifted coset providing domain information
-    /// - `column_evals`: Periodic column evaluations, each on its respective subgroup
+    /// - `repeated_matrix`: Periodic columns extended to a common height (max period),
+    ///   or `None` if there are no periodic columns
     ///
     /// # Panics
-    /// Panics if any column has zero length or non-power-of-two length.
-    pub fn build(coset: &LiftedCoset, column_evals: &[Vec<F>]) -> Self {
-        if column_evals.is_empty() {
+    /// Panics if the matrix height exceeds the trace height or is not a power of two.
+    pub fn build(coset: &LiftedCoset, repeated_matrix: Option<RowMajorMatrix<F>>) -> Self {
+        let Some(repeated_matrix) = repeated_matrix else {
             return Self { ldes: None };
-        }
+        };
 
-        // Step 1: Find max period and validate all columns
-        let mut max_period = 0;
-        for column in column_evals {
-            let period = column.len();
-            assert!(
-                period > 0 && period.is_power_of_two(),
-                "periodic column length must be a positive power of two, got {period}"
-            );
-            max_period = max_period.max(period);
-        }
-
-        let num_columns = column_evals.len();
+        let max_period = repeated_matrix.height();
         let log_max_period = log2_strict_usize(max_period);
         assert!(
             coset.log_trace_height >= log_max_period,
@@ -73,17 +60,7 @@ impl<F: TwoAdicField> PeriodicLde<F> {
         );
         let log_blowup = coset.log_blowup();
 
-        // Step 2: Build matrix where each column is repeated to max_period
-        // Row-major: values[row * num_columns + col]
-        let mut repeated_values = Vec::with_capacity(max_period * num_columns);
-        for row in 0..max_period {
-            for column in column_evals {
-                repeated_values.push(column[row % column.len()]);
-            }
-        }
-        let repeated_matrix = RowMajorMatrix::new(repeated_values, num_columns);
-
-        // Step 3: Compute the coset shift for the max-period subgroup.
+        // Compute the coset shift for the max-period subgroup.
         //
         // Periodic polynomials are naturally defined on a subgroup of order `max_period`.
         // We derive the corresponding coset shift by taking the lifted coset shift
@@ -91,7 +68,7 @@ impl<F: TwoAdicField> PeriodicLde<F> {
         let log_ratio = coset.log_trace_height - log_max_period;
         let period_shift: F = coset.lde_shift::<F>().exp_power_of_2(log_ratio);
 
-        // Step 4: Compute LDE using NaiveDft (periods are small)
+        // Compute LDE using NaiveDft (periods are small)
         let ldes = NaiveDft
             .coset_lde_batch(repeated_matrix, log_blowup, period_shift)
             .to_row_major_matrix();
@@ -148,7 +125,18 @@ mod tests {
         // Create a coset at max height (no lifting)
         let coset = LiftedCoset::unlifted(log_trace_height, log_blowup);
 
-        let periodic_lde = PeriodicLde::build(&coset, columns);
+        // Build the repeated matrix (same logic as periodic_columns_matrix)
+        let max_period = columns.iter().map(|c| c.len()).max().unwrap();
+        let num_cols = columns.len();
+        let mut values = Vec::with_capacity(max_period * num_cols);
+        for row in 0..max_period {
+            for col in columns {
+                values.push(col[row % col.len()]);
+            }
+        }
+        let repeated_matrix = RowMajorMatrix::new(values, num_cols);
+
+        let periodic_lde = PeriodicLde::build(&coset, Some(repeated_matrix));
 
         // Compute expected LDE for each column via full expansion (natural order)
         let expected: Vec<Vec<F>> = columns

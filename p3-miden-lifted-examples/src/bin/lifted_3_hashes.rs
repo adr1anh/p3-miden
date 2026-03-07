@@ -19,7 +19,7 @@ use p3_field::extension::BinomialExtensionField;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_air::{AirWithPeriodicColumns, BaseAir, LiftedAir, LiftedAirBuilder};
+use p3_miden_lifted_air::{BaseAir, LiftedAir, LiftedAirBuilder};
 use p3_miden_lifted_examples::DummyAuxBuilder;
 use p3_miden_lifted_examples::blake3::{LiftedBlake3Air, generate_blake3_trace};
 use p3_miden_lifted_examples::keccak::{LiftedKeccakAir, generate_keccak_trace};
@@ -78,16 +78,6 @@ impl BaseAir<Val> for HashAir {
     }
 }
 
-impl AirWithPeriodicColumns<Val> for HashAir {
-    fn periodic_columns(&self) -> &[Vec<Val>] {
-        match self {
-            HashAir::Poseidon2(a) => AirWithPeriodicColumns::<Val>::periodic_columns(a.as_ref()),
-            HashAir::Keccak(a) => AirWithPeriodicColumns::<Val>::periodic_columns(a),
-            HashAir::Blake3(a) => AirWithPeriodicColumns::<Val>::periodic_columns(a),
-        }
-    }
-}
-
 impl<EF: Field> LiftedAir<Val, EF> for HashAir {
     fn num_randomness(&self) -> usize {
         1
@@ -98,6 +88,10 @@ impl<EF: Field> LiftedAir<Val, EF> for HashAir {
     }
 
     fn num_aux_values(&self) -> usize {
+        0
+    }
+
+    fn num_var_len_public_inputs(&self) -> usize {
         0
     }
 

@@ -1,9 +1,9 @@
 //! AIR traits for the Miden lifted STARK protocol.
 //!
 //! This crate provides:
-//! - [`LiftedAir`]: Super-trait for AIR definitions (inherits upstream + adds aux trace support)
+//! - [`LiftedAir`]: Super-trait for AIR definitions (inherits upstream + adds aux trace support
+//!   and periodic column data)
 //! - [`LiftedAirBuilder`]: Super-trait for constraint builders
-//! - [`AirWithPeriodicColumns`]: Periodic column data trait (column periods and evaluations)
 //! - [`auxiliary`]: Auxiliary trace types (builder, cross-AIR identity checking).
 
 #![no_std]
@@ -14,13 +14,11 @@ mod air;
 pub mod auxiliary;
 mod builder;
 mod instance;
-mod periodic;
 
 pub use air::{AirValidationError, LiftedAir, TracePart};
 pub use auxiliary::{AuxBuilder, ReducedAuxValues, ReductionError, VarLenPublicInputs};
 pub use builder::LiftedAirBuilder;
 pub use instance::{AirInstance, AirWitness, validate_instances};
-pub use periodic::AirWithPeriodicColumns;
 
 pub use p3_air::{
     Air, AirBuilder, AirBuilderWithContext, BaseAir, ExtensionBuilder, FilteredAirBuilder,

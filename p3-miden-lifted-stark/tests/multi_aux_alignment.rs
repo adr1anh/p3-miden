@@ -6,8 +6,7 @@ use p3_field::PrimeCharacteristicRing;
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_air::{
-    AirBuilder, AirWithPeriodicColumns, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir,
-    LiftedAirBuilder, WindowAccess,
+    AirBuilder, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir, LiftedAirBuilder, WindowAccess,
 };
 use p3_miden_lifted_stark::AirWitness;
 use p3_miden_lifted_stark::{VerifierError, verify_multi};
@@ -40,13 +39,11 @@ impl BaseAir<bb::F> for PaddingAir {
     }
 }
 
-impl AirWithPeriodicColumns<bb::F> for PaddingAir {
-    fn periodic_columns(&self) -> &[Vec<bb::F>] {
-        &[]
-    }
-}
-
 impl LiftedAir<bb::F, bb::EF> for PaddingAir {
+    fn num_randomness(&self) -> usize {
+        1
+    }
+
     fn aux_width(&self) -> usize {
         self.aux_width
     }
@@ -55,8 +52,8 @@ impl LiftedAir<bb::F, bb::EF> for PaddingAir {
         0
     }
 
-    fn num_randomness(&self) -> usize {
-        1
+    fn num_var_len_public_inputs(&self) -> usize {
+        0
     }
 
     fn eval<AB: LiftedAirBuilder<F = bb::F>>(&self, builder: &mut AB) {

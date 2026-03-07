@@ -306,7 +306,7 @@ where
         // Using (max_trace_height, z) gives z^{max_n / p}, which equals
         // y_j^{n_j / p} = (z^{max_n/n_j})^{n_j/p} = z^{max_n/p}. This avoids
         // computing y_j = z^{r_j} explicitly.
-        let periodic_polys = PeriodicPolys::new(air.periodic_columns());
+        let periodic_polys = PeriodicPolys::new(&air.periodic_columns());
         let periodic_values = periodic_polys.eval_at::<EF>(max_trace_height, z);
 
         let aux_values_j = &all_aux_values[j];

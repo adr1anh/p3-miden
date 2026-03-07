@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use p3_blake3_air::{Blake3Air, NUM_BLAKE3_COLS};
 use p3_field::{Field, PrimeField64};
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_lifted_air::{Air, AirWithPeriodicColumns, BaseAir, LiftedAir, LiftedAirBuilder};
+use p3_miden_lifted_air::{Air, BaseAir, LiftedAir, LiftedAirBuilder};
 
 /// [`Blake3Air`] adapted for the lifted STARK prover.
 ///
@@ -25,12 +25,6 @@ impl<F> BaseAir<F> for LiftedBlake3Air {
     }
 }
 
-impl<F: Field> AirWithPeriodicColumns<F> for LiftedBlake3Air {
-    fn periodic_columns(&self) -> &[Vec<F>] {
-        &[]
-    }
-}
-
 impl<F: PrimeField64, EF: Field> LiftedAir<F, EF> for LiftedBlake3Air {
     fn num_randomness(&self) -> usize {
         1
@@ -41,6 +35,10 @@ impl<F: PrimeField64, EF: Field> LiftedAir<F, EF> for LiftedBlake3Air {
     }
 
     fn num_aux_values(&self) -> usize {
+        0
+    }
+
+    fn num_var_len_public_inputs(&self) -> usize {
         0
     }
 
