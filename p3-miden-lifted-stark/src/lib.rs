@@ -83,11 +83,51 @@ pub mod verifier;
 
 /// AIR traits, instance/witness types, and upstream `p3-air` re-exports.
 ///
-/// This module re-exports everything from [`p3_miden_lifted_air`], which in turn
-/// re-exports all of `p3-air`. Consumers should never need to depend on `p3-air`
+/// This module re-exports items from [`p3_miden_lifted_air`], which in turn
+/// re-exports `p3-air` types. Consumers should never need to depend on `p3-air`
 /// directly.
 pub mod air {
-    pub use p3_miden_lifted_air::*;
+    pub use p3_miden_lifted_air::{
+        // Upstream p3-air re-exports
+        Air,
+        AirBuilder,
+        AirBuilderWithContext,
+        // Lifted AIR types
+        AirInstance,
+        AirValidationError,
+        AirWitness,
+        AuxBuilder,
+        BaseAir,
+        EmptyWindow,
+        ExtensionBuilder,
+        FilteredAirBuilder,
+        LiftedAir,
+        LiftedAirBuilder,
+        PeriodicAirBuilder,
+        PermutationAirBuilder,
+        ReducedAuxValues,
+        ReductionError,
+        RowWindow,
+        TracePart,
+        VarLenPublicInputs,
+        WindowAccess,
+        validate_instances,
+    };
+
+    /// Symbolic constraint analysis types from upstream p3-air.
+    pub mod symbolic {
+        pub use p3_miden_lifted_air::symbolic::*;
+    }
+
+    /// Auxiliary trace types (builder, cross-AIR identity checking).
+    pub mod auxiliary {
+        pub use p3_miden_lifted_air::auxiliary::*;
+    }
+
+    /// AIR constraint utility functions from upstream p3-air.
+    pub mod utils {
+        pub use p3_miden_lifted_air::utils::*;
+    }
 }
 
 /// PCS parameter types, transcript views, and error types for DEEP + FRI.

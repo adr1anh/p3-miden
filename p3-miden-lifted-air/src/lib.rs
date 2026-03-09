@@ -23,10 +23,18 @@ pub use instance::{AirInstance, AirWitness, validate_instances};
 mod empty_window;
 
 pub use empty_window::EmptyWindow;
-// Re-export all of p3-air so downstream crates never need to depend on p3-air directly.
-pub use p3_air::*;
+// Re-export upstream p3-air types so downstream crates never need to depend on p3-air directly.
+pub use p3_air::{
+    Air, AirBuilder, AirBuilderWithContext, BaseAir, ExtensionBuilder, FilteredAirBuilder,
+    PeriodicAirBuilder, PermutationAirBuilder, RowWindow, WindowAccess,
+};
 
 /// Symbolic constraint analysis types from upstream p3-air.
 pub mod symbolic {
     pub use p3_air::symbolic::*;
+}
+
+/// AIR constraint utility functions from upstream p3-air.
+pub mod utils {
+    pub use p3_air::utils::*;
 }

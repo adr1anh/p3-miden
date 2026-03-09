@@ -29,8 +29,9 @@ use p3_util::log2_ceil_usize;
 use thiserror::Error;
 
 use crate::{
-    AirLayout, LiftedAirBuilder, SymbolicAirBuilder, SymbolicExpressionExt,
+    LiftedAirBuilder,
     auxiliary::{ReducedAuxValues, ReductionError, VarLenPublicInputs},
+    symbolic::{AirLayout, SymbolicAirBuilder, SymbolicExpressionExt},
 };
 
 /// Super-trait for AIR definitions used by the lifted STARK prover/verifier.
@@ -196,7 +197,7 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> {
 
     /// Log₂ of the number of quotient chunks, inferred from symbolic constraint analysis.
     ///
-    /// Evaluates the AIR on a [`SymbolicAirBuilder`](crate::SymbolicAirBuilder) to determine
+    /// Evaluates the AIR on a [`SymbolicAirBuilder`](crate::symbolic::SymbolicAirBuilder) to determine
     /// the maximum constraint degree M, then returns `log2_ceil(M - 1)` (padded so M ≥ 2).
     ///
     /// Uses `SymbolicAirBuilder<F>` (i.e. `EF = F`) which is sufficient for degree

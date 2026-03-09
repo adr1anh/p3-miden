@@ -7,10 +7,10 @@ use alloc::{vec, vec::Vec};
 
 use p3_field::{ExtensionField, Field};
 use p3_matrix::dense::RowMajorMatrix;
-pub(crate) use p3_miden_lifted_air::ConstraintLayout;
+pub(crate) use p3_miden_lifted_air::symbolic::ConstraintLayout;
 use p3_miden_lifted_air::{
-    AirBuilder, AirLayout, EmptyWindow, ExtensionBuilder, LiftedAir, PeriodicAirBuilder,
-    PermutationAirBuilder,
+    AirBuilder, EmptyWindow, ExtensionBuilder, LiftedAir, PeriodicAirBuilder,
+    PermutationAirBuilder, symbolic::AirLayout,
 };
 use tracing::instrument;
 
