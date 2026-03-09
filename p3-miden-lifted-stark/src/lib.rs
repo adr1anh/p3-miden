@@ -62,6 +62,8 @@ extern crate alloc;
 mod config;
 /// Domain/coset operations for lifted traces.
 pub mod coset;
+/// Debug constraint checker for lifted AIRs.
+pub mod debug;
 pub(crate) mod selectors;
 
 pub use config::*;
