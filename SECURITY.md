@@ -14,12 +14,12 @@ This code has not been independently audited.
 - LMCS batch opening verification and sibling order: `p3-miden-lmcs/src/lmcs.rs`
 - DEEP reduction and domain-point reconstruction: `p3-miden-lifted-fri/src/deep/verifier.rs`
 - FRI round loop (index shifting, `s_inv` computation, final poly check): `p3-miden-lifted-fri/src/fri/verifier.rs`
-- STARK boundary canonicality and OOD identity check: `p3-miden-lifted-verifier/src/verifier.rs`
+- STARK boundary canonicality and OOD identity check: `p3-miden-lifted-stark/src/verifier/mod.rs`
 
 ## Protocol Hierarchy (This Workspace)
 
 ```text
-LMCS  ->  DEEP + FRI  ->  PCS (lifted-fri)  ->  Lifted STARK (lifted-{prover,verifier})
+LMCS  ->  DEEP + FRI  ->  PCS (lifted-fri)  ->  Lifted STARK (lifted-stark)
 ```
 
 - **LMCS** (`p3-miden-lmcs`): Merkle commitments + batch openings for multiple
@@ -94,7 +94,7 @@ challenger state.
 
 ## Canonicality / Proof Malleability
 
-The lifted STARK verifier (`p3-miden-lifted-verifier`) rejects trailing
+The lifted STARK verifier (`p3-miden-lifted-stark`) rejects trailing
 transcript data.
 
 The PCS verifier (`p3-miden-lifted-fri`) provides both:
@@ -115,7 +115,7 @@ at the outer protocol layer.
 
 ## What To Review First (Suggested Order)
 
-1. `p3-miden-lifted-verifier/src/verifier.rs` (`verify_multi`)
+1. `p3-miden-lifted-stark/src/verifier/mod.rs` (`verify_multi`)
 2. `p3-miden-lifted-fri/src/verifier.rs` (`verify`)
 3. `p3-miden-lmcs/src/lmcs.rs` (`LmcsConfig::open_batch`)
 4. `p3-miden-lifted-fri/src/deep/verifier.rs` (DEEP reduction + quotient eval)

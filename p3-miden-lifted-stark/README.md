@@ -184,16 +184,15 @@ at `y_j`, and the opened trace values already correspond to `p_j(y_j)`.
 
 | Item | Purpose |
 |------|---------|
-| `prove_single` | Prove a single-AIR STARK |
-| `prove_multi` | Prove a multi-trace STARK (ascending heights) |
-| `AirWitness` | Prover witness (trace + public values) |
-| `verify_single` | Verify a single-AIR proof |
-| `verify_multi` | Verify a multi-trace proof |
-| `AirInstance` | Verifier instance (log height + public values) |
-| `StarkTranscript` | Structured transcript view (the proof artifact) |
+| `prover::prove_single` | Prove a single-AIR STARK |
+| `prover::prove_multi` | Prove a multi-trace STARK (ascending heights) |
+| `air::AirWitness` | Prover witness (trace + public values) |
+| `verifier::verify_single` | Verify a single-AIR proof |
+| `verifier::verify_multi` | Verify a multi-trace proof |
+| `air::AirInstance` | Verifier instance (log height + public values) |
+| `Transcript` | Structured transcript view (alias for `verifier::proof::StarkTranscript`) |
 | `StarkConfig` | PCS params + LMCS + DFT configuration |
-| `LiftedCoset` | Domain operations: selectors, vanishing, coset shifts |
-| `Selectors` | `is_first_row`, `is_last_row`, `is_transition` |
+| `coset::LiftedCoset` | Domain operations: selectors, vanishing, coset shifts |
 
 ## Modules
 
