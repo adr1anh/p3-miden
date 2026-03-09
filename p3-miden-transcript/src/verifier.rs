@@ -35,6 +35,23 @@ impl<'a, F, C, Ch> VerifierTranscript<'a, F, C, Ch> {
         Self::new(challenger, fields, commitments)
     }
 
+    /// Finalize the transcript, checking emptiness and producing a binding digest.
+    ///
+    /// Returns [`TranscriptError::TrailingData`] if any unread fields or commitments
+    /// remain. On success, delegates to [`CanFinalizeDigest::finalize`](p3_challenger::CanFinalizeDigest::finalize) on the inner
+    /// challenger — the digest must match the prover's digest for the proof to be valid.
+    pub fn finalize(self) -> Result<Ch::Digest, TranscriptError>
+    where
+        F: Field,
+        C: Clone,
+        Ch: TranscriptChallenger<F, C>,
+    {
+        if !self.fields.is_empty() || !self.commitments.is_empty() {
+            return Err(TranscriptError::TrailingData);
+        }
+        Ok(self.challenger.finalize())
+    }
+
     /// Returns the total byte size of the remaining unconsumed transcript data.
     pub fn size_in_bytes(&self) -> usize {
         size_of_val(self.fields) + size_of_val(self.commitments)
@@ -236,4 +253,6 @@ pub enum TranscriptError {
     NoMoreCommitments,
     #[error("invalid grinding witness")]
     InvalidGrinding,
+    #[error("trailing data in transcript")]
+    TrailingData,
 }

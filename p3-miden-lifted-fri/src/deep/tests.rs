@@ -7,7 +7,7 @@ use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_util::reverse_bits_len;
 use rand::{RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
-use super::{DeepParams, prover::DeepPoly, verifier::DeepOracle};
+use super::{DeepParams, DeepTranscript, prover::DeepPoly, verifier::DeepOracle};
 use crate::tests::{
     EF, F, prover_channel_with_commitment, test_lmcs, verifier_channel_with_commitment,
 };
@@ -60,7 +60,7 @@ fn deep_quotient_end_to_end() {
         .map(|exp| reverse_bits_len(exp, log_lde_height))
         .collect();
     tree.prove_batch(tree_indices.iter().copied(), &mut prover_channel);
-    let transcript = prover_channel.into_data();
+    let (prover_digest, transcript) = prover_channel.finalize();
 
     // Create commitments slice for multi-commitment API (single commitment in this case)
     let commitments = vec![(commitment, widths)];
@@ -90,4 +90,20 @@ fn deep_quotient_end_to_end() {
             "Prover and verifier disagree at tree index {tree_idx}"
         );
     }
+
+    let verifier_digest = verifier_channel
+        .finalize()
+        .expect("transcript should finalize cleanly");
+    assert_eq!(prover_digest, verifier_digest);
+
+    // Re-parse DeepTranscript (DEEP phase only) from a fresh channel.
+    let reparse_commitments = vec![(commitment, tree.widths())];
+    let mut reparse_channel = verifier_channel_with_commitment(&transcript, &commitment);
+    DeepTranscript::<F, EF>::from_verifier_channel(
+        &params,
+        &reparse_commitments,
+        2, // num_eval_points
+        &mut reparse_channel,
+    )
+    .expect("DeepTranscript re-parse should succeed");
 }

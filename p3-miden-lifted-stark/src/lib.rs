@@ -5,6 +5,7 @@
 //!
 //! # Modules
 //!
+//! - [`proof`]: [`proof::StarkProof`], [`proof::StarkDigest`], [`proof::StarkOutput`], [`proof::StarkTranscript`]
 //! - [`air`]: AIR traits, instance/witness types, and upstream `p3-air` re-exports
 //! - [`prover`]: [`prover::prove_single`] / [`prover::prove_multi`] entry points
 //! - [`verifier`]: [`verifier::verify_single`] / [`verifier::verify_multi`] entry points
@@ -67,15 +68,8 @@ pub mod debug;
 pub(crate) mod selectors;
 
 pub use config::*;
-/// Structured transcript view for the full lifted STARK protocol.
-///
-/// See [`verifier::proof::StarkTranscript`] for details.
-pub use verifier::proof::StarkTranscript as Transcript;
 
-// ============================================================================
-// Prover and verifier modules
-// ============================================================================
-
+pub mod proof;
 pub mod prover;
 pub mod verifier;
 
@@ -152,10 +146,7 @@ pub mod lmcs {
 
 /// Fiat-Shamir transcript channels and data types.
 pub mod transcript {
-    pub use p3_miden_transcript::{
-        Channel, ProverChannel, ProverTranscript, TranscriptChallenger, TranscriptData,
-        TranscriptError, VerifierChannel, VerifierTranscript,
-    };
+    pub use p3_miden_transcript::{TranscriptChallenger, TranscriptData, TranscriptError};
 }
 
 /// Stateful hasher primitives for LMCS construction.

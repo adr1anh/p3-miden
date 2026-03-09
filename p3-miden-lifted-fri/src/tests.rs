@@ -8,13 +8,13 @@ use p3_challenger::CanObserve;
 use p3_field::Field;
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
 pub use p3_miden_dev_utils::{configs::baby_bear_poseidon2::*, matrix::random_lde_matrix};
-use p3_miden_lmcs::{Lmcs, LmcsConfig, LmcsTree};
-use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript};
+use p3_miden_lmcs::{Lmcs, LmcsConfig, LmcsTree, utils::aligned_widths};
+use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
 use p3_util::log2_strict_usize;
 use rand::{Rng, RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
 use crate::{
-    PcsParams,
+    PcsParams, PcsTranscript,
     deep::DeepParams,
     fri::{FriFold, FriParams},
     prover::open_with_channel,
@@ -25,6 +25,7 @@ pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 pub type TestTree = <BaseLmcs as Lmcs>::Tree<RowMajorMatrix<F>>;
 pub type TestCommitment = <BaseLmcs as Lmcs>::Commitment;
 pub type TestTranscriptData = TranscriptData<F, TestCommitment>;
+pub type TestDigest = <Challenger as p3_challenger::CanFinalizeDigest>::Digest;
 pub type TestProverChannel = ProverTranscript<F, TestCommitment, Challenger>;
 pub type TestVerifierChannel<'a> = VerifierTranscript<'a, F, TestCommitment, Challenger>;
 
@@ -121,7 +122,7 @@ fn run_pcs_case(params: &PcsParams, trees: Vec<TestTree>, seed: u64) -> Result<(
         &trace_trees,
         &mut prover_channel,
     );
-    let transcript = prover_channel.into_data();
+    let (prover_digest, transcript) = prover_channel.finalize();
 
     // Verifier: observe commitments in the same order.
     let mut challenger = test_challenger();
@@ -140,10 +141,38 @@ fn run_pcs_case(params: &PcsParams, trees: Vec<TestTree>, seed: u64) -> Result<(
     );
 
     if result.is_ok() {
-        assert!(
-            verifier_channel.is_empty(),
-            "transcript should be fully consumed"
-        );
+        let verifier_digest = verifier_channel
+            .finalize()
+            .expect("transcript should finalize cleanly");
+        assert_eq!(prover_digest, verifier_digest);
+
+        // Re-parse PcsTranscript from a fresh channel and verify digest agreement.
+        let alignment = lmcs.alignment();
+        let aligned_commitments: Vec<_> = commitments
+            .iter()
+            .map(|(c, widths)| (*c, aligned_widths(widths.clone(), alignment)))
+            .collect();
+
+        let mut challenger = test_challenger();
+        for (c, _) in &commitments {
+            challenger.observe(*c);
+        }
+        let mut reparse_channel = VerifierTranscript::from_data(challenger, &transcript);
+
+        PcsTranscript::<EF, BaseLmcs>::from_verifier_channel::<_, 2>(
+            params,
+            &lmcs,
+            &aligned_commitments,
+            log_lde_height,
+            eval_points,
+            &mut reparse_channel,
+        )
+        .expect("PcsTranscript re-parse should succeed");
+
+        let reparse_digest = reparse_channel
+            .finalize()
+            .expect("re-parsed transcript should finalize cleanly");
+        assert_eq!(prover_digest, reparse_digest);
     }
     result.map(|_| ())
 }

@@ -31,7 +31,7 @@
 //! let root = tree.root();
 //! let mut prover_channel = ProverTranscript::new(challenger);
 //! tree.prove_batch(&indices, &mut prover_channel);
-//! let transcript = prover_channel.into_data();
+//! let (_, transcript) = prover_channel.finalize();
 //!
 //! let mut verifier_channel = VerifierTranscript::from_data(challenger, &transcript);
 //! let rows = config.open_batch(&root, &widths, log_max_height, &indices, &mut verifier_channel)?;

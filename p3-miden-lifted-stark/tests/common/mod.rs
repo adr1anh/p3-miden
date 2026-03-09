@@ -7,7 +7,7 @@ use p3_miden_lifted_stark::{
     air::{AirWitness, AuxBuilder, LiftedAir},
     fri::{DeepParams, FriFold, FriParams, PcsParams},
     lmcs::LmcsConfig,
-    transcript::{ProverTranscript, VerifierTranscript},
+    proof::StarkTranscript,
 };
 
 pub type TestLmcs =
@@ -53,21 +53,34 @@ pub fn prove_and_verify<A, B>(
         .map(|(t, pv)| (air, AirWitness::new(t, pv, &[]), aux_builder))
         .collect();
 
-    let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-    p3_miden_lifted_stark::prover::prove_multi(&config, &prover_instances, &mut prover_channel)
-        .expect("proving should succeed");
-    let transcript = prover_channel.into_data();
+    let output = p3_miden_lifted_stark::prover::prove_multi(
+        &config,
+        &prover_instances,
+        bb::test_challenger(),
+    )
+    .expect("proving should succeed");
 
     let verifier_instances: Vec<_> = prover_instances
         .iter()
         .map(|(a, w, _)| (*a, w.to_instance().unwrap()))
         .collect();
 
-    let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    p3_miden_lifted_stark::verifier::verify_multi(
+    let verifier_digest = p3_miden_lifted_stark::verifier::verify_multi(
         &config,
         &verifier_instances,
-        &mut verifier_channel,
+        &output.proof,
+        bb::test_challenger(),
     )
     .expect("verification should succeed");
+    assert_eq!(output.digest, verifier_digest);
+
+    // Re-parse transcript from a fresh challenger and verify digest agreement.
+    let (_, reparse_digest) = StarkTranscript::from_proof(
+        &config,
+        &verifier_instances,
+        &output.proof,
+        bb::test_challenger(),
+    )
+    .expect("transcript re-parse should succeed");
+    assert_eq!(output.digest, reparse_digest);
 }

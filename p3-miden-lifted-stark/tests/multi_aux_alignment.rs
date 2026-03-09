@@ -14,7 +14,8 @@ use p3_miden_lifted_stark::{
         WindowAccess,
     },
     lmcs::Lmcs,
-    transcript::{ProverTranscript, TranscriptData, VerifierTranscript},
+    proof::StarkTranscript,
+    transcript::TranscriptData,
     verifier::{VerifierError, verify_multi},
 };
 
@@ -130,19 +131,36 @@ fn multi_trace_with_aux_padding() {
         .map(|(t, pv)| (&air, AirWitness::new(t, pv, &[]), &aux_builder))
         .collect();
 
-    let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-    p3_miden_lifted_stark::prover::prove_multi(&config, &prover_instances, &mut prover_channel)
-        .expect("proving should succeed");
-    let transcript = prover_channel.into_data();
+    let output = p3_miden_lifted_stark::prover::prove_multi(
+        &config,
+        &prover_instances,
+        bb::test_challenger(),
+    )
+    .expect("proving should succeed");
 
     let verifier_instances: Vec<_> = prover_instances
         .iter()
         .map(|(a, w, _)| (*a, w.to_instance().unwrap()))
         .collect();
 
-    let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    verify_multi(&config, &verifier_instances, &mut verifier_channel)
-        .expect("verification should succeed");
+    let verifier_digest = verify_multi(
+        &config,
+        &verifier_instances,
+        &output.proof,
+        bb::test_challenger(),
+    )
+    .expect("verification should succeed");
+    assert_eq!(output.digest, verifier_digest);
+
+    // Re-parse transcript from a fresh challenger and verify digest agreement.
+    let (_, reparse_digest) = StarkTranscript::from_proof(
+        &config,
+        &verifier_instances,
+        &output.proof,
+        bb::test_challenger(),
+    )
+    .expect("transcript re-parse should succeed");
+    assert_eq!(output.digest, reparse_digest);
 }
 
 #[test]
@@ -161,12 +179,14 @@ fn multi_trace_rejects_trailing_transcript_data() {
         .map(|(t, pv)| (&air, AirWitness::new(t, pv, &[]), &aux_builder))
         .collect();
 
-    let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-    p3_miden_lifted_stark::prover::prove_multi(&config, &prover_instances, &mut prover_channel)
-        .expect("proving should succeed");
-    let transcript = prover_channel.into_data();
+    let output = p3_miden_lifted_stark::prover::prove_multi(
+        &config,
+        &prover_instances,
+        bb::test_challenger(),
+    )
+    .expect("proving should succeed");
 
-    let (mut fields, commitments) = transcript.clone().into_parts();
+    let (mut fields, commitments) = output.proof.clone().into_parts();
     fields.push(bb::F::ONE);
     let bad_transcript = TranscriptData::new(fields, commitments);
 
@@ -175,8 +195,15 @@ fn multi_trace_rejects_trailing_transcript_data() {
         .map(|(a, w, _)| (*a, w.to_instance().unwrap()))
         .collect();
 
-    let mut bad_channel = VerifierTranscript::from_data(bb::test_challenger(), &bad_transcript);
-    let err = verify_multi(&config, &verifier_instances, &mut bad_channel)
-        .expect_err("extra transcript data should fail verification");
-    assert!(matches!(err, VerifierError::TranscriptNotConsumed));
+    let err = verify_multi(
+        &config,
+        &verifier_instances,
+        &bad_transcript,
+        bb::test_challenger(),
+    )
+    .expect_err("extra transcript data should fail verification");
+    assert!(matches!(
+        err,
+        VerifierError::Transcript(p3_miden_lifted_stark::transcript::TranscriptError::TrailingData)
+    ));
 }

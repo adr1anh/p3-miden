@@ -190,7 +190,7 @@ at `y_j`, and the opened trace values already correspond to `p_j(y_j)`.
 | `verifier::verify_single` | Verify a single-AIR proof |
 | `verifier::verify_multi` | Verify a multi-trace proof |
 | `air::AirInstance` | Verifier instance (log height + public values) |
-| `Transcript` | Structured transcript view (alias for `verifier::proof::StarkTranscript`) |
+| `Transcript` | Structured transcript view (alias for `proof::StarkTranscript`) |
 | `StarkConfig` | PCS params + LMCS + DFT configuration |
 | `coset::LiftedCoset` | Domain operations: selectors, vanishing, coset shifts |
 

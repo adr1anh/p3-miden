@@ -14,7 +14,7 @@ use p3_miden_lifted_stark::{
         WindowAccess,
     },
     prover::prove_single,
-    transcript::{ProverTranscript, TranscriptData, VerifierTranscript},
+    transcript::TranscriptData,
     verifier::{VerifierError, verify_single},
 };
 use p3_util::log2_strict_usize;
@@ -173,47 +173,48 @@ fn malformed_transcript_is_rejected() {
     let (trace, public_values) = instance(0, 4);
     let log_trace_height = log2_strict_usize(trace.height());
 
-    let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-    prove_single(
+    let output = prove_single(
         &config,
         &air,
         &trace,
         &public_values,
         &[],
         &TinyAuxBuilder,
-        &mut prover_channel,
+        bb::test_challenger(),
     )
     .expect("proving should succeed");
-    let transcript = prover_channel.into_data();
 
     // Baseline should verify
-    let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    verify_single(
+    let _digest = verify_single(
         &config,
         &air,
         log_trace_height,
         &public_values,
         &[],
-        &mut verifier_channel,
+        &output.proof,
+        bb::test_challenger(),
     )
     .expect("baseline proof should verify");
 
     // Extra field element should cause rejection
-    let (mut fields, commitments) = transcript.clone().into_parts();
+    let (mut fields, commitments) = output.proof.clone().into_parts();
     fields.push(bb::F::ONE);
     let bad_transcript = TranscriptData::new(fields, commitments);
 
-    let mut bad_channel = VerifierTranscript::from_data(bb::test_challenger(), &bad_transcript);
     let err = verify_single(
         &config,
         &air,
         log_trace_height,
         &public_values,
         &[],
-        &mut bad_channel,
+        &bad_transcript,
+        bb::test_challenger(),
     )
     .expect_err("extra transcript data should fail verification");
-    assert!(matches!(err, VerifierError::TranscriptNotConsumed));
+    assert!(matches!(
+        err,
+        VerifierError::Transcript(p3_miden_lifted_stark::transcript::TranscriptError::TrailingData)
+    ));
 }
 
 // ---------------------------------------------------------------------------

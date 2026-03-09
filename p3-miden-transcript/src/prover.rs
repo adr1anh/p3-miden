@@ -28,18 +28,19 @@ impl<F, C, Ch> ProverTranscript<F, C, Ch> {
         }
     }
 
-    /// Consume the prover transcript and return the raw transcript data.
-    pub fn into_data(self) -> TranscriptData<F, C> {
-        TranscriptData::new(self.fields, self.commitments)
-    }
-
-    /// Returns a snapshot of the recorded transcript data.
-    pub fn data(&self) -> TranscriptData<F, C>
+    /// Finalize the transcript, producing a binding digest and returning the proof data.
+    ///
+    /// Delegates to [`CanFinalizeDigest::finalize`](p3_challenger::CanFinalizeDigest::finalize) on the inner challenger, which
+    /// unconditionally applies a final state transition before extracting the digest.
+    /// The digest commits to the entire transcript interaction.
+    pub fn finalize(self) -> (Ch::Digest, TranscriptData<F, C>)
     where
-        F: Clone,
+        F: Field,
         C: Clone,
+        Ch: TranscriptChallenger<F, C>,
     {
-        TranscriptData::new(self.fields.clone(), self.commitments.clone())
+        let digest = self.challenger.finalize();
+        (digest, TranscriptData::new(self.fields, self.commitments))
     }
 
     /// Returns the total byte size of the recorded transcript data.

@@ -245,7 +245,7 @@ macro_rules! bench_scenario {
                                     trace_trees,
                                     &mut channel,
                                 );
-                                black_box(channel.into_data())
+                                black_box(channel.finalize())
                             });
                         });
                     }

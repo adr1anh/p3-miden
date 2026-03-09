@@ -11,7 +11,7 @@ use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 pub use p3_miden_dev_utils::matrix::concatenate_matrices;
 use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
-use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript};
+use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
 use p3_util::log2_strict_usize;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
@@ -23,6 +23,7 @@ use crate::{
 /// Type alias for local LMCS config.
 pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 type Commitment = <BaseLmcs as Lmcs>::Commitment;
+type TestDigest = <bb::Challenger as p3_challenger::CanFinalizeDigest>::Digest;
 type TestTranscriptData = TranscriptData<F, Commitment>;
 type OpenedRows = BTreeMap<usize, RowList<F>>;
 
@@ -51,6 +52,7 @@ fn verify_open_batch<C>(
     log_max_height: usize,
     indices: &[usize],
     transcript: &TestTranscriptData,
+    prover_digest: &TestDigest,
 ) -> Result<OpenedRows, LmcsError>
 where
     C: Lmcs<F = F, Commitment = Commitment>,
@@ -64,10 +66,10 @@ where
         &mut verifier_channel,
     );
     if result.is_ok() {
-        assert!(
-            verifier_channel.is_empty(),
-            "transcript should be fully consumed"
-        );
+        let verifier_digest = verifier_channel
+            .finalize()
+            .expect("transcript should finalize cleanly");
+        assert_eq!(verifier_digest, *prover_digest);
     }
     result
 }
@@ -84,10 +86,10 @@ where
     let widths = tree.widths();
     let log_max_height = log2_strict_usize(tree.height());
 
-    let transcript = {
+    let (prover_digest, transcript) = {
         let mut prover_channel = ProverTranscript::new(bb::test_challenger());
         tree.prove_batch(indices.iter().copied(), &mut prover_channel);
-        prover_channel.into_data()
+        prover_channel.finalize()
     };
     let opened_rows = verify_open_batch(
         lmcs,
@@ -96,6 +98,7 @@ where
         log_max_height,
         indices,
         &transcript,
+        &prover_digest,
     )?;
     Ok((transcript, opened_rows))
 }
@@ -244,7 +247,7 @@ fn open_batch_handles_empty_or_oob() {
     let log_max_height = log2_strict_usize(tree.height());
     let commitment = tree.root();
 
-    let transcript = ProverTranscript::new(bb::test_challenger()).into_data();
+    let (prover_digest, transcript) = ProverTranscript::new(bb::test_challenger()).finalize();
 
     assert_eq!(
         verify_open_batch(
@@ -254,6 +257,7 @@ fn open_batch_handles_empty_or_oob() {
             log_max_height,
             &[],
             &transcript,
+            &prover_digest,
         ),
         Err(LmcsError::InvalidProof)
     );
@@ -266,6 +270,7 @@ fn open_batch_handles_empty_or_oob() {
             log_max_height,
             &[tree.height()],
             &transcript,
+            &prover_digest,
         ),
         Err(LmcsError::InvalidProof)
     );
@@ -326,7 +331,7 @@ fn batch_proof_handles_empty_or_oob() {
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
     tree.prove_batch([0], &mut prover_channel);
-    let transcript = prover_channel.into_data();
+    let (_, transcript) = prover_channel.finalize();
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
     let batch = BatchProof::<F, Commitment>::read_from_channel(

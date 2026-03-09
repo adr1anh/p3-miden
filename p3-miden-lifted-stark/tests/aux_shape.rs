@@ -11,7 +11,6 @@ use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_stark::{
     air::{AuxBuilder, BaseAir, LiftedAir, LiftedAirBuilder},
     prover::prove_single,
-    transcript::ProverTranscript,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -68,8 +67,6 @@ fn aux_width_mismatch_panics() {
     let trace = RowMajorMatrix::new(vec![bb::F::ZERO, bb::F::ONE, bb::F::ONE, bb::F::ZERO], 1);
     let public_values = vec![];
 
-    let mut channel = ProverTranscript::new(bb::test_challenger());
-
     let _result = prove_single(
         &config,
         &air,
@@ -77,6 +74,6 @@ fn aux_width_mismatch_panics() {
         &public_values,
         &[],
         &BadAuxBuilder,
-        &mut channel,
+        bb::test_challenger(),
     );
 }

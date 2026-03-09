@@ -11,11 +11,11 @@
 
 use core::marker::PhantomData;
 
-use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
 use p3_dft::TwoAdicSubgroupDft;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_lifted_fri::PcsParams;
 use p3_miden_lmcs::Lmcs;
+use p3_miden_transcript::TranscriptChallenger;
 
 /// Lifted STARK configuration.
 ///
@@ -29,10 +29,7 @@ pub trait StarkConfig<F: TwoAdicField, EF: ExtensionField<F>>: Clone {
     /// DFT for LDE computation.
     type Dft: TwoAdicSubgroupDft<F>;
     /// Fiat-Shamir challenger.
-    type Challenger: Clone
-        + FieldChallenger<F>
-        + GrindingChallenger<Witness = F>
-        + CanObserve<<Self::Lmcs as Lmcs>::Commitment>;
+    type Challenger: TranscriptChallenger<F, <Self::Lmcs as Lmcs>::Commitment>;
 
     /// PCS parameters (DEEP + FRI settings).
     fn pcs(&self) -> &PcsParams;
@@ -88,7 +85,7 @@ where
     EF: ExtensionField<F>,
     L: Lmcs<F = F>,
     Dft: TwoAdicSubgroupDft<F> + Clone,
-    Ch: Clone + FieldChallenger<F> + GrindingChallenger<Witness = F> + CanObserve<L::Commitment>,
+    Ch: TranscriptChallenger<F, L::Commitment>,
 {
     type Lmcs = L;
     type Dft = Dft;

@@ -21,7 +21,6 @@ use p3_miden_lifted_stark::{
     fri::{DeepParams, FriFold, FriParams, PcsParams},
     lmcs::LmcsConfig,
     prover::prove_multi,
-    transcript::{ProverTranscript, VerifierTranscript},
 };
 use p3_util::log2_strict_usize;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
@@ -106,19 +105,17 @@ fn main() {
             (&air, AirWitness::new(&trace_b, &[], &[]), &dummy_aux),
         ];
 
-        let mut channel = ProverTranscript::new(bb::test_challenger());
-        info_span!("prove").in_scope(|| {
-            prove_multi(&config, &instances, &mut channel).expect("proving failed");
+        let output = info_span!("prove").in_scope(|| {
+            prove_multi(&config, &instances, bb::test_challenger()).expect("proving failed")
         });
-        let transcript = channel.into_data();
 
         if i == 1 {
-            let size = stats::serialized_size(&transcript);
+            let size = stats::serialized_size(&output.proof);
             println!(
                 "proof size: {} ({} field elems, {} commitments)",
                 stats::format_bytes(size),
-                transcript.fields().len(),
-                transcript.commitments().len(),
+                output.proof.fields().len(),
+                output.proof.commitments().len(),
             );
         }
 
@@ -149,14 +146,14 @@ fn main() {
                     },
                 ),
             ];
-            let mut verifier_channel =
-                VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-            p3_miden_lifted_stark::verifier::verify_multi(
+            let digest = p3_miden_lifted_stark::verifier::verify_multi(
                 &config,
                 &verifier_instances,
-                &mut verifier_channel,
+                &output.proof,
+                bb::test_challenger(),
             )
             .expect("verification failed");
+            assert_eq!(output.digest, digest);
         });
 
         if i == 0 {

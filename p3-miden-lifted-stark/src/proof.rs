@@ -1,35 +1,55 @@
-//! Structured STARK transcript.
+//! STARK proof types and structured transcript.
 //!
-//! [`StarkTranscript`] captures the full lifted STARK protocol interaction
-//! (commitments, challenges, OOD point, and PCS sub-transcript) as a typed struct
-//! with a [`from_verifier_channel`](StarkTranscript::from_verifier_channel) constructor
-//! that parses it from a channel.
+//! This module defines the proof artifact types shared by prover and verifier:
+//! - [`StarkProof`]: raw transcript data (field elements and commitments)
+//! - [`StarkDigest`]: binding digest committing to the entire interaction
+//! - [`StarkOutput`]: combined prover output (proof + digest)
+//! - [`StarkTranscript`]: structured parse-only view of the full protocol interaction
 //!
-//! This is a parse-only view that exists alongside [`verify_multi`](crate::verifier::verify_multi),
-//! following the same pattern as [`PcsTranscript`] alongside
-//! [`verify`](p3_miden_lifted_fri::verifier::verify).
+//! [`StarkTranscript`] has a [`from_proof`](StarkTranscript::from_proof) constructor
+//! that parses it from proof data and a challenger, following the same pattern as
+//! [`PcsTranscript`] alongside [`verify`](p3_miden_lifted_fri::verifier::verify).
 
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
+use p3_challenger::CanFinalizeDigest;
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_miden_lifted_air::{AirInstance, LiftedAir};
 use p3_miden_lifted_fri::PcsTranscript;
 use p3_miden_lmcs::{Lmcs, utils::aligned_len};
-use p3_miden_transcript::VerifierChannel;
+use p3_miden_transcript::{Channel, TranscriptData, VerifierChannel, VerifierTranscript};
 
-use super::VerifierError;
-use crate::{StarkConfig, coset::LiftedCoset};
+use crate::{StarkConfig, coset::LiftedCoset, verifier::VerifierError};
+
+/// STARK proof: raw transcript data (field elements and commitments) produced by
+/// the prover and consumed by the verifier.
+pub type StarkProof<F, EF, SC> =
+    TranscriptData<F, <<SC as StarkConfig<F, EF>>::Lmcs as Lmcs>::Commitment>;
+
+/// Transcript digest: the challenger's native binding digest that commits to
+/// the entire prover–verifier interaction. The prover and verifier must produce
+/// the same digest for the proof to be valid.
+pub type StarkDigest<F, EF, SC> =
+    <<SC as StarkConfig<F, EF>>::Challenger as CanFinalizeDigest>::Digest;
+
+/// Output of [`crate::prover::prove_single`] / [`crate::prover::prove_multi`]: the proof data and
+/// its transcript digest.
+pub struct StarkOutput<F: TwoAdicField, EF: ExtensionField<F>, SC: StarkConfig<F, EF>> {
+    /// Transcript digest committing to the entire prover–verifier interaction.
+    pub digest: StarkDigest<F, EF, SC>,
+    /// Raw transcript data consumed by the verifier.
+    pub proof: StarkProof<F, EF, SC>,
+}
 
 /// Structured transcript view for the full lifted STARK protocol.
 ///
 /// Captures all commitments, sampled challenges, the OOD evaluation point, and
 /// the PCS sub-transcript (DEEP evals, FRI rounds, query openings).
 ///
-/// Constructed via [`from_verifier_channel`](Self::from_verifier_channel), which
-/// mirrors steps 1–9 of [`verify_multi`](crate::verifier::verify_multi) (parse only, no
-/// constraint checks).
+/// Constructed via [`from_proof`](Self::from_proof), which mirrors steps 1–9 of
+/// [`verify_multi`](crate::verifier::verify_multi) (parse only, no constraint checks).
 pub struct StarkTranscript<EF, L>
 where
     L: Lmcs,
@@ -62,7 +82,7 @@ where
     L::F: TwoAdicField,
     EF: ExtensionField<L::F>,
 {
-    /// Parse a STARK transcript from a verifier channel without constraint checks.
+    /// Parse a STARK transcript from proof data and a challenger.
     ///
     /// Mirrors steps 1–9 of [`verify_multi`](crate::verifier::verify_multi):
     /// 1. Receive main trace commitment
@@ -76,16 +96,19 @@ where
     /// 9. Parse PCS sub-transcript via [`PcsTranscript::from_verifier_channel`]
     ///
     /// Does **not** verify constraints or check the quotient identity.
-    pub fn from_verifier_channel<A, SC, Ch>(
+    /// Finalizes the transcript and returns the digest alongside the parsed view.
+    #[allow(clippy::type_complexity)]
+    pub fn from_proof<A, SC>(
         config: &SC,
         instances: &[(&A, AirInstance<'_, L::F>)],
-        channel: &mut Ch,
-    ) -> Result<Self, VerifierError>
+        proof: &TranscriptData<L::F, L::Commitment>,
+        challenger: SC::Challenger,
+    ) -> Result<(Self, StarkDigest<L::F, EF, SC>), VerifierError>
     where
         A: LiftedAir<L::F, EF>,
         SC: StarkConfig<L::F, EF, Lmcs = L>,
-        Ch: VerifierChannel<F = L::F, Commitment = L::Commitment>,
     {
+        let mut channel = VerifierTranscript::from_data(challenger, proof);
         let log_blowup = config.pcs().fri.log_blowup;
         let alignment = config.lmcs().alignment();
 
@@ -139,7 +162,7 @@ where
         let quotient_commit = channel.receive_commitment()?.clone();
 
         // 7. Sample OOD point (outside max trace domain H and max LDE coset gK)
-        let z: EF = max_lde_coset.sample_ood_point(channel);
+        let z: EF = max_lde_coset.sample_ood_point(&mut channel);
         let h = L::F::two_adic_generator(log_max_trace_height);
         let z_next = z * h;
 
@@ -168,29 +191,31 @@ where
         ];
 
         // 9. Parse PCS sub-transcript
-        let pcs_transcript = PcsTranscript::from_verifier_channel::<Ch, 2>(
+        let pcs_transcript = PcsTranscript::from_verifier_channel::<_, 2>(
             config.pcs(),
             config.lmcs(),
             &commitments,
             log_lde_height,
             [z, z_next],
-            channel,
+            &mut channel,
         )?;
 
-        if !channel.is_empty() {
-            return Err(VerifierError::TranscriptNotConsumed);
-        }
+        // 10. Finalize transcript and extract digest
+        let digest = channel.finalize()?;
 
-        Ok(Self {
-            main_commit,
-            randomness,
-            aux_commit,
-            all_aux_values,
-            alpha,
-            beta,
-            quotient_commit,
-            z,
-            pcs_transcript,
-        })
+        Ok((
+            Self {
+                main_commit,
+                randomness,
+                aux_commit,
+                all_aux_values,
+                alpha,
+                beta,
+                quotient_commit,
+                z,
+                pcs_transcript,
+            },
+            digest,
+        ))
     }
 }

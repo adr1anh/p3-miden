@@ -328,9 +328,7 @@ mod tests {
     use p3_field::PrimeCharacteristicRing;
     use p3_matrix::dense::RowMajorMatrix;
     use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-    use p3_miden_transcript::{
-        ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript,
-    };
+    use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
     use p3_util::log2_strict_usize;
 
     use crate::{Lmcs, LmcsConfig, LmcsError, LmcsTree};
@@ -358,11 +356,11 @@ mod tests {
         let make_transcript = |indices: &[usize]| {
             let mut prover_channel = ProverTranscript::new(bb::test_challenger());
             tree.prove_batch(indices.iter().copied(), &mut prover_channel);
-            prover_channel.into_data()
+            prover_channel.finalize()
         };
 
         let assert_open = |indices: &[usize]| {
-            let transcript = make_transcript(indices);
+            let (prover_digest, transcript) = make_transcript(indices);
             let mut verifier_channel =
                 VerifierTranscript::from_data(bb::test_challenger(), &transcript);
             let opened = lmcs
@@ -377,7 +375,10 @@ mod tests {
             for &idx in indices {
                 assert_eq!(opened[&idx], tree.rows(idx));
             }
-            assert!(verifier_channel.is_empty())
+            let verifier_digest = verifier_channel
+                .finalize()
+                .expect("transcript should finalize cleanly");
+            assert_eq!(prover_digest, verifier_digest);
         };
 
         assert_open(&[0]);
@@ -391,7 +392,7 @@ mod tests {
         let log_tiny = log2_strict_usize(tiny_tree.height());
         let mut prover_channel = ProverTranscript::new(bb::test_challenger());
         tiny_tree.prove_batch([0], &mut prover_channel);
-        let transcript = prover_channel.into_data();
+        let (prover_digest, transcript) = prover_channel.finalize();
         let mut verifier_channel =
             VerifierTranscript::from_data(bb::test_challenger(), &transcript);
         let opened = lmcs
@@ -404,9 +405,13 @@ mod tests {
             )
             .unwrap();
         assert_eq!(opened[&0], tiny_tree.rows(0));
+        let verifier_digest = verifier_channel
+            .finalize()
+            .expect("transcript should finalize cleanly");
+        assert_eq!(prover_digest, verifier_digest);
 
         // oob index
-        let transcript = ProverTranscript::new(bb::test_challenger()).into_data();
+        let (_, transcript) = ProverTranscript::new(bb::test_challenger()).finalize();
         let mut verifier_channel =
             VerifierTranscript::from_data(bb::test_challenger(), &transcript);
         assert_eq!(
@@ -421,7 +426,7 @@ mod tests {
         );
 
         // wrong tree
-        let transcript = make_transcript(&[0]);
+        let (_, transcript) = make_transcript(&[0]);
         let mut verifier_channel =
             VerifierTranscript::from_data(bb::test_challenger(), &transcript);
         let wrong_tree = lmcs.build_tree(vec![small_matrix(4, 2, 999)]);
@@ -438,7 +443,7 @@ mod tests {
 
         // missing item from transcript
         let indices = [0usize];
-        let transcript = make_transcript(&indices);
+        let (_, transcript) = make_transcript(&indices);
         let (fields, mut commitments) = transcript.into_parts();
         commitments.pop();
         let truncated = TranscriptData::new(fields, commitments);
@@ -457,7 +462,7 @@ mod tests {
         );
 
         // empty indices
-        let transcript = ProverTranscript::new(bb::test_challenger()).into_data();
+        let (_, transcript) = ProverTranscript::new(bb::test_challenger()).finalize();
         let mut verifier_channel =
             VerifierTranscript::from_data(bb::test_challenger(), &transcript);
         assert_eq!(
@@ -515,7 +520,7 @@ mod tests {
         // Prove then verify a single index.
         let mut prover_channel = ProverTranscript::new(challenger());
         tree.prove_batch([0usize], &mut prover_channel);
-        let transcript = prover_channel.into_data();
+        let (prover_digest, transcript) = prover_channel.finalize();
 
         let mut verifier_channel = VerifierTranscript::from_data(challenger(), &transcript);
         let opened = lmcs
@@ -529,6 +534,9 @@ mod tests {
             .expect("Goldilocks+Blake3 LMCS roundtrip should verify");
 
         assert_eq!(opened[&0], tree.rows(0));
-        assert!(verifier_channel.is_empty());
+        let verifier_digest = verifier_channel
+            .finalize()
+            .expect("transcript should finalize cleanly");
+        assert_eq!(prover_digest, verifier_digest);
     }
 }

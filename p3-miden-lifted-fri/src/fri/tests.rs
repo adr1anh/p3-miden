@@ -10,13 +10,13 @@ use p3_challenger::CanObserve;
 use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::PrimeCharacteristicRing;
 use p3_matrix::{Matrix, bitrev::BitReversibleMatrix, dense::RowMajorMatrix};
-use p3_miden_transcript::{VerifierChannel, VerifierTranscript};
+use p3_miden_transcript::VerifierTranscript;
 use p3_util::{log2_strict_usize, reverse_bits_len};
 use rand::{RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
 use super::{prover::FriPolys, verifier::FriOracle, *};
 use crate::tests::{
-    BaseLmcs, Challenger, EF, F, TestTranscriptData, prover_channel, random_lde_matrix,
+    BaseLmcs, Challenger, EF, F, TestDigest, TestTranscriptData, prover_channel, random_lde_matrix,
     sample_indices, test_challenger, test_lmcs, verifier_channel,
 };
 
@@ -90,11 +90,11 @@ fn prove_queries(
     lmcs: &BaseLmcs,
     evals: Vec<EF>,
     tree_indices: &BTreeSet<usize>,
-) -> TestTranscriptData {
+) -> (TestDigest, TestTranscriptData) {
     let mut prover_channel = prover_channel();
     let fri_polys = FriPolys::<F, EF, _>::new(params, lmcs, evals, &mut prover_channel);
     fri_polys.prove_queries(params, tree_indices, &mut prover_channel);
-    prover_channel.into_data()
+    prover_channel.finalize()
 }
 
 fn verify_queries(
@@ -104,18 +104,18 @@ fn verify_queries(
     lde_size: usize,
     initial_evals: &BTreeMap<usize, EF>,
     challenger: Option<Challenger>,
-) -> Result<(), FriError> {
+) -> Result<TestDigest, FriError> {
     let mut channel = match challenger {
         Some(challenger) => VerifierTranscript::from_data(challenger, transcript),
         None => verifier_channel(transcript),
     };
     let log_domain_size = log2_strict_usize(lde_size);
     let oracle = FriOracle::new(params, log_domain_size, &mut channel)?;
-    let result = oracle.test_low_degree(lmcs, params, initial_evals.clone(), &mut channel);
-    if result.is_ok() {
-        assert!(channel.is_empty(), "transcript should be fully consumed");
-    }
-    result
+    oracle.test_low_degree(lmcs, params, initial_evals.clone(), &mut channel)?;
+    let digest = channel
+        .finalize()
+        .expect("transcript should finalize cleanly");
+    Ok(digest)
 }
 
 fn run_roundtrip_case(case: &FriRoundtripCase, seed: u64) -> Result<(), FriError> {
@@ -141,8 +141,21 @@ fn run_roundtrip_case(case: &FriRoundtripCase, seed: u64) -> Result<(), FriError
         .collect();
     let initial_evals = build_initial_evals(&evals, &tree_indices);
 
-    let transcript = prove_queries(&params, &lmcs, evals, &tree_indices);
-    verify_queries(&params, &lmcs, &transcript, lde_size, &initial_evals, None)
+    let (prover_digest, transcript) = prove_queries(&params, &lmcs, evals, &tree_indices);
+    let verifier_digest =
+        verify_queries(&params, &lmcs, &transcript, lde_size, &initial_evals, None)?;
+    assert_eq!(prover_digest, verifier_digest);
+
+    // Re-parse FriTranscript (commit phase only) from a fresh channel.
+    let mut reparse_channel = verifier_channel(&transcript);
+    FriTranscript::<F, EF, _>::from_verifier_channel(
+        &params,
+        log_domain_size,
+        &mut reparse_channel,
+    )
+    .expect("FriTranscript re-parse should succeed");
+
+    Ok(())
 }
 
 /// Table-driven roundtrip cases that must verify successfully.
@@ -195,7 +208,7 @@ fn test_fri_verify_wrong_eval() {
     }
     initial_evals.insert(first_idx, wrong_eval);
 
-    let transcript = prove_queries(&params, &lmcs, evals, &tree_indices);
+    let (_prover_digest, transcript) = prove_queries(&params, &lmcs, evals, &tree_indices);
     let result = verify_queries(&params, &lmcs, &transcript, lde_size, &initial_evals, None);
 
     assert!(
@@ -240,13 +253,13 @@ fn test_fri_verify_wrong_beta() {
         .map(|exp| reverse_bits_len(exp, log_domain_size))
         .collect();
     let initial_evals = build_initial_evals(&evals1, &tree_indices);
-    let transcript = prove_queries(&params, &lmcs, evals1, &tree_indices);
+    let (_prover_digest, transcript) = prove_queries(&params, &lmcs, evals1, &tree_indices);
 
     // Prover 2: generate different transcript (different commitments = different betas).
     let mut prover2_channel = prover_channel();
     let _ = FriPolys::<F, EF, _>::new(&params, &lmcs, evals2, &mut prover2_channel);
-    let other_commitment = prover2_channel
-        .into_data()
+    let (_, prover2_transcript) = prover2_channel.finalize();
+    let other_commitment = prover2_transcript
         .commitments()
         .first()
         .cloned()
@@ -300,7 +313,7 @@ fn test_fri_zero_rounds_final_poly_only() {
         .map(|exp| reverse_bits_len(exp, log_domain_size))
         .collect();
     let initial_evals = build_initial_evals(&evals, &tree_indices);
-    let transcript = prove_queries(&params, &lmcs, evals, &tree_indices);
+    let (prover_digest, transcript) = prove_queries(&params, &lmcs, evals, &tree_indices);
 
     let mut channel = verifier_channel(&transcript);
     let fri_transcript: FriTranscript<F, EF, _> =
@@ -317,8 +330,10 @@ fn test_fri_zero_rounds_final_poly_only() {
         "final polynomial should match domain size"
     );
 
-    verify_queries(&params, &lmcs, &transcript, lde_size, &initial_evals, None)
-        .expect("zero-round FRI should verify");
+    let verifier_digest =
+        verify_queries(&params, &lmcs, &transcript, lde_size, &initial_evals, None)
+            .expect("zero-round FRI should verify");
+    assert_eq!(prover_digest, verifier_digest);
 }
 
 /// Test that the final polynomial is correctly computed by evaluating it
@@ -363,7 +378,7 @@ fn test_final_polynomial_correctness() {
 
     let mut prover_channel = prover_channel();
     let _fri_polys = FriPolys::<F, EF, _>::new(&params, &lmcs, evals.clone(), &mut prover_channel);
-    let transcript = prover_channel.into_data();
+    let (_, transcript) = prover_channel.finalize();
 
     let mut v_channel = verifier_channel(&transcript);
     let fri_transcript: FriTranscript<F, EF, _> =
