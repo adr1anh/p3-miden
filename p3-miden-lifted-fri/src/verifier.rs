@@ -10,23 +10,20 @@
 //! | [`verify_strict`]| caller    | yes              |
 //! | [`verify_aligned`]| automatic| no              |
 
-use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec::Vec};
 
 use p3_field::{ExtensionField, TwoAdicField};
-use p3_matrix::Matrix;
-use p3_matrix::horizontally_truncated::HorizontallyTruncated;
-use p3_miden_lmcs::Lmcs;
-use p3_miden_lmcs::utils::aligned_widths;
+use p3_matrix::{Matrix, horizontally_truncated::HorizontallyTruncated};
+use p3_miden_lmcs::{Lmcs, utils::aligned_widths};
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
 use thiserror::Error;
 
-use crate::deep::DeepError;
-use crate::deep::verifier::DeepOracle;
-use crate::fri::FriError;
-use crate::fri::verifier::FriOracle;
-use crate::{OpenedValues, PcsParams};
+use crate::{
+    OpenedValues, PcsParams,
+    deep::{DeepError, verifier::DeepOracle},
+    fri::{FriError, verifier::FriOracle},
+};
 
 /// Verify polynomial evaluation claims against commitments.
 ///

@@ -1,9 +1,11 @@
 //! FRI transcript data structures.
 
-use crate::fri::FriParams;
 use alloc::vec::Vec;
+
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
+
+use crate::fri::FriParams;
 
 /// Structured transcript view for a single FRI folding round.
 pub struct FriRoundTranscript<F, EF, Commitment> {

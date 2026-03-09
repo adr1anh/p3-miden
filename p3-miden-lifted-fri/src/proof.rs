@@ -1,13 +1,13 @@
 //! PCS transcript data structures.
 
-use crate::PcsParams;
-use crate::deep::DeepTranscript;
-use crate::fri::FriTranscript;
 use alloc::vec::Vec;
+
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
+
+use crate::{PcsParams, deep::DeepTranscript, fri::FriTranscript};
 
 /// Structured transcript view for the full PCS interaction.
 ///

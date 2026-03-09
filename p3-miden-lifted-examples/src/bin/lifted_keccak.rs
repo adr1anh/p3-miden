@@ -8,20 +8,23 @@
 use p3_baby_bear::BabyBear;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_examples::DummyAuxBuilder;
-use p3_miden_lifted_examples::keccak::{LiftedKeccakAir, generate_keccak_trace};
-use p3_miden_lifted_examples::stats;
-use p3_miden_lifted_stark::{AirInstance, GenericStarkConfig, VerifierTranscript};
+use p3_miden_lifted_air::{AirInstance, AirWitness};
+use p3_miden_lifted_examples::{
+    DummyAuxBuilder,
+    keccak::{LiftedKeccakAir, generate_keccak_trace},
+    stats,
+};
 use p3_miden_lifted_stark::{
-    AirWitness, DeepParams, FriFold, FriParams, LmcsConfig, PcsParams, ProverTranscript,
-    prove_multi,
+    GenericStarkConfig,
+    fri::{DeepParams, FriFold, FriParams, PcsParams},
+    lmcs::LmcsConfig,
+    prover::prove_multi,
+    transcript::{ProverTranscript, VerifierTranscript},
 };
 use p3_util::log2_strict_usize;
-use rand::rngs::SmallRng;
-use rand::{RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use tracing::info_span;
 
 // Trace S: 2^15 rows → floor(32768/24) = 1365 hashes.
@@ -148,7 +151,7 @@ fn main() {
             ];
             let mut verifier_channel =
                 VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-            p3_miden_lifted_stark::verify_multi(
+            p3_miden_lifted_stark::verifier::verify_multi(
                 &config,
                 &verifier_instances,
                 &mut verifier_channel,

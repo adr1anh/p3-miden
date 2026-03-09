@@ -1,22 +1,23 @@
+extern crate alloc;
+
 mod common;
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
+use common::test_config;
 use p3_field::{Field, PrimeCharacteristicRing};
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_air::{
-    AirBuilder, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir, LiftedAirBuilder,
-    ReducedAuxValues, VarLenPublicInputs, WindowAccess,
+use p3_miden_lifted_stark::{
+    air::{
+        AirBuilder, AirInstance, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir,
+        LiftedAirBuilder, ReducedAuxValues, VarLenPublicInputs, WindowAccess,
+    },
+    prover::prove_multi,
+    transcript::{ProverTranscript, VerifierTranscript},
+    verifier::verify_multi,
 };
-use p3_miden_lifted_stark::{AirInstance, prove_multi, verify_multi};
-use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
 use p3_util::log2_strict_usize;
-
-use common::test_config;
-
-extern crate alloc;
 
 // ---------------------------------------------------------------------------
 // BusTestAir: exercises reduced_aux_values with multiset + logup buses.
@@ -223,7 +224,7 @@ fn bus_identity_check() {
     // Prove
     let prover_instances = [(
         &air,
-        p3_miden_lifted_stark::AirWitness::new(&trace, &public_values, &var_len_pi),
+        p3_miden_lifted_air::AirWitness::new(&trace, &public_values, &var_len_pi),
         &aux_builder,
     )];
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
@@ -263,7 +264,7 @@ fn bus_wrong_var_len_pi_fails() {
 
     let prover_instances = [(
         &air,
-        p3_miden_lifted_stark::AirWitness::new(&trace, &public_values, &var_len_pi),
+        p3_miden_lifted_air::AirWitness::new(&trace, &public_values, &var_len_pi),
         &aux_builder,
     )];
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
@@ -286,7 +287,10 @@ fn bus_wrong_var_len_pi_fails() {
         .expect_err("wrong var_len_pi should fail verification");
 
     assert!(
-        matches!(err, p3_miden_lifted_stark::VerifierError::InvalidReducedAux),
+        matches!(
+            err,
+            p3_miden_lifted_stark::verifier::VerifierError::InvalidReducedAux
+        ),
         "expected InvalidReducedAux, got {err:?}"
     );
 }
@@ -312,7 +316,7 @@ fn bus_wrong_input_count_fails() {
 
     let prover_instances = [(
         &air,
-        p3_miden_lifted_stark::AirWitness::new(&trace, &public_values, &var_len_pi),
+        p3_miden_lifted_air::AirWitness::new(&trace, &public_values, &var_len_pi),
         &aux_builder,
     )];
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
@@ -334,8 +338,8 @@ fn bus_wrong_input_count_fails() {
     assert!(
         matches!(
             err,
-            p3_miden_lifted_stark::VerifierError::Air(
-                p3_miden_lifted_stark::AirValidationError::VarLenPublicInputsMismatch { .. }
+            p3_miden_lifted_stark::verifier::VerifierError::Air(
+                p3_miden_lifted_air::AirValidationError::VarLenPublicInputsMismatch { .. }
             )
         ),
         "expected VarLenPublicInputsMismatch, got {err:?}"

@@ -1,9 +1,13 @@
 use alloc::vec::Vec;
-use core::array;
-use core::ops::{Add, Mul};
+use core::{
+    array,
+    ops::{Add, Mul},
+};
 
-use p3_field::coset::TwoAdicMultiplicativeCoset;
-use p3_field::{ExtensionField, Field, PackedFieldExtension, PackedValue, TwoAdicField};
+use p3_field::{
+    ExtensionField, Field, PackedFieldExtension, PackedValue, TwoAdicField,
+    coset::TwoAdicMultiplicativeCoset,
+};
 use p3_util::reverse_slice_index_bits;
 
 // ============================================================================

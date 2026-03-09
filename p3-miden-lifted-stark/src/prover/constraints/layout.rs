@@ -3,8 +3,7 @@
 //! Also provides [`ConstraintLayoutBuilder`], a lightweight AIR builder that discovers
 //! constraint types without building symbolic expression trees.
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use p3_field::{ExtensionField, Field};
 use p3_matrix::dense::RowMajorMatrix;

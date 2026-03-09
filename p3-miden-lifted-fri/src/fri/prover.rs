@@ -1,11 +1,9 @@
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec::Vec};
 use core::ops::Deref;
 
-use alloc::collections::BTreeSet;
 use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::{ExtensionField, TwoAdicField};
-use p3_matrix::dense::RowMajorMatrix;
-use p3_matrix::extension::FlatMatrixView;
+use p3_matrix::{dense::RowMajorMatrix, extension::FlatMatrixView};
 use p3_maybe_rayon::prelude::*;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_miden_transcript::ProverChannel;

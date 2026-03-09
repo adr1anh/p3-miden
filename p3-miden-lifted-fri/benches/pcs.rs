@@ -32,16 +32,17 @@ use p3_commit::{ExtensionMmcs, Pcs};
 use p3_dft::{Radix2DitParallel, TwoAdicSubgroupDft};
 use p3_field::Field;
 use p3_fri::{FriParameters, TwoAdicFriPcs};
-use p3_matrix::Matrix;
-use p3_matrix::bitrev::BitReversibleMatrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, bitrev::BitReversibleMatrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::{
     BenchScenario, LOG_HEIGHTS, PARALLEL_STR, PcsScenario, RELATIVE_SPECS, criterion_config_long,
     generate_matrices_from_specs, total_elements,
 };
-use p3_miden_lifted_fri::deep::DeepParams;
-use p3_miden_lifted_fri::fri::{FriFold, FriParams};
-use p3_miden_lifted_fri::{PcsParams, prover as lifted_prover};
+use p3_miden_lifted_fri::{
+    PcsParams,
+    deep::DeepParams,
+    fri::{FriFold, FriParams},
+    prover as lifted_prover,
+};
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_miden_transcript::ProverTranscript;
 use p3_util::log2_strict_usize;

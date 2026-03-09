@@ -23,18 +23,10 @@ pub use instance::{AirInstance, AirWitness, validate_instances};
 mod empty_window;
 
 pub use empty_window::EmptyWindow;
-pub use p3_air::{
-    Air, AirBuilder, AirBuilderWithContext, BaseAir, ExtensionBuilder, FilteredAirBuilder,
-    PeriodicAirBuilder, PermutationAirBuilder, RowWindow, WindowAccess,
-};
+// Re-export all of p3-air so downstream crates never need to depend on p3-air directly.
+pub use p3_air::*;
 
-pub use p3_air::symbolic::{
-    AirLayout, BaseEntry, ConstraintLayout, ExtEntry, SymbolicAirBuilder, SymbolicExpression,
-    SymbolicExpressionExt, SymbolicVariable, SymbolicVariableExt, get_all_symbolic_constraints,
-    get_constraint_layout, get_max_constraint_degree, get_max_constraint_degree_extension,
-    get_symbolic_constraints, get_symbolic_constraints_extension,
-};
-
-// Re-export commonly used field/matrix types.
-pub use p3_field::{ExtensionField, Field};
-pub use p3_matrix::dense::RowMajorMatrix;
+/// Symbolic constraint analysis types from upstream p3-air.
+pub mod symbolic {
+    pub use p3_air::symbolic::*;
+}

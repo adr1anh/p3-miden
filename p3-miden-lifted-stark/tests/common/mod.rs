@@ -2,14 +2,13 @@
 
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_air::{AuxBuilder, LiftedAir};
-use p3_miden_lifted_fri::PcsParams;
-use p3_miden_lifted_fri::deep::DeepParams;
-use p3_miden_lifted_fri::fri::{FriFold, FriParams};
-use p3_miden_lifted_stark::verify_multi;
-use p3_miden_lifted_stark::{AirWitness, GenericStarkConfig};
-use p3_miden_lmcs::LmcsConfig;
-use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
+use p3_miden_lifted_stark::{
+    GenericStarkConfig,
+    air::{AirWitness, AuxBuilder, LiftedAir},
+    fri::{DeepParams, FriFold, FriParams, PcsParams},
+    lmcs::LmcsConfig,
+    transcript::{ProverTranscript, VerifierTranscript},
+};
 
 pub type TestLmcs =
     LmcsConfig<bb::P, bb::P, bb::Sponge, bb::Compress, { bb::WIDTH }, { bb::DIGEST }>;
@@ -55,7 +54,7 @@ pub fn prove_and_verify<A, B>(
         .collect();
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-    p3_miden_lifted_stark::prove_multi(&config, &prover_instances, &mut prover_channel)
+    p3_miden_lifted_stark::prover::prove_multi(&config, &prover_instances, &mut prover_channel)
         .expect("proving should succeed");
     let transcript = prover_channel.into_data();
 
@@ -65,6 +64,10 @@ pub fn prove_and_verify<A, B>(
         .collect();
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    verify_multi(&config, &verifier_instances, &mut verifier_channel)
-        .expect("verification should succeed");
+    p3_miden_lifted_stark::verifier::verify_multi(
+        &config,
+        &verifier_instances,
+        &mut verifier_channel,
+    )
+    .expect("verification should succeed");
 }

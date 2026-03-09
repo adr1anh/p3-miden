@@ -28,8 +28,10 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_ceil_usize;
 use thiserror::Error;
 
-use crate::auxiliary::{ReducedAuxValues, ReductionError, VarLenPublicInputs};
-use crate::{AirLayout, LiftedAirBuilder, SymbolicAirBuilder, SymbolicExpressionExt};
+use crate::{
+    AirLayout, LiftedAirBuilder, SymbolicAirBuilder, SymbolicExpressionExt,
+    auxiliary::{ReducedAuxValues, ReductionError, VarLenPublicInputs},
+};
 
 /// Super-trait for AIR definitions used by the lifted STARK prover/verifier.
 ///

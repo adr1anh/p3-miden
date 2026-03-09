@@ -14,17 +14,21 @@ use p3_field::extension::BinomialExtensionField;
 use p3_goldilocks::Goldilocks;
 use p3_matrix::Matrix;
 use p3_miden_dev_utils::configs::goldilocks_poseidon2 as gl;
-use p3_miden_lifted_air::LiftedAir;
-use p3_miden_lifted_examples::miden::{
-    DummyMidenAir, DummyMidenAuxBuilder, NUM_AUX_COLS, TRACE1_LOG_HEIGHT, TRACE1_WIDTH,
-    TRACE2_LOG_HEIGHT, TRACE2_WIDTH, generate_dummy_trace,
+use p3_miden_lifted_air::{AirInstance, AirWitness, LiftedAir};
+use p3_miden_lifted_examples::{
+    miden::{
+        DummyMidenAir, DummyMidenAuxBuilder, NUM_AUX_COLS, TRACE1_LOG_HEIGHT, TRACE1_WIDTH,
+        TRACE2_LOG_HEIGHT, TRACE2_WIDTH, generate_dummy_trace,
+    },
+    stats,
+    stats::{bench_iters, init_tracing},
 };
-use p3_miden_lifted_examples::stats;
-use p3_miden_lifted_examples::stats::{bench_iters, init_tracing};
-use p3_miden_lifted_stark::{AirInstance, GenericStarkConfig, VerifierTranscript};
 use p3_miden_lifted_stark::{
-    AirWitness, DeepParams, FriFold, FriParams, LmcsConfig, PcsParams, ProverTranscript,
-    prove_multi,
+    GenericStarkConfig,
+    fri::{DeepParams, FriFold, FriParams, PcsParams},
+    lmcs::LmcsConfig,
+    prover::prove_multi,
+    transcript::{ProverTranscript, VerifierTranscript},
 };
 use tracing::info_span;
 
@@ -147,7 +151,7 @@ fn main() {
             ];
             let mut verifier_channel =
                 VerifierTranscript::from_data(gl::test_challenger(), &transcript);
-            p3_miden_lifted_stark::verify_multi(
+            p3_miden_lifted_stark::verifier::verify_multi(
                 &config,
                 &verifier_instances,
                 &mut verifier_channel,

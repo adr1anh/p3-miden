@@ -9,13 +9,15 @@ use alloc::vec::Vec;
 
 use p3_dft::TwoAdicSubgroupDft;
 use p3_field::{ExtensionField, TwoAdicField};
-use p3_matrix::Matrix;
-use p3_matrix::bitrev::{BitReversedMatrixView, BitReversibleMatrix};
-use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
+use p3_matrix::{
+    Matrix,
+    bitrev::{BitReversedMatrixView, BitReversibleMatrix},
+    dense::{RowMajorMatrix, RowMajorMatrixView},
+};
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_util::log2_strict_usize;
 
-use crate::{LiftedCoset, StarkConfig};
+use crate::{StarkConfig, coset::LiftedCoset};
 
 // ============================================================================
 // Committed
@@ -231,14 +233,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
-    use alloc::vec::Vec;
+    use alloc::{vec, vec::Vec};
 
     use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
-    use p3_matrix::Matrix;
-    use p3_matrix::bitrev::BitReversibleMatrix;
-    use p3_matrix::dense::RowMajorMatrix;
+    use p3_matrix::{Matrix, bitrev::BitReversibleMatrix, dense::RowMajorMatrix};
     use p3_util::reverse_bits_len;
 
     type F = BabyBear;

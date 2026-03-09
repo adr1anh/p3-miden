@@ -5,8 +5,10 @@ use alloc::vec::Vec;
 use p3_challenger::{CanSample, CanSampleBits, CanSampleUniformBits};
 use p3_field::{BasedVectorSpace, Field};
 
-use crate::TranscriptData;
-use crate::channel::{Channel, TranscriptChallenger};
+use crate::{
+    TranscriptData,
+    channel::{Channel, TranscriptChallenger},
+};
 
 /// Prover channel that records transcript data and observes into the challenger.
 #[derive(Clone, Debug)]

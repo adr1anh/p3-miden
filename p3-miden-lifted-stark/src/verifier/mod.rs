@@ -49,24 +49,23 @@ pub(crate) mod constraints;
 pub(crate) mod periodic;
 pub mod proof;
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
+
+use constraints::{ConstraintFolder, reconstruct_quotient, row_to_packed_ext};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_miden_lifted_air::{
-    AirValidationError, LiftedAir, ReducedAuxValues, ReductionError, RowWindow, VarLenPublicInputs,
-    validate_instances,
+    AirInstance, AirValidationError, LiftedAir, ReducedAuxValues, ReductionError, RowWindow,
+    VarLenPublicInputs, validate_instances,
 };
 use p3_miden_lifted_fri::verifier::{PcsError, verify_aligned};
 use p3_miden_lmcs::Lmcs;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
+use periodic::PeriodicPolys;
 use thiserror::Error;
 
-use crate::{AirInstance, LiftedCoset, StarkConfig};
-
-use constraints::{ConstraintFolder, reconstruct_quotient, row_to_packed_ext};
-use periodic::PeriodicPolys;
+use crate::{StarkConfig, coset::LiftedCoset};
 
 /// Errors that can occur during verification.
 #[derive(Debug, Error)]

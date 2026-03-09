@@ -1,7 +1,9 @@
 //! LMCS configuration types.
 
-use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::vec::Vec;
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec::Vec,
+};
 use core::marker::PhantomData;
 
 use p3_field::PackedValue;
@@ -10,8 +12,7 @@ use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_miden_transcript::VerifierChannel;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 
-use crate::utils::RowList;
-use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsError, OpenedRows};
+use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsError, OpenedRows, utils::RowList};
 
 type Opening<F, C> = (RowList<F>, C);
 
@@ -324,7 +325,6 @@ where
 mod tests {
     use alloc::vec;
 
-    use crate::{Lmcs, LmcsConfig, LmcsError, LmcsTree};
     use p3_field::PrimeCharacteristicRing;
     use p3_matrix::dense::RowMajorMatrix;
     use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
@@ -332,6 +332,8 @@ mod tests {
         ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript,
     };
     use p3_util::log2_strict_usize;
+
+    use crate::{Lmcs, LmcsConfig, LmcsError, LmcsTree};
 
     type TestLmcs =
         LmcsConfig<bb::P, bb::P, bb::Sponge, bb::Compress, { bb::WIDTH }, { bb::DIGEST }>;
@@ -477,8 +479,7 @@ mod tests {
     /// CompressionFunctionFromHasher<Blake3> work correctly for commit-then-open.
     #[test]
     fn goldilocks_blake3_roundtrip() {
-        use alloc::vec;
-        use alloc::vec::Vec;
+        use alloc::{vec, vec::Vec};
 
         use p3_blake3::Blake3;
         use p3_challenger::{HashChallenger, SerializingChallenger64};

@@ -9,38 +9,37 @@
 //! RUST_LOG=debug cargo run -p p3-miden-lifted-examples --release --features parallel --bin lifted_3_hashes
 //! ```
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use p3_baby_bear::BabyBear;
 use p3_dft::Radix2DitParallel;
-use p3_field::Field;
-use p3_field::extension::BinomialExtensionField;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_field::{Field, extension::BinomialExtensionField};
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_air::{BaseAir, LiftedAir, LiftedAirBuilder};
-use p3_miden_lifted_examples::DummyAuxBuilder;
-use p3_miden_lifted_examples::blake3::{LiftedBlake3Air, generate_blake3_trace};
-use p3_miden_lifted_examples::keccak::{LiftedKeccakAir, generate_keccak_trace};
-use p3_miden_lifted_examples::poseidon2::{LiftedPoseidon2Air, generate_poseidon2_trace};
-use p3_miden_lifted_examples::stats;
-use p3_miden_lifted_examples::stats::StatsLayer;
-use p3_miden_lifted_stark::{AirInstance, GenericStarkConfig, VerifierTranscript};
+use p3_miden_lifted_air::{AirInstance, AirWitness, BaseAir, LiftedAir, LiftedAirBuilder};
+use p3_miden_lifted_examples::{
+    DummyAuxBuilder,
+    blake3::{LiftedBlake3Air, generate_blake3_trace},
+    keccak::{LiftedKeccakAir, generate_keccak_trace},
+    poseidon2::{LiftedPoseidon2Air, generate_poseidon2_trace},
+    stats,
+    stats::StatsLayer,
+};
 use p3_miden_lifted_stark::{
-    AirWitness, DeepParams, FriFold, FriParams, LmcsConfig, PcsParams, ProverTranscript,
-    prove_multi,
+    GenericStarkConfig,
+    fri::{DeepParams, FriFold, FriParams, PcsParams},
+    lmcs::LmcsConfig,
+    prover::prove_multi,
+    transcript::{ProverTranscript, VerifierTranscript},
 };
 use p3_poseidon2_air::RoundConstants;
 use p3_util::log2_strict_usize;
-use rand::rngs::SmallRng;
-use rand::{RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use tracing::info_span;
 use tracing_forest::ForestLayer;
-use tracing_subscriber::Layer as _;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{EnvFilter, Registry};
+use tracing_subscriber::{
+    EnvFilter, Layer as _, Registry, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 extern crate alloc;
 
@@ -257,7 +256,7 @@ fn main() {
             ];
             let mut verifier_channel =
                 VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-            p3_miden_lifted_stark::verify_multi(
+            p3_miden_lifted_stark::verifier::verify_multi(
                 &config,
                 &verifier_instances,
                 &mut verifier_channel,

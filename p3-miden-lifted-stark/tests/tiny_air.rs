@@ -1,21 +1,23 @@
+extern crate alloc;
+
 mod common;
 
 use alloc::vec::Vec;
 
+use common::{prove_and_verify, test_config};
 use p3_field::PrimeCharacteristicRing;
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_air::{
-    AirBuilder, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir, LiftedAirBuilder, WindowAccess,
+use p3_miden_lifted_stark::{
+    air::{
+        AirBuilder, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir, LiftedAirBuilder,
+        WindowAccess,
+    },
+    prover::prove_single,
+    transcript::{ProverTranscript, TranscriptData, VerifierTranscript},
+    verifier::{VerifierError, verify_single},
 };
-use p3_miden_lifted_stark::prove_single;
-use p3_miden_lifted_stark::{VerifierError, verify_single};
-use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
 use p3_util::log2_strict_usize;
-
-use common::{prove_and_verify, test_config};
-
-extern crate alloc;
 
 // ---------------------------------------------------------------------------
 // TinyAir: main[0] starts at public_values[0], each row is previous^4.

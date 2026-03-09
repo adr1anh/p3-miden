@@ -46,18 +46,15 @@
 //! where `w'ᵢ` is the weight on the squared domain. The factor of 2 cancels with the
 //! halved scaling `s'(z²) = 2·s(z)`, so the interpolation identity is preserved.
 
-use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec::Vec};
 use core::marker::PhantomData;
 
 use p3_field::{ExtensionField, FieldArray, TwoAdicField, batch_multiplicative_inverse};
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
-use p3_util::linear_map::LinearMap;
-use p3_util::{log2_strict_usize, reconstitute_from_base};
-use tracing::{debug_span, info_span};
-
 use p3_miden_lmcs::RowList;
+use p3_util::{linear_map::LinearMap, log2_strict_usize, reconstitute_from_base};
+use tracing::{debug_span, info_span};
 
 /// Precomputed `1/(zⱼ − xᵢ)` for N evaluation points.
 ///
@@ -206,23 +203,20 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
-    use alloc::vec::Vec;
+    use alloc::{vec, vec::Vec};
 
     use p3_dft::{NaiveDft, TwoAdicSubgroupDft};
     use p3_field::{Field, FieldArray, PrimeCharacteristicRing};
     use p3_interpolation::{interpolate_coset, interpolate_coset_with_precomputation};
-    use p3_matrix::Matrix;
-    use p3_matrix::bitrev::BitReversibleMatrix;
-    use p3_matrix::dense::RowMajorMatrix;
+    use p3_matrix::{Matrix, bitrev::BitReversibleMatrix, dense::RowMajorMatrix};
     use p3_util::reverse_slice_index_bits;
-    use rand::distr::StandardUniform;
-    use rand::prelude::SmallRng;
-    use rand::{RngExt, SeedableRng};
+    use rand::{RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
     use super::PointQuotients;
-    use crate::tests::{EF, F};
-    use crate::utils::bit_reversed_coset_points;
+    use crate::{
+        tests::{EF, F},
+        utils::bit_reversed_coset_points,
+    };
 
     /// Verify `batch_eval_lifted` matches `interpolate_coset` for various lift factors.
     ///

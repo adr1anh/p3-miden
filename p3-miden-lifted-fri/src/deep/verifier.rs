@@ -1,17 +1,18 @@
-use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::vec::Vec;
-use core::iter::zip;
-use core::marker::PhantomData;
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec::Vec,
+};
+use core::{iter::zip, marker::PhantomData};
 
-use super::{DeepParams, read_eval_matrices};
-use crate::OpenedValues;
-use crate::utils::horner_acc;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::Matrix;
 use p3_miden_lmcs::{Lmcs, LmcsError};
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
 use thiserror::Error;
+
+use super::{DeepParams, read_eval_matrices};
+use crate::{OpenedValues, utils::horner_acc};
 
 /// Verifier's view of the DEEP quotient as a point-query oracle.
 ///

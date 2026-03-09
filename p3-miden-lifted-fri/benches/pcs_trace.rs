@@ -13,14 +13,16 @@ use std::time::Instant;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_dft::{Radix2DitParallel, TwoAdicSubgroupDft};
 use p3_field::Field;
-use p3_matrix::Matrix;
-use p3_matrix::bitrev::BitReversibleMatrix;
-use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_dev_utils::configs::goldilocks_poseidon2 as gl;
-use p3_miden_dev_utils::{LOG_HEIGHTS, RELATIVE_SPECS, generate_matrices_from_specs};
-use p3_miden_lifted_fri::deep::DeepParams;
-use p3_miden_lifted_fri::fri::{FriFold, FriParams};
-use p3_miden_lifted_fri::{PcsParams, prover as lifted_prover};
+use p3_matrix::{Matrix, bitrev::BitReversibleMatrix, dense::RowMajorMatrix};
+use p3_miden_dev_utils::{
+    LOG_HEIGHTS, RELATIVE_SPECS, configs::goldilocks_poseidon2 as gl, generate_matrices_from_specs,
+};
+use p3_miden_lifted_fri::{
+    PcsParams,
+    deep::DeepParams,
+    fri::{FriFold, FriParams},
+    prover as lifted_prover,
+};
 use p3_miden_lmcs::{Lmcs, LmcsConfig, LmcsTree};
 use p3_miden_transcript::ProverTranscript;
 use p3_util::log2_strict_usize;

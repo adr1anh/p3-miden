@@ -1,18 +1,18 @@
+extern crate alloc;
+
 mod common;
 
 use alloc::vec::Vec;
 
-use p3_field::PrimeCharacteristicRing;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_air::{AuxBuilder, BaseAir, LiftedAir, LiftedAirBuilder};
-use p3_miden_lifted_stark::prove_single;
-use p3_miden_transcript::ProverTranscript;
-
 use common::test_config;
-
-extern crate alloc;
+use p3_field::PrimeCharacteristicRing;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
+use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
+use p3_miden_lifted_stark::{
+    air::{AuxBuilder, BaseAir, LiftedAir, LiftedAirBuilder},
+    prover::prove_single,
+    transcript::ProverTranscript,
+};
 
 #[derive(Clone, Copy, Debug)]
 struct BadAuxWidthAir;

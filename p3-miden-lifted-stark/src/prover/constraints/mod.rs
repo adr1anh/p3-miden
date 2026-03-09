@@ -7,23 +7,21 @@
 mod folder;
 mod layout;
 
-pub(crate) use folder::ProverConstraintFolder;
-pub(crate) use layout::{ConstraintLayout, get_constraint_layout};
-
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use crate::LiftedCoset;
+pub(crate) use folder::ProverConstraintFolder;
+pub(crate) use layout::{ConstraintLayout, get_constraint_layout};
 use p3_field::{
     Algebra, BasedVectorSpace, ExtensionField, Field, PackedFieldExtension, PackedValue,
     TwoAdicField,
 };
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_maybe_rayon::prelude::*;
 use p3_miden_lifted_air::{LiftedAir, RowWindow};
 
 use super::periodic::PeriodicLde;
+use crate::coset::LiftedCoset;
 
 /// Type alias for packed base field from F.
 type PackedVal<F> = <F as Field>::Packing;

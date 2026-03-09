@@ -3,12 +3,11 @@
 //! - [`AirWitness`]: Prover witness — trace + public values
 //! - [`AirInstance`]: Verifier instance — log trace height + public values
 
-use crate::air::AirValidationError;
-use crate::{LiftedAir, VarLenPublicInputs};
 use p3_field::Field;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_util::log2_strict_usize;
+
+use crate::{LiftedAir, VarLenPublicInputs, air::AirValidationError};
 
 /// Prover witness: trace matrix, public values, and variable-length public inputs.
 ///

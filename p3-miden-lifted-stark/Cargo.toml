@@ -17,6 +17,7 @@ p3-maybe-rayon.workspace = true
 p3-miden-lifted-air.workspace = true
 p3-miden-lifted-fri.workspace = true
 p3-miden-lmcs.workspace = true
+p3-miden-stateful-hasher.workspace = true
 p3-miden-transcript.workspace = true
 p3-util.workspace = true
 thiserror.workspace = true

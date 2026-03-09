@@ -4,12 +4,12 @@ use alloc::vec::Vec;
 
 use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing, TwoAdicField};
-use p3_matrix::Matrix;
-use p3_matrix::bitrev::BitReversibleMatrix;
-use p3_matrix::dense::RowMajorMatrix;
-use rand::SeedableRng;
-use rand::distr::{Distribution, StandardUniform};
-use rand::rngs::SmallRng;
+use p3_matrix::{Matrix, bitrev::BitReversibleMatrix, dense::RowMajorMatrix};
+use rand::{
+    SeedableRng,
+    distr::{Distribution, StandardUniform},
+    rngs::SmallRng,
+};
 
 use crate::fixtures::BENCH_SEED;
 

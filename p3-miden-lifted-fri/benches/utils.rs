@@ -1,9 +1,10 @@
 //! Shared utilities for lifted benchmarks.
 
 use p3_commit::Mmcs;
-use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_dev_utils::configs::goldilocks_poseidon2 as gl;
-use p3_miden_dev_utils::{BabyBearPoseidon2, GoldilocksPoseidon2, PcsScenario};
+use p3_miden_dev_utils::{
+    BabyBearPoseidon2, GoldilocksPoseidon2, PcsScenario,
+    configs::{baby_bear_poseidon2 as bb, goldilocks_poseidon2 as gl},
+};
 use p3_miden_lmcs::LmcsConfig;
 
 // =============================================================================

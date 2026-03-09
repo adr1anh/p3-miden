@@ -14,21 +14,23 @@ use p3_batch_stark::{ProverData, StarkInstance, prove_batch, verify_batch};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
-use p3_field::extension::BinomialExtensionField;
-use p3_field::{Field, PrimeCharacteristicRing};
+use p3_field::{Field, PrimeCharacteristicRing, extension::BinomialExtensionField};
 use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_goldilocks::Goldilocks;
-use p3_lookup::LookupAir;
-use p3_lookup::lookup_traits::{Direction, Kind, Lookup};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_lookup::{
+    LookupAir,
+    lookup_traits::{Direction, Kind, Lookup},
+};
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_miden_dev_utils::configs::goldilocks_poseidon2 as gl;
-use p3_miden_lifted_examples::miden::{
-    TRACE1_LOG_HEIGHT, TRACE1_WIDTH, TRACE2_LOG_HEIGHT, TRACE2_WIDTH, generate_dummy_trace,
+use p3_miden_lifted_examples::{
+    miden::{
+        TRACE1_LOG_HEIGHT, TRACE1_WIDTH, TRACE2_LOG_HEIGHT, TRACE2_WIDTH, generate_dummy_trace,
+    },
+    stats,
+    stats::{bench_iters, init_tracing},
 };
-use p3_miden_lifted_examples::stats;
-use p3_miden_lifted_examples::stats::{bench_iters, init_tracing};
 use p3_symmetric::PaddingFreeSponge;
 use p3_uni_stark::SymbolicAirBuilder;
 use tracing::info_span;

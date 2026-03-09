@@ -1,21 +1,22 @@
+extern crate alloc;
+
 mod common;
 
 use alloc::vec::Vec;
 
+use common::test_config;
 use p3_field::PrimeCharacteristicRing;
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_air::{
-    AirBuilder, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir, LiftedAirBuilder, WindowAccess,
+use p3_miden_lifted_stark::{
+    air::{
+        AirBuilder, AirWitness, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir, LiftedAirBuilder,
+        WindowAccess,
+    },
+    lmcs::Lmcs,
+    transcript::{ProverTranscript, TranscriptData, VerifierTranscript},
+    verifier::{VerifierError, verify_multi},
 };
-use p3_miden_lifted_stark::AirWitness;
-use p3_miden_lifted_stark::{VerifierError, verify_multi};
-use p3_miden_lmcs::Lmcs;
-use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
-
-use common::test_config;
-
-extern crate alloc;
 
 #[derive(Clone, Debug)]
 struct PaddingAir {
@@ -130,7 +131,7 @@ fn multi_trace_with_aux_padding() {
         .collect();
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-    p3_miden_lifted_stark::prove_multi(&config, &prover_instances, &mut prover_channel)
+    p3_miden_lifted_stark::prover::prove_multi(&config, &prover_instances, &mut prover_channel)
         .expect("proving should succeed");
     let transcript = prover_channel.into_data();
 
@@ -161,7 +162,7 @@ fn multi_trace_rejects_trailing_transcript_data() {
         .collect();
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
-    p3_miden_lifted_stark::prove_multi(&config, &prover_instances, &mut prover_channel)
+    p3_miden_lifted_stark::prover::prove_multi(&config, &prover_instances, &mut prover_channel)
         .expect("proving should succeed");
     let transcript = prover_channel.into_data();
 

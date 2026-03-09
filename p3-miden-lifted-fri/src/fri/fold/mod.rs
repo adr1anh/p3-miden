@@ -22,8 +22,7 @@ mod arity8;
 use alloc::vec::Vec;
 
 use p3_field::{ExtensionField, PackedValue, TwoAdicField};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrixView;
+use p3_matrix::{Matrix, dense::RowMajorMatrixView};
 use p3_maybe_rayon::prelude::*;
 
 use crate::utils::PackedFieldExtensionExt;
@@ -193,9 +192,11 @@ pub mod tests {
     use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, TwoAdicField};
     use p3_matrix::dense::RowMajorMatrix;
     use p3_util::reverse_slice_index_bits;
-    use rand::distr::{Distribution, StandardUniform};
-    use rand::prelude::SmallRng;
-    use rand::{RngExt, SeedableRng};
+    use rand::{
+        RngExt, SeedableRng,
+        distr::{Distribution, StandardUniform},
+        prelude::SmallRng,
+    };
 
     use super::*;
     pub(super) use crate::tests::{EF, F};

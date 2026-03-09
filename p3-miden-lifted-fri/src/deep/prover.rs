@@ -1,21 +1,18 @@
 use alloc::vec::Vec;
 use core::iter::zip;
 
-use super::DeepParams;
-use super::interpolate::PointQuotients;
-use crate::utils::{PackedFieldExtensionExt, horner};
 use p3_field::{
     ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue, TwoAdicField,
 };
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
-use p3_miden_lmcs::utils::aligned_widths;
-use p3_miden_lmcs::{Lmcs, LmcsTree, RowList};
+use p3_miden_lmcs::{Lmcs, LmcsTree, RowList, utils::aligned_widths};
 use p3_miden_transcript::ProverChannel;
 use p3_util::log2_strict_usize;
 use tracing::info_span;
 
-use crate::utils::bit_reversed_coset_points;
+use super::{DeepParams, interpolate::PointQuotients};
+use crate::utils::{PackedFieldExtensionExt, bit_reversed_coset_points, horner};
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
@@ -369,15 +366,15 @@ fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>, C: AsRef<[
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
-    use alloc::vec::Vec;
+    use alloc::{vec, vec::Vec};
 
-    use crate::utils::horner;
     use p3_field::{PrimeCharacteristicRing, dot_product};
-    use p3_miden_lmcs::RowList;
-    use p3_miden_lmcs::utils::aligned_widths;
+    use p3_miden_lmcs::{RowList, utils::aligned_widths};
 
-    use crate::tests::{EF, F};
+    use crate::{
+        tests::{EF, F},
+        utils::horner,
+    };
 
     /// `reduce_with_powers` (Horner) must match explicit negative coeffs + dot product.
     #[test]

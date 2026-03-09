@@ -16,33 +16,31 @@ use p3_blake3_air::{Blake3Air, NUM_BLAKE3_COLS};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
-use p3_field::Field;
-use p3_field::extension::BinomialExtensionField;
+use p3_field::{Field, extension::BinomialExtensionField};
 use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_keccak_air::{KeccakAir, NUM_KECCAK_COLS};
 use p3_lookup::{Lookup, LookupAir};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_examples::blake3::generate_blake3_trace;
-use p3_miden_lifted_examples::keccak::generate_keccak_trace;
-use p3_miden_lifted_examples::poseidon2::{
-    HALF_FULL_ROUNDS, NUM_POSEIDON2_COLS, PARTIAL_ROUNDS, SBOX_DEGREE, SBOX_REGISTERS, WIDTH,
-    generate_poseidon2_trace,
+use p3_miden_lifted_examples::{
+    blake3::generate_blake3_trace,
+    keccak::generate_keccak_trace,
+    poseidon2::{
+        HALF_FULL_ROUNDS, NUM_POSEIDON2_COLS, PARTIAL_ROUNDS, SBOX_DEGREE, SBOX_REGISTERS, WIDTH,
+        generate_poseidon2_trace,
+    },
+    stats,
+    stats::StatsLayer,
 };
-use p3_miden_lifted_examples::stats;
-use p3_miden_lifted_examples::stats::StatsLayer;
 use p3_poseidon2_air::{Poseidon2Air, RoundConstants};
 use p3_symmetric::PaddingFreeSponge;
-use rand::rngs::SmallRng;
-use rand::{RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use tracing::info_span;
 use tracing_forest::ForestLayer;
-use tracing_subscriber::Layer as _;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{EnvFilter, Registry};
+use tracing_subscriber::{
+    EnvFilter, Layer as _, Registry, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 // Blake3: 2^15 rows, 1 row/hash → 32768 hashes (widest, shortest).
 const NUM_BLAKE3_HASHES: usize = 32768;

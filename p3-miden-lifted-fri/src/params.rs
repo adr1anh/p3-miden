@@ -1,7 +1,6 @@
 //! PCS parameters.
 
-use crate::deep::DeepParams;
-use crate::fri::FriParams;
+use crate::{deep::DeepParams, fri::FriParams};
 
 /// Complete PCS parameters combining DEEP and FRI parameters.
 ///

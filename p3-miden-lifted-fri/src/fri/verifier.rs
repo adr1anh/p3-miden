@@ -22,8 +22,7 @@
 //!
 //! After each fold, we shift off `log_arity` bits, moving to the parent coset.
 
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_lmcs::{Lmcs, LmcsError};
@@ -31,8 +30,7 @@ use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
 use thiserror::Error;
 
-use crate::fri::FriParams;
-use crate::utils::horner;
+use crate::{fri::FriParams, utils::horner};
 
 /// FRI low-degree test oracle.
 ///

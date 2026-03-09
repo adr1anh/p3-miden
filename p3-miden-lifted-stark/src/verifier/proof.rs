@@ -5,25 +5,22 @@
 //! with a [`from_verifier_channel`](StarkTranscript::from_verifier_channel) constructor
 //! that parses it from a channel.
 //!
-//! This is a parse-only view that exists alongside [`verify_multi`](crate::verify_multi),
+//! This is a parse-only view that exists alongside [`verify_multi`](crate::verifier::verify_multi),
 //! following the same pattern as [`PcsTranscript`] alongside
 //! [`verify`](p3_miden_lifted_fri::verifier::verify).
 
 extern crate alloc;
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use p3_field::{ExtensionField, Field, TwoAdicField};
-use p3_miden_lifted_air::LiftedAir;
+use p3_miden_lifted_air::{AirInstance, LiftedAir};
 use p3_miden_lifted_fri::PcsTranscript;
-use p3_miden_lmcs::Lmcs;
-use p3_miden_lmcs::utils::aligned_len;
+use p3_miden_lmcs::{Lmcs, utils::aligned_len};
 use p3_miden_transcript::VerifierChannel;
 
-use crate::{AirInstance, LiftedCoset, StarkConfig};
-
 use super::VerifierError;
+use crate::{StarkConfig, coset::LiftedCoset};
 
 /// Structured transcript view for the full lifted STARK protocol.
 ///
@@ -31,7 +28,7 @@ use super::VerifierError;
 /// the PCS sub-transcript (DEEP evals, FRI rounds, query openings).
 ///
 /// Constructed via [`from_verifier_channel`](Self::from_verifier_channel), which
-/// mirrors steps 1–9 of [`verify_multi`](crate::verify_multi) (parse only, no
+/// mirrors steps 1–9 of [`verify_multi`](crate::verifier::verify_multi) (parse only, no
 /// constraint checks).
 pub struct StarkTranscript<EF, L>
 where
@@ -67,7 +64,7 @@ where
 {
     /// Parse a STARK transcript from a verifier channel without constraint checks.
     ///
-    /// Mirrors steps 1–9 of [`verify_multi`](crate::verify_multi):
+    /// Mirrors steps 1–9 of [`verify_multi`](crate::verifier::verify_multi):
     /// 1. Receive main trace commitment
     /// 2. Sample randomness for auxiliary traces
     /// 3. Receive auxiliary trace commitment

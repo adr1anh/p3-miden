@@ -1,12 +1,12 @@
 //! Shared utilities for LMCS benchmarks.
 
 use p3_keccak::{KeccakF, VECTOR_LEN};
-use p3_miden_dev_utils::configs::baby_bear_keccak as bb_keccak;
-use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_dev_utils::configs::goldilocks_keccak as gl_keccak;
-use p3_miden_dev_utils::configs::goldilocks_poseidon2 as gl;
 use p3_miden_dev_utils::{
     BabyBearKeccak, BabyBearPoseidon2, BenchScenario, GoldilocksKeccak, GoldilocksPoseidon2,
+    configs::{
+        baby_bear_keccak as bb_keccak, baby_bear_poseidon2 as bb, goldilocks_keccak as gl_keccak,
+        goldilocks_poseidon2 as gl,
+    },
 };
 use p3_miden_lmcs::{Lmcs, LmcsConfig};
 use p3_miden_stateful_hasher::{SerializingStatefulSponge, StatefulSponge};

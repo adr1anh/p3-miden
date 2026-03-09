@@ -8,12 +8,15 @@
 //! [`BatchProof`] parses hints without hashing, and can be turned into per-index
 //! [`Proof`] objects once the hashing context is available.
 
-use crate::Lmcs;
-use crate::utils::RowList;
-use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::vec::Vec;
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec::Vec,
+};
+
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use serde::{Deserialize, Serialize};
+
+use crate::{Lmcs, utils::RowList};
 
 /// Single-opening Merkle proof with rows and authentication path.
 ///
@@ -274,11 +277,12 @@ mod tests {
     use p3_miden_transcript::{VerifierChannel, VerifierTranscript};
     use p3_symmetric::Hash;
     use p3_util::log2_strict_usize;
-    use rand::SeedableRng;
-    use rand::rngs::SmallRng;
+    use rand::{SeedableRng, rngs::SmallRng};
 
-    use crate::tests::{DIGEST, F, lmcs, roundtrip_open_batch};
-    use crate::{BatchProof, Lmcs, LmcsTree};
+    use crate::{
+        BatchProof, Lmcs, LmcsTree,
+        tests::{DIGEST, F, lmcs, roundtrip_open_batch},
+    };
 
     #[test]
     fn batch_proof_consistent_with_open_batch() {

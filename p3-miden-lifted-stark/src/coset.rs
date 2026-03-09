@@ -1,6 +1,6 @@
 //! Lifted coset domain abstraction with selector and vanishing computation.
 //!
-//! This module provides [`LiftedCoset`], the central abstraction for domain operations
+//! This module provides [`LiftedCoset`](crate::coset::LiftedCoset), the central abstraction for domain operations
 //! in lifted STARKs where traces of different heights share a common evaluation domain.
 
 use alloc::vec::Vec;
@@ -334,9 +334,10 @@ impl LiftedCoset {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use p3_baby_bear::BabyBear;
     use p3_field::{Field, PrimeCharacteristicRing};
+
+    use super::*;
 
     type F = BabyBear;
 

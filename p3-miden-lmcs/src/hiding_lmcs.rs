@@ -2,14 +2,16 @@
 
 use alloc::vec::Vec;
 use core::cell::RefCell;
+
 use p3_field::PackedValue;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_miden_transcript::VerifierChannel;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
-use rand::Rng;
-use rand::distr::{Distribution, StandardUniform};
+use rand::{
+    Rng,
+    distr::{Distribution, StandardUniform},
+};
 
 use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, OpenedRows};
 

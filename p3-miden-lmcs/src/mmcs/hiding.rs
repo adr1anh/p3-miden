@@ -13,12 +13,13 @@ use p3_field::PackedValue;
 use p3_matrix::{Dimensions, Matrix};
 use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_symmetric::{MerkleCap, PseudoCompressionFunction};
-use rand::Rng;
-use rand::distr::{Distribution, StandardUniform};
+use rand::{
+    Rng,
+    distr::{Distribution, StandardUniform},
+};
 use serde::{Deserialize, Serialize};
 
-use crate::lifted_tree::LiftedMerkleTree;
-use crate::{HidingLmcsConfig, Lmcs, LmcsError, LmcsTree};
+use crate::{HidingLmcsConfig, Lmcs, LmcsError, LmcsTree, lifted_tree::LiftedMerkleTree};
 
 // ============================================================================
 // Mmcs implementation for HidingLmcsConfig

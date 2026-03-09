@@ -2,26 +2,24 @@
 //!
 //! Re-exports test fixtures from `p3_miden_dev_utils` for use in tests.
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use p3_challenger::CanObserve;
 use p3_field::Field;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
+pub use p3_miden_dev_utils::{configs::baby_bear_poseidon2::*, matrix::random_lde_matrix};
 use p3_miden_lmcs::{Lmcs, LmcsConfig, LmcsTree};
 use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript};
 use p3_util::log2_strict_usize;
-use rand::distr::StandardUniform;
-use rand::prelude::SmallRng;
-use rand::{Rng, RngExt, SeedableRng};
+use rand::{Rng, RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
-use crate::deep::DeepParams;
-use crate::fri::{FriFold, FriParams};
-use crate::{PcsParams, prover::open_with_channel, verifier::verify_aligned};
-
-pub use p3_miden_dev_utils::configs::baby_bear_poseidon2::*;
-pub use p3_miden_dev_utils::matrix::random_lde_matrix;
+use crate::{
+    PcsParams,
+    deep::DeepParams,
+    fri::{FriFold, FriParams},
+    prover::open_with_channel,
+    verifier::verify_aligned,
+};
 
 pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 pub type TestTree = <BaseLmcs as Lmcs>::Tree<RowMajorMatrix<F>>;

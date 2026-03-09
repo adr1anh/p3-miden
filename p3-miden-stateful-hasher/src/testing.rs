@@ -4,8 +4,7 @@
 //! without real cryptographic primitives. All mocks use position-weighted sums
 //! (`sum(input[i] * (i + 1))`) to detect position-related bugs.
 
-use core::array;
-use core::marker::PhantomData;
+use core::{array, marker::PhantomData};
 
 use p3_symmetric::{CryptographicHasher, CryptographicPermutation, Permutation};
 

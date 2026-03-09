@@ -11,9 +11,7 @@ use p3_miden_transcript::ProverChannel;
 use p3_util::reverse_bits_len;
 use tracing::{info_span, instrument};
 
-use crate::PcsParams;
-use crate::deep::prover::DeepPoly;
-use crate::fri::prover::FriPolys;
+use crate::{PcsParams, deep::prover::DeepPoly, fri::prover::FriPolys};
 
 /// Open committed matrices at N evaluation points, writing to a prover channel.
 ///

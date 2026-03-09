@@ -1,6 +1,7 @@
 //! Transcript data container for external transport.
 
 use alloc::vec::Vec;
+
 use serde::{Deserialize, Serialize};
 
 /// Raw transcript data captured by a prover and replayed by a verifier.

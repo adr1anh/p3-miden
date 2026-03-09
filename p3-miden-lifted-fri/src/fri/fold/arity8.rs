@@ -158,9 +158,7 @@ mod tests {
     use p3_field::PrimeCharacteristicRing;
     use p3_matrix::dense::RowMajorMatrix;
     use p3_util::reverse_slice_index_bits;
-    use rand::distr::StandardUniform;
-    use rand::prelude::SmallRng;
-    use rand::{RngExt, SeedableRng};
+    use rand::{RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
     use super::ifft8;
     use crate::fri::fold::tests::{EF, F};

@@ -4,8 +4,7 @@ use alloc::vec::Vec;
 use core::array;
 
 use p3_field::PackedValue;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================

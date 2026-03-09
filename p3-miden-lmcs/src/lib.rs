@@ -147,21 +147,18 @@ pub mod proof;
 mod tests;
 pub mod utils;
 
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
-
-use p3_matrix::Matrix;
-use p3_miden_transcript::{ProverChannel, TranscriptError, VerifierChannel};
-use thiserror::Error;
+use alloc::{collections::BTreeMap, vec::Vec};
 
 // ============================================================================
 // Public Re-exports
 // ============================================================================
-
 pub use hiding_lmcs::HidingLmcsConfig;
 pub use lifted_tree::LiftedMerkleTree;
 pub use lmcs::LmcsConfig;
+use p3_matrix::Matrix;
+use p3_miden_transcript::{ProverChannel, TranscriptError, VerifierChannel};
 pub use proof::{BatchProof, LeafOpening, Proof};
+use thiserror::Error;
 pub use utils::RowList;
 
 // ============================================================================

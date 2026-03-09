@@ -1,19 +1,13 @@
 //! End-to-end tests for DEEP quotient prover/verifier agreement.
 
-use alloc::collections::BTreeSet;
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec, vec::Vec};
 
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_util::reverse_bits_len;
-use rand::distr::StandardUniform;
-use rand::prelude::SmallRng;
-use rand::{RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
-use super::DeepParams;
-use super::prover::DeepPoly;
-use super::verifier::DeepOracle;
+use super::{DeepParams, prover::DeepPoly, verifier::DeepOracle};
 use crate::tests::{
     EF, F, prover_channel_with_commitment, test_lmcs, verifier_channel_with_commitment,
 };

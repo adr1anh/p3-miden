@@ -212,8 +212,7 @@ mod tests {
     use p3_mersenne_31::Mersenne31;
 
     use super::*;
-    use crate::StatefulSponge;
-    use crate::testing::MockBinaryPermutation;
+    use crate::{StatefulSponge, testing::MockBinaryPermutation};
 
     /// Verifies implicit zero-padding equals explicit zeros for serialized fields.
     fn test_alignment_semantic<F: Field, const WIDTH: usize, const RATE: usize, const OUT: usize>()

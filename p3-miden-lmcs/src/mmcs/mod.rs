@@ -33,9 +33,7 @@ use p3_symmetric::{Hash, MerkleCap, PseudoCompressionFunction};
 use p3_util::log2_ceil_usize;
 use serde::{Deserialize, Serialize};
 
-use crate::LmcsTree;
-use crate::lifted_tree::LiftedMerkleTree;
-use crate::{Lmcs, LmcsConfig, LmcsError};
+use crate::{Lmcs, LmcsConfig, LmcsError, LmcsTree, lifted_tree::LiftedMerkleTree};
 
 // ============================================================================
 // Mmcs implementation for LmcsConfig (non-hiding)

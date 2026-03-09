@@ -7,12 +7,12 @@
 //!
 //! Uses NaiveDft since periodic column periods are typically small.
 
-use crate::LiftedCoset;
 use p3_dft::{NaiveDft, TwoAdicSubgroupDft};
 use p3_field::{PackedValue, TwoAdicField};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_util::log2_strict_usize;
+
+use crate::coset::LiftedCoset;
 
 /// Prover-side periodic LDE values for constraint evaluation.
 ///
@@ -102,14 +102,13 @@ impl<F: TwoAdicField> PeriodicLde<F> {
 mod tests {
     extern crate alloc;
 
-    use alloc::vec;
-    use alloc::vec::Vec;
-
-    use super::*;
+    use alloc::{vec, vec::Vec};
 
     use p3_dft::TwoAdicSubgroupDft;
     use p3_field::{Field, PackedValue, PrimeCharacteristicRing};
     use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
+
+    use super::*;
 
     type F = bb::F;
 

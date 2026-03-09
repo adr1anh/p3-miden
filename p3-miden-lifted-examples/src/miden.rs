@@ -4,12 +4,10 @@
 //! single degree-9 base constraint producing 8 quotient chunks, and 8 extension-field
 //! auxiliary columns (= 16 base-field columns with Goldilocks `ext_degree=2`).
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_lifted_air::{
     AirBuilder, AuxBuilder, BaseAir, LiftedAir, LiftedAirBuilder, WindowAccess,
 };
@@ -129,8 +127,7 @@ where
     F: Field,
     rand::distr::StandardUniform: rand::distr::Distribution<F>,
 {
-    use rand::rngs::SmallRng;
-    use rand::{RngExt, SeedableRng};
+    use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
     let height = 1usize << log_height;
     let mut values = F::zero_vec(height * width);

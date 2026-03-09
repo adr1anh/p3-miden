@@ -3,8 +3,7 @@
 //! This module contains constants and helper functions that define
 //! reproducible test/benchmark scenarios.
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use p3_field::PackedValue;
 

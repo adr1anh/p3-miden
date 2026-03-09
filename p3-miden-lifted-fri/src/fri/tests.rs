@@ -1,23 +1,20 @@
 //! Integration tests for FRI protocol commit/verify cycles.
 
-use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec,
+    vec::Vec,
+};
+
 use p3_challenger::CanObserve;
 use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::PrimeCharacteristicRing;
-use p3_matrix::Matrix;
-use p3_matrix::bitrev::BitReversibleMatrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, bitrev::BitReversibleMatrix, dense::RowMajorMatrix};
 use p3_miden_transcript::{VerifierChannel, VerifierTranscript};
 use p3_util::{log2_strict_usize, reverse_bits_len};
-use rand::distr::StandardUniform;
-use rand::prelude::SmallRng;
-use rand::{RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
-use super::prover::FriPolys;
-use super::verifier::FriOracle;
-use super::*;
+use super::{prover::FriPolys, verifier::FriOracle, *};
 use crate::tests::{
     BaseLmcs, Challenger, EF, F, TestTranscriptData, prover_channel, random_lde_matrix,
     sample_indices, test_challenger, test_lmcs, verifier_channel,

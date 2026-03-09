@@ -7,8 +7,7 @@
 
 extern crate alloc;
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 #[cfg(feature = "std")]
 extern crate std;
@@ -22,8 +21,7 @@ pub mod poseidon2;
 pub mod stats;
 
 use p3_field::{ExtensionField, Field};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_lifted_air::AuxBuilder;
 
 /// Dummy aux builder that produces a 1-column all-zero auxiliary trace.

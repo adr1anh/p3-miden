@@ -53,18 +53,14 @@ pub mod matrix;
 // =============================================================================
 
 // Traits
-pub use configs::{BenchScenario, PcsScenario};
-
-// Scenario structs
-pub use configs::{BabyBearKeccak, BabyBearPoseidon2, GoldilocksKeccak, GoldilocksPoseidon2};
-
-// Common fixtures
-pub use fixtures::{BENCH_SEED, LOG_HEIGHTS, RELATIVE_SPECS, TEST_SEED};
-
 // Bench utilities (only on std targets)
 #[cfg(not(target_arch = "wasm32"))]
 pub use bench::{PARALLEL_STR, criterion_config, criterion_config_long};
-
+// Scenario structs
+pub use configs::{BabyBearKeccak, BabyBearPoseidon2, GoldilocksKeccak, GoldilocksPoseidon2};
+pub use configs::{BenchScenario, PcsScenario};
+// Common fixtures
+pub use fixtures::{BENCH_SEED, LOG_HEIGHTS, RELATIVE_SPECS, TEST_SEED};
 // Matrix utilities
 pub use matrix::{
     concatenate_matrices, generate_flat_matrix, generate_matrices_from_specs, random_lde_matrix,

@@ -55,11 +55,11 @@ pub(crate) mod prover;
 pub(crate) mod verifier;
 
 use alloc::vec::Vec;
+
+pub use interpolate::PointQuotients;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
-
-pub use interpolate::PointQuotients;
 pub use proof::{DeepTranscript, OpenedValues};
 pub use verifier::DeepError;
 

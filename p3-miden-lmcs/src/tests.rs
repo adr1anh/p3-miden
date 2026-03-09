@@ -1,30 +1,24 @@
 //! Integration tests for LMCS.
 
-use alloc::collections::BTreeMap;
-use alloc::vec;
-use alloc::vec::Vec;
-
-use p3_field::PrimeCharacteristicRing;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
-use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript};
-use p3_util::log2_strict_usize;
-use rand::rngs::SmallRng;
-use rand::{RngExt, SeedableRng};
-
-use crate::utils::{RowList, aligned_len};
-use crate::{
-    BatchProof, HidingLmcsConfig, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, LmcsTree, Proof,
-};
+use alloc::{collections::BTreeMap, vec, vec::Vec};
 
 // ============================================================================
 // Test Helpers and Re-exports
 // ============================================================================
-
 pub use bb::{Compress, DIGEST, F, P, RATE, Sponge, WIDTH};
+use p3_field::PrimeCharacteristicRing;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
+use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 pub use p3_miden_dev_utils::matrix::concatenate_matrices;
+use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
+use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript};
+use p3_util::log2_strict_usize;
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
+
+use crate::{
+    BatchProof, HidingLmcsConfig, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, LmcsTree, Proof,
+    utils::{RowList, aligned_len},
+};
 
 /// Type alias for local LMCS config.
 pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;

@@ -16,22 +16,19 @@ use p3_baby_bear::BabyBear;
 use p3_challenger::DuplexChallenger;
 use p3_commit::{ExtensionMmcs, Pcs};
 use p3_dft::Radix2DitParallel;
-use p3_field::Field;
-use p3_field::coset::TwoAdicMultiplicativeCoset;
-use p3_field::extension::BinomialExtensionField;
+use p3_field::{Field, coset::TwoAdicMultiplicativeCoset, extension::BinomialExtensionField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
-use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_dev_utils::criterion_config_long;
-use p3_miden_lifted_fri::deep::DeepParams;
-use p3_miden_lifted_fri::fri::{FriFold, FriParams};
-use p3_miden_lifted_stark::LiftedCoset;
-use p3_miden_lifted_stark::prover::quotient::commit_quotient;
+use p3_miden_dev_utils::{configs::baby_bear_poseidon2 as bb, criterion_config_long};
+use p3_miden_lifted_fri::{
+    deep::DeepParams,
+    fri::{FriFold, FriParams},
+};
+use p3_miden_lifted_stark::{coset::LiftedCoset, prover::quotient::commit_quotient};
 use p3_miden_lmcs::LmcsConfig;
 use p3_symmetric::PaddingFreeSponge;
 use p3_util::log2_strict_usize;
-use rand::rngs::SmallRng;
-use rand::{RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 // =============================================================================
 // Types

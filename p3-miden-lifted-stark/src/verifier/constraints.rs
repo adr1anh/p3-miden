@@ -8,7 +8,6 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use crate::{LiftedCoset, Selectors};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_miden_lifted_air::{
     AirBuilder, EmptyWindow, ExtensionBuilder, PeriodicAirBuilder, PermutationAirBuilder, RowWindow,
@@ -16,6 +15,7 @@ use p3_miden_lifted_air::{
 use p3_util::log2_strict_usize;
 
 use super::VerifierError;
+use crate::{coset::LiftedCoset, selectors::Selectors};
 
 // ============================================================================
 // ConstraintFolder

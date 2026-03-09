@@ -7,22 +7,19 @@
 //! - `divide_by_vanishing_in_place`: Divide by Z_H on the quotient evaluation domain
 //! - [`commit_quotient`]: Decompose Q(gJ) into chunks and commit on gK
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
-use crate::{LiftedCoset, StarkConfig};
 use p3_dft::TwoAdicSubgroupDft;
 use p3_field::{
     BasedVectorSpace, ExtensionField, Field, TwoAdicField, batch_multiplicative_inverse,
 };
-use p3_matrix::Matrix;
-use p3_matrix::bitrev::BitReversibleMatrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, bitrev::BitReversibleMatrix, dense::RowMajorMatrix};
 use p3_maybe_rayon::prelude::*;
 use p3_miden_lmcs::Lmcs;
 use p3_util::log2_strict_usize;
 
 use super::commit::Committed;
+use crate::{StarkConfig, coset::LiftedCoset};
 
 // ============================================================================
 // Accumulation

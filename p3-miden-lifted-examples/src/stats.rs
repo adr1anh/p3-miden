@@ -4,21 +4,25 @@
 //! Thread-safe: timing data is attached per-span via `Extensions`, so the
 //! layer works correctly with rayon and other work-stealing runtimes.
 
-use std::collections::BTreeMap;
-use std::format;
-use std::println;
-use std::string::String;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use std::vec::Vec;
+use std::{
+    collections::BTreeMap,
+    format, println,
+    string::String,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+    vec::Vec,
+};
 
-use tracing::Subscriber;
-use tracing::span;
-use tracing_subscriber::Registry;
-use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
-use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing::{Subscriber, span};
+use tracing_subscriber::{
+    Registry,
+    layer::{Context, Layer, SubscriberExt},
+    registry::LookupSpan,
+    util::SubscriberInitExt,
+};
 
 /// Newtype stored in span extensions to record creation time.
 struct SpanStarted(Instant);

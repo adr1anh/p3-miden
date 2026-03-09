@@ -4,16 +4,14 @@ use alloc::vec::Vec;
 
 use p3_commit::{BatchOpeningRef, Mmcs};
 use p3_field::PrimeCharacteristicRing;
-use p3_matrix::dense::RowMajorMatrix;
-use p3_matrix::{Dimensions, Matrix};
+use p3_matrix::{Dimensions, Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2::{
     Compress, DIGEST, F, P, Sponge, WIDTH, test_challenger, test_components,
 };
 use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
 use p3_symmetric::{Hash, MerkleCap};
 use p3_util::log2_strict_usize;
-use rand::SeedableRng;
-use rand::rngs::SmallRng;
+use rand::{SeedableRng, rngs::SmallRng};
 
 use crate::{BatchProof, HidingLmcsConfig, Lmcs, LmcsConfig, LmcsError, LmcsTree};
 

@@ -16,21 +16,20 @@ use p3_batch_stark::{ProverData, StarkInstance, prove_batch, verify_batch};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
-use p3_field::Field;
-use p3_field::extension::BinomialExtensionField;
+use p3_field::{Field, extension::BinomialExtensionField};
 use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_keccak_air::{KeccakAir, generate_trace_rows};
-use p3_lookup::LookupAir;
-use p3_lookup::lookup_traits::{Direction, Kind, Lookup};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_lookup::{
+    LookupAir,
+    lookup_traits::{Direction, Kind, Lookup},
+};
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_examples::stats;
 use p3_symmetric::PaddingFreeSponge;
 use p3_util::log2_strict_usize;
-use rand::rngs::SmallRng;
-use rand::{RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use tracing::info_span;
 
 // Trace S: 2^15 rows -> floor(32768/24) = 1365 hashes.
