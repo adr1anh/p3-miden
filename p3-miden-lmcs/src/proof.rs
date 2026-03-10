@@ -85,7 +85,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
     /// the number of unique indices.
     pub fn read_from_channel<Ch>(
         widths: &[usize],
-        log_max_height: usize,
+        log_max_height: u8,
         indices: &[usize],
         channel: &mut Ch,
     ) -> Result<Self, TranscriptError>
@@ -113,7 +113,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
 
         // Consume sibling hints in the same canonical order the prover emits them.
         let siblings: BTreeMap<(usize, usize), C> =
-            required_siblings(openings.keys().copied(), log_max_height)
+            required_siblings(openings.keys().copied(), log_max_height.into())
                 .into_iter()
                 .map(|key| Ok((key, channel.receive_hint_commitment()?.clone())))
                 .collect::<Result<_, TranscriptError>>()?;
@@ -132,7 +132,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         &self,
         lmcs: &L,
         widths: &[usize],
-        log_max_height: usize,
+        log_max_height: u8,
     ) -> Option<BTreeMap<usize, Proof<F, C, SALT_ELEMS>>>
     where
         F: Copy,
@@ -163,7 +163,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
             proofs.entry(index).or_insert_with(|| Proof {
                 rows: opening.rows.clone(),
                 salt: opening.salt,
-                siblings: Vec::with_capacity(log_max_height),
+                siblings: Vec::with_capacity(log_max_height as usize),
             });
 
             // Reject if two openings claim different data for the same leaf.
@@ -176,11 +176,12 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         }
 
         // Preload hinted siblings so combining pairs can assume adjacency.
-        for (depth, index) in required_siblings(self.openings.keys().copied(), log_max_height) {
+        let tree_depth = log_max_height as usize;
+        for (depth, index) in required_siblings(self.openings.keys().copied(), tree_depth) {
             tree.insert((depth, index), self.siblings.get(&(depth, index))?.clone());
         }
 
-        for current_depth in 0..log_max_height {
+        for current_depth in 0..tree_depth {
             // BTreeMap ordering yields left-to-right pairing at this depth.
             let nodes_at_depth: Vec<(usize, C)> = tree
                 .range((current_depth, 0)..=(current_depth, usize::MAX))
@@ -213,7 +214,7 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         // Add authentication paths from the reconstructed tree.
         for (&index, proof) in proofs.iter_mut() {
             let mut current_index = index;
-            for current_depth in 0..log_max_height {
+            for current_depth in 0..tree_depth {
                 let sibling_index = current_index ^ 1;
                 let sibling_hash = tree.get(&(current_depth, sibling_index)).cloned()?;
                 proof.siblings.push(sibling_hash);
@@ -276,11 +277,10 @@ mod tests {
     use p3_matrix::dense::RowMajorMatrix;
     use p3_miden_transcript::{VerifierChannel, VerifierTranscript};
     use p3_symmetric::Hash;
-    use p3_util::log2_strict_usize;
     use rand::{SeedableRng, rngs::SmallRng};
 
     use crate::{
-        BatchProof, Lmcs, LmcsTree,
+        BatchProof, Lmcs, LmcsTree, log2_strict_u8,
         tests::{DIGEST, F, lmcs, roundtrip_open_batch},
     };
 
@@ -296,7 +296,7 @@ mod tests {
                 .collect();
             let tree = lmcs.build_tree(matrices);
             let widths = tree.widths();
-            let log_max_height = log2_strict_usize(tree.height());
+            let log_max_height = log2_strict_u8(tree.height());
 
             // Path A: open_batch (verification)
             let (transcript, opened_rows) =

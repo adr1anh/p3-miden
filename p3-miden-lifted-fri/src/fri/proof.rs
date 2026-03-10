@@ -39,7 +39,7 @@ where
     /// that validation happens in `FriOracle::test_low_degree`.
     pub fn from_verifier_channel<Ch>(
         params: &FriParams,
-        log_domain_size: usize,
+        log_domain_size: u8,
         channel: &mut Ch,
     ) -> Result<Self, TranscriptError>
     where

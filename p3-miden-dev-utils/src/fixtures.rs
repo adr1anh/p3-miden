@@ -22,7 +22,7 @@ pub const BENCH_SEED: u64 = TEST_SEED;
 // =============================================================================
 
 /// Standard log heights for benchmarking: 2^16, 2^18, 2^20 leaves.
-pub const LOG_HEIGHTS: &[usize] = &[16, 18, 20];
+pub const LOG_HEIGHTS: &[u8] = &[16, 18, 20];
 
 /// Standard relative specs for benchmark matrix groups.
 ///

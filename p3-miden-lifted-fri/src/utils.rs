@@ -98,8 +98,8 @@ impl<
 /// # Panics
 /// Panics if the two-adic coset construction fails (e.g., `log_n` exceeds the field's
 /// two-adicity), since this unwraps `TwoAdicMultiplicativeCoset::new`.
-pub fn bit_reversed_coset_points<F: TwoAdicField>(log_n: usize) -> Vec<F> {
-    let coset = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
+pub fn bit_reversed_coset_points<F: TwoAdicField>(log_n: u8) -> Vec<F> {
+    let coset = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n as usize).unwrap();
     let mut pts: Vec<F> = coset.iter().collect();
     reverse_slice_index_bits(&mut pts);
     pts

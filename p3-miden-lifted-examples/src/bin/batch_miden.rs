@@ -182,7 +182,7 @@ fn main() {
     let prover_data = ProverData::from_airs_and_degrees(
         &config,
         &mut airs,
-        &[TRACE1_LOG_HEIGHT, TRACE2_LOG_HEIGHT],
+        &[TRACE1_LOG_HEIGHT as usize, TRACE2_LOG_HEIGHT as usize],
     );
     let common = &prover_data.common;
     let traces = [&trace1, &trace2];

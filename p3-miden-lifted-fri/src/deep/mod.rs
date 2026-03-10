@@ -70,7 +70,7 @@ pub use verifier::DeepError;
 #[derive(Clone, Copy, Debug)]
 pub struct DeepParams {
     /// Grinding bits before DEEP challenge sampling.
-    pub deep_pow_bits: usize,
+    pub(crate) deep_pow_bits: usize,
 }
 
 /// Read OOD evaluation matrices from a verifier channel.

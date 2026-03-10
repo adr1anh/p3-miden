@@ -124,11 +124,11 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
         &self,
         matrices_groups: &[Vec<&M>],
         coset_points: &[F],
-        log_blowup: usize,
+        log_blowup: u8,
     ) -> RowList<FieldArray<EF, N>> {
         let _span = info_span!("batch_eval_lifted", n_groups = matrices_groups.len()).entered();
         let n = coset_points.len();
-        let d = n >> log_blowup;
+        let d = n >> log_blowup as usize;
         let log_d = log2_strict_usize(d);
 
         let shift = coset_points[0]; // g in bit-reversed order
@@ -144,7 +144,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
 
         let used_degrees: BTreeSet<usize> = matrices_groups
             .iter()
-            .flat_map(|g| g.iter().map(|m| m.height() >> log_blowup))
+            .flat_map(|g| g.iter().map(|m| m.height() >> log_blowup as usize))
             .collect();
 
         // Compute barycentric weights for each point at each height:
@@ -184,7 +184,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
             .iter()
             .flat_map(|group| {
                 group.iter().map(|m| {
-                    let weights = &barycentric_weights[&(m.height() >> log_blowup)];
+                    let weights = &barycentric_weights[&(m.height() >> log_blowup as usize)];
                     let _guard =
                         debug_span!("evaluate matrix", height = weights.len(), width = m.width())
                             .entered();

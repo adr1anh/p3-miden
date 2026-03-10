@@ -37,15 +37,9 @@ use p3_miden_dev_utils::{
     BenchScenario, LOG_HEIGHTS, PARALLEL_STR, PcsScenario, RELATIVE_SPECS, criterion_config_long,
     generate_matrices_from_specs, total_elements,
 };
-use p3_miden_lifted_fri::{
-    PcsParams,
-    deep::DeepParams,
-    fri::{FriFold, FriParams},
-    prover as lifted_prover,
-};
-use p3_miden_lmcs::{Lmcs, LmcsTree};
+use p3_miden_lifted_fri::{PcsParams, prover as lifted_prover};
+use p3_miden_lmcs::{Lmcs, LmcsTree, log2_strict_u8};
 use p3_miden_transcript::ProverTranscript;
-use p3_util::log2_strict_usize;
 use utils::LmcsScenario;
 
 // =============================================================================
@@ -205,27 +199,23 @@ macro_rules! bench_scenario {
                     // Build a single LMCS tree with all matrices
                     let tree = lmcs.build_aligned_tree(all_lde_matrices);
                     let commitment = tree.root();
-                    let log_lde_height = log2_strict_usize(tree.height());
+                    let log_lde_height = log2_strict_u8(tree.height());
 
                     let base_challenger = S::challenger();
 
-                    for (name, fold) in [
-                        ("lifted/arity2", FriFold::ARITY_2),
-                        ("lifted/arity4", FriFold::ARITY_4),
+                    for (name, log_folding_arity) in [
+                        ("lifted/arity2", 1u8),
+                        ("lifted/arity4", 2u8),
                     ] {
-                        let params = PcsParams {
-                            deep: DeepParams {
-                                deep_pow_bits: 0,
-                            },
-                            fri: FriParams {
-                                log_blowup: LOG_BLOWUP,
-                                fold,
-                                log_final_degree: LOG_FINAL_DEGREE,
-                                folding_pow_bits: 0,
-                            },
-                            num_queries: NUM_QUERIES,
-                            query_pow_bits: 0,
-                        };
+                        let params = PcsParams::new(
+                            LOG_BLOWUP as u8,
+                            log_folding_arity,
+                            LOG_FINAL_DEGREE as u8,
+                            0,  // folding_pow_bits
+                            0,  // deep_pow_bits
+                            NUM_QUERIES,
+                            0,  // query_pow_bits
+                        ).expect("valid PCS params");
 
                         group.bench_function(BenchmarkId::from_parameter(name), |b| {
                             b.iter(|| {

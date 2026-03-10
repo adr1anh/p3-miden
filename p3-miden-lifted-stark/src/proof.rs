@@ -109,7 +109,7 @@ where
         SC: StarkConfig<L::F, EF, Lmcs = L>,
     {
         let mut channel = VerifierTranscript::from_data(challenger, proof);
-        let log_blowup = config.pcs().fri.log_blowup;
+        let log_blowup = config.pcs().log_blowup();
         let alignment = config.lmcs().alignment();
 
         // Infer constraint degree from symbolic AIR analysis (max across all AIRs)
@@ -163,7 +163,7 @@ where
 
         // 7. Sample OOD point (outside max trace domain H and max LDE coset gK)
         let z: EF = max_lde_coset.sample_ood_point(&mut channel);
-        let h = L::F::two_adic_generator(log_max_trace_height);
+        let h = L::F::two_adic_generator(log_max_trace_height.into());
         let z_next = z * h;
 
         // 8. Build commitment widths for PCS.

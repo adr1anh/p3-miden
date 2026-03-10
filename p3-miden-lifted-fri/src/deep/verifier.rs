@@ -42,7 +42,7 @@ pub struct DeepOracle<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> {
 
     /// Log₂ of the LDE domain height (tree has 2^log_lde_height leaves).
     /// Verifier expects all commitments to be lifted to this same LDE height.
-    log_lde_height: usize,
+    log_lde_height: u8,
 
     /// Reduced openings: pairs of `(zⱼ, f_reduced(zⱼ))` from the prover's claims.
     reduced_openings: Vec<(EF, EF)>,
@@ -74,7 +74,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
         params: &DeepParams,
         eval_points: &[EF],
         commitments: Vec<(L::Commitment, Vec<usize>)>,
-        log_lde_height: usize,
+        log_lde_height: u8,
         channel: &mut Ch,
     ) -> Result<(Self, OpenedValues<EF>), DeepError>
     where
@@ -176,7 +176,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
             }
         }
 
-        let generator = F::two_adic_generator(self.log_lde_height);
+        let generator = F::two_adic_generator(self.log_lde_height as usize);
         let shift = F::GENERATOR;
 
         // Reconstruct Q(x) at each queried domain point x from the opened row data.
@@ -186,7 +186,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, L: Lmcs<F = F>> DeepOracle<F, EF, L
             .into_iter()
             .map(|(tree_idx, reduced_row)| {
                 // Recover domain point X = g·ω^{exp} from tree index (bit-reversed position)
-                let exp = reverse_bits_len(tree_idx, self.log_lde_height);
+                let exp = reverse_bits_len(tree_idx, self.log_lde_height as usize);
                 let row_point = shift * generator.exp_u64(exp as u64);
 
                 // DEEP quotient: Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) / (zⱼ - X)

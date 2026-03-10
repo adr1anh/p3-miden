@@ -10,10 +10,9 @@ use p3_miden_dev_utils::configs::baby_bear_poseidon2::{
 };
 use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
 use p3_symmetric::{Hash, MerkleCap};
-use p3_util::log2_strict_usize;
 use rand::{SeedableRng, rngs::SmallRng};
 
-use crate::{BatchProof, HidingLmcsConfig, Lmcs, LmcsConfig, LmcsError, LmcsTree};
+use crate::{BatchProof, HidingLmcsConfig, Lmcs, LmcsConfig, LmcsError, LmcsTree, log2_strict_u8};
 
 type BaseMmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 type RowMatrix = RowMajorMatrix<F>;
@@ -79,7 +78,7 @@ fn extract_proofs_roundtrip() {
     let test = |seed: u64, shapes: &[(usize, usize)], indices: &[usize]| {
         let tree = build_tree_with_alignment(&mmcs, seed, shapes, false);
         let widths = tree.widths();
-        let log_max_height = log2_strict_usize(tree.height());
+        let log_max_height = log2_strict_u8(tree.height());
         let (commitment, dimensions, _) = tree_context_cap(&tree);
 
         let mut prover_channel = ProverTranscript::new(test_challenger());

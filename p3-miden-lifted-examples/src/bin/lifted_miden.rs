@@ -24,17 +24,14 @@ use p3_miden_lifted_examples::{
     stats::{bench_iters, init_tracing},
 };
 use p3_miden_lifted_stark::{
-    GenericStarkConfig,
-    fri::{DeepParams, FriFold, FriParams, PcsParams},
-    lmcs::LmcsConfig,
-    prover::prove_multi,
+    GenericStarkConfig, fri::PcsParams, lmcs::LmcsConfig, prover::prove_multi,
 };
 use tracing::info_span;
 
 type Val = Goldilocks;
 type Challenge = BinomialExtensionField<Val, 2>;
 
-const LOG_BLOWUP: usize = 3;
+const LOG_BLOWUP: u8 = 3;
 const NUM_QUERIES: usize = 100;
 const POW_BITS: usize = 16;
 
@@ -46,17 +43,16 @@ fn main() {
     type Dft = Radix2DitParallel<Val>;
     type Config = GenericStarkConfig<Val, Challenge, Lmcs, Dft, gl::Challenger>;
 
-    let pcs = PcsParams {
-        fri: FriParams {
-            log_blowup: LOG_BLOWUP,
-            fold: FriFold::ARITY_2,
-            log_final_degree: 0,
-            folding_pow_bits: POW_BITS,
-        },
-        deep: DeepParams { deep_pow_bits: 0 },
-        num_queries: NUM_QUERIES,
-        query_pow_bits: 0,
-    };
+    let pcs = PcsParams::new(
+        LOG_BLOWUP,  // log_blowup
+        1,           // log_folding_arity
+        0,           // log_final_degree
+        POW_BITS,    // folding_pow_bits
+        0,           // deep_pow_bits
+        NUM_QUERIES, // num_queries
+        0,           // query_pow_bits
+    )
+    .unwrap();
 
     let (_, sponge, compress) = gl::test_components();
     let lmcs: Lmcs = LmcsConfig::new(sponge, compress);

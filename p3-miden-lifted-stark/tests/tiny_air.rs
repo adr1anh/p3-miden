@@ -11,13 +11,12 @@ use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_stark::{
     air::{
         AirBuilder, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir, LiftedAirBuilder,
-        WindowAccess,
+        WindowAccess, log2_strict_u8,
     },
     prover::prove_single,
     transcript::TranscriptData,
     verifier::{VerifierError, verify_single},
 };
-use p3_util::log2_strict_usize;
 
 // ---------------------------------------------------------------------------
 // TinyAir: main[0] starts at public_values[0], each row is previous^4.
@@ -171,7 +170,7 @@ fn malformed_transcript_is_rejected() {
     let air = TinyAir::new(vec![]);
 
     let (trace, public_values) = instance(0, 4);
-    let log_trace_height = log2_strict_usize(trace.height());
+    let log_trace_height = log2_strict_u8(trace.height());
 
     let output = prove_single(
         &config,

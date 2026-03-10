@@ -26,13 +26,9 @@ use p3_miden_lifted_examples::{
     stats::StatsLayer,
 };
 use p3_miden_lifted_stark::{
-    GenericStarkConfig,
-    fri::{DeepParams, FriFold, FriParams, PcsParams},
-    lmcs::LmcsConfig,
-    prover::prove_multi,
+    GenericStarkConfig, air::log2_strict_u8, fri::PcsParams, lmcs::LmcsConfig, prover::prove_multi,
 };
 use p3_poseidon2_air::RoundConstants;
-use p3_util::log2_strict_usize;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use tracing::info_span;
 use tracing_forest::ForestLayer;
@@ -52,7 +48,7 @@ const NUM_POSEIDON2_HASHES: usize = 524288;
 type Val = BabyBear;
 type Challenge = BinomialExtensionField<Val, 4>;
 
-const LOG_BLOWUP: usize = 1;
+const LOG_BLOWUP: u8 = 1;
 const NUM_QUERIES: usize = 100;
 const POW_BITS: usize = 16;
 
@@ -125,17 +121,16 @@ fn main() {
     type Dft = Radix2DitParallel<Val>;
     type Config = GenericStarkConfig<Val, Challenge, Lmcs, Dft, bb::Challenger>;
 
-    let pcs = PcsParams {
-        fri: FriParams {
-            log_blowup: LOG_BLOWUP,
-            fold: FriFold::ARITY_2,
-            log_final_degree: 0,
-            folding_pow_bits: POW_BITS,
-        },
-        deep: DeepParams { deep_pow_bits: 0 },
-        num_queries: NUM_QUERIES,
-        query_pow_bits: 0,
-    };
+    let pcs = PcsParams::new(
+        LOG_BLOWUP,  // log_blowup
+        1,           // log_folding_arity
+        0,           // log_final_degree
+        POW_BITS,    // folding_pow_bits
+        0,           // deep_pow_bits
+        NUM_QUERIES, // num_queries
+        0,           // query_pow_bits
+    )
+    .unwrap();
 
     let (_, sponge, compress) = bb::test_components();
     let lmcs: Lmcs = LmcsConfig::new(sponge, compress);
@@ -178,9 +173,9 @@ fn main() {
     let air_keccak = HashAir::Keccak(LiftedKeccakAir);
     let air_blake3 = HashAir::Blake3(LiftedBlake3Air);
 
-    let log_p = log2_strict_usize(trace_poseidon2.height());
-    let log_k = log2_strict_usize(trace_keccak.height());
-    let log_b = log2_strict_usize(trace_blake3.height());
+    let log_p = log2_strict_u8(trace_poseidon2.height());
+    let log_k = log2_strict_u8(trace_keccak.height());
+    let log_b = log2_strict_u8(trace_blake3.height());
 
     // Run iterations: iteration 0 is warm-up (tracing tree printed, stats discarded).
     for i in 0..=bench_iters {

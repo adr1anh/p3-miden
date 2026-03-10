@@ -20,14 +20,12 @@ use p3_field::{Field, coset::TwoAdicMultiplicativeCoset, extension::BinomialExte
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_miden_dev_utils::{configs::baby_bear_poseidon2 as bb, criterion_config_long};
-use p3_miden_lifted_fri::{
-    deep::DeepParams,
-    fri::{FriFold, FriParams},
+use p3_miden_lifted_fri::PcsParams;
+use p3_miden_lifted_stark::{
+    air::log2_strict_u8, coset::LiftedCoset, prover::quotient::commit_quotient,
 };
-use p3_miden_lifted_stark::{coset::LiftedCoset, prover::quotient::commit_quotient};
 use p3_miden_lmcs::LmcsConfig;
 use p3_symmetric::PaddingFreeSponge;
-use p3_util::log2_strict_usize;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 // =============================================================================
@@ -56,7 +54,7 @@ type LiftedConfig =
 // Constants
 // =============================================================================
 
-const LOG_BLOWUP: usize = 1;
+const LOG_BLOWUP: u8 = 1;
 const D: usize = 2; // constraint degree (KeccakAir)
 
 // =============================================================================
@@ -64,17 +62,16 @@ const D: usize = 2; // constraint degree (KeccakAir)
 // =============================================================================
 
 fn lifted_config() -> LiftedConfig {
-    let pcs = p3_miden_lifted_fri::PcsParams {
-        fri: FriParams {
-            log_blowup: LOG_BLOWUP,
-            fold: FriFold::ARITY_2,
-            log_final_degree: 0,
-            folding_pow_bits: 0,
-        },
-        deep: DeepParams { deep_pow_bits: 0 },
-        num_queries: 1,
-        query_pow_bits: 0,
-    };
+    let pcs = PcsParams::new(
+        LOG_BLOWUP, // log_blowup
+        1,          // log_folding_arity (arity 2)
+        0,          // log_final_degree
+        0,          // folding_pow_bits
+        0,          // deep_pow_bits
+        1,          // num_queries
+        0,          // query_pow_bits
+    )
+    .expect("valid PCS params");
     let (_, sponge, compress) = bb::test_components();
     let lmcs: LiftedLmcs = LmcsConfig::new(sponge, compress);
     LiftedConfig::new(pcs, lmcs, Dft::default(), bb::test_challenger())
@@ -86,7 +83,7 @@ fn workspace_pcs() -> WorkspacePcs {
     let mmcs = ValMmcs::new(mmcs_sponge, compress, 0);
     let challenge_mmcs = ChallengeMmcs::new(mmcs.clone());
     let fri_params = p3_fri::FriParameters {
-        log_blowup: LOG_BLOWUP,
+        log_blowup: LOG_BLOWUP as usize,
         log_final_poly_len: 0,
         max_log_arity: 1,
         num_queries: 1,
@@ -108,9 +105,9 @@ fn random_quotient_evals(n: usize, d: usize, seed: u64) -> Vec<Challenge> {
 
 fn bench_quotient_commit(c: &mut Criterion) {
     let mut group = c.benchmark_group("quotient_commit");
-    let log_d = log2_strict_usize(D);
+    let log_d = log2_strict_u8(D);
 
-    for log_n in [16, 17] {
+    for log_n in [16u8, 17u8] {
         let n = 1usize << log_n;
         let b = 1usize << LOG_BLOWUP;
         let label = format!("N=2^{log_n}");
@@ -134,7 +131,7 @@ fn bench_quotient_commit(c: &mut Criterion) {
         {
             let pcs = workspace_pcs();
             let quotient_domain =
-                TwoAdicMultiplicativeCoset::new(Val::GENERATOR, log_n + log_d).unwrap();
+                TwoAdicMultiplicativeCoset::new(Val::GENERATOR, (log_n + log_d) as usize).unwrap();
 
             group.bench_function(BenchmarkId::new("plonky3_pcs", &label), |bench| {
                 bench.iter(|| {

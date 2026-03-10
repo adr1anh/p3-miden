@@ -83,7 +83,7 @@ where
     // - s is the coset shift
     // - ω_D is a D-th root of unity.
     let shift: F = coset.lde_shift();
-    let s_pow_n = shift.exp_power_of_2(coset.log_trace_height);
+    let s_pow_n = shift.exp_power_of_2(coset.log_trace_height as usize);
     let z_h_evals: Vec<F> = F::two_adic_generator(log_blowup)
         .powers()
         .take(num_distinct)
@@ -143,7 +143,7 @@ where
     let n = coset.trace_height();
     let d = q_evals.len() / n;
     let log_d = log2_strict_usize(d);
-    let log_blowup = config.pcs().fri.log_blowup;
+    let log_blowup = config.pcs().log_blowup();
     let b = 1usize << log_blowup;
 
     debug_assert!(
@@ -173,7 +173,7 @@ where
     // ═══════════════════════════════════════════════════════════════════════
     // Multiply c_hat[t, k] by (ω_Jᵗ)⁻ᵏ → a[t, k]·gᵏ.
     // This removes the per-coset shift ω_Jᵗ while keeping gᵏ baked in.
-    let omega_j_inv = F::two_adic_generator(coset.log_trace_height + log_d).inverse();
+    let omega_j_inv = F::two_adic_generator(coset.log_trace_height as usize + log_d).inverse();
 
     // Precompute ω_J⁻ᵏ for k = 0..N with sequential multiplications
     let row_bases: Vec<F> = omega_j_inv.powers().take(n).collect();

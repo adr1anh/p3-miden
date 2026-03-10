@@ -8,18 +8,11 @@ use p3_challenger::CanObserve;
 use p3_field::Field;
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
 pub use p3_miden_dev_utils::{configs::baby_bear_poseidon2::*, matrix::random_lde_matrix};
-use p3_miden_lmcs::{Lmcs, LmcsConfig, LmcsTree, utils::aligned_widths};
+use p3_miden_lmcs::{Lmcs, LmcsConfig, LmcsTree, log2_strict_u8, utils::aligned_widths};
 use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
-use p3_util::log2_strict_usize;
 use rand::{Rng, RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
-use crate::{
-    PcsParams, PcsTranscript,
-    deep::DeepParams,
-    fri::{FriFold, FriParams},
-    prover::open_with_channel,
-    verifier::verify_aligned,
-};
+use crate::{PcsParams, PcsTranscript, prover::open_with_channel, verifier::verify_aligned};
 
 pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 pub type TestTree = <BaseLmcs as Lmcs>::Tree<RowMajorMatrix<F>>;
@@ -66,19 +59,16 @@ pub fn sample_indices<R: Rng>(rng: &mut R, upper: usize, count: usize) -> Vec<us
 }
 
 fn test_params() -> PcsParams {
-    let fri = FriParams {
-        log_blowup: 2,
-        fold: FriFold::ARITY_2,
-        log_final_degree: 2,
-        folding_pow_bits: 1,
-    };
-    let deep = DeepParams { deep_pow_bits: 1 };
-    PcsParams {
-        deep,
-        fri,
-        num_queries: 5,
-        query_pow_bits: 1,
-    }
+    PcsParams::new(
+        2, // log_blowup
+        1, // log_folding_arity (arity 2)
+        2, // log_final_degree
+        1, // folding_pow_bits
+        1, // deep_pow_bits
+        5, // num_queries
+        1, // query_pow_bits
+    )
+    .expect("valid PCS params")
 }
 
 // ============================================================================
@@ -94,7 +84,7 @@ fn run_pcs_case(params: &PcsParams, trees: Vec<TestTree>, seed: u64) -> Result<(
     let lmcs = test_lmcs();
 
     let lde_height = trees[0].leaves().last().map(|m| m.height()).unwrap_or(0);
-    let log_lde_height = log2_strict_usize(lde_height);
+    let log_lde_height = log2_strict_u8(lde_height);
     let eval_points: [EF; 2] = [rng.sample(StandardUniform), rng.sample(StandardUniform)];
 
     let commitments: Vec<_> = trees
@@ -205,17 +195,16 @@ fn test_pcs_cases() {
 
     // Case 4: random (non-low-degree) data — FRI should reject.
     let rng = &mut SmallRng::seed_from_u64(77);
-    let reject_params = PcsParams {
-        deep: DeepParams { deep_pow_bits: 1 },
-        fri: FriParams {
-            log_blowup: 1,
-            fold: FriFold::ARITY_2,
-            log_final_degree: 2,
-            folding_pow_bits: 1,
-        },
-        num_queries: 20,
-        query_pow_bits: 1,
-    };
+    let reject_params = PcsParams::new(
+        1,  // log_blowup
+        1,  // log_folding_arity (arity 2)
+        2,  // log_final_degree
+        1,  // folding_pow_bits
+        1,  // deep_pow_bits
+        20, // num_queries
+        1,  // query_pow_bits
+    )
+    .expect("valid PCS params");
     let height = 1 << 8;
     let matrix = RowMajorMatrix::<F>::rand(rng, height, 3);
     let tree = lmcs.build_aligned_tree(vec![matrix]);

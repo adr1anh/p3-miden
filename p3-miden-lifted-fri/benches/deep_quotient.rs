@@ -36,7 +36,7 @@ use rand::{
 use utils::LmcsScenario;
 
 /// Log blowup factor for LDE.
-const LOG_BLOWUP: usize = 3;
+const LOG_BLOWUP: u8 = 3;
 
 // =============================================================================
 // Benchmark implementation

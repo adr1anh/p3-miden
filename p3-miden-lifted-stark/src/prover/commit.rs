@@ -14,8 +14,8 @@ use p3_matrix::{
     bitrev::{BitReversedMatrixView, BitReversibleMatrix},
     dense::{RowMajorMatrix, RowMajorMatrixView},
 };
+use p3_miden_lifted_air::log2_strict_u8;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
-use p3_util::log2_strict_usize;
 
 use crate::{StarkConfig, coset::LiftedCoset};
 
@@ -57,7 +57,7 @@ where
     /// The underlying LMCS tree.
     tree: L::Tree<M>,
     /// Log₂ of the blowup factor used during LDE.
-    log_blowup: usize,
+    log_blowup: u8,
 }
 
 impl<F, M, L> Committed<F, M, L>
@@ -73,7 +73,7 @@ where
     /// - `tree`: The LMCS tree containing committed LDE matrices
     /// - `log_blowup`: Log₂ of the blowup factor used during LDE
     #[inline]
-    pub fn new(tree: L::Tree<M>, log_blowup: usize) -> Self {
+    pub fn new(tree: L::Tree<M>, log_blowup: u8) -> Self {
         Self { tree, log_blowup }
     }
 
@@ -93,8 +93,8 @@ where
     ///
     /// This is the height of the tree (the largest matrix height).
     #[inline]
-    fn log_max_lde_height(&self) -> usize {
-        log2_strict_usize(self.tree.height())
+    fn log_max_lde_height(&self) -> u8 {
+        log2_strict_u8(self.tree.height())
     }
 
     /// Returns the [`LiftedCoset`] the `m`-th matrix was committed on.
@@ -104,7 +104,7 @@ where
     /// Panics if `m >= num_matrices()`.
     fn lifted_coset(&self, m: usize) -> LiftedCoset {
         let matrix = &self.tree.leaves()[m];
-        let log_lde_height = log2_strict_usize(matrix.height());
+        let log_lde_height = log2_strict_u8(matrix.height());
         let log_trace_height = log_lde_height - self.log_blowup;
         let log_max_trace_height = self.log_max_lde_height() - self.log_blowup;
 
@@ -189,11 +189,11 @@ where
         "traces must be sorted by height in ascending order"
     );
 
-    let log_blowup = config.pcs().fri.log_blowup;
+    let log_blowup = config.pcs().log_blowup();
 
     // Find max trace height
     let max_trace_height = traces.last().unwrap().height();
-    let log_max_trace_height = log2_strict_usize(max_trace_height);
+    let log_max_trace_height = log2_strict_u8(max_trace_height);
 
     let ldes: Vec<_> = traces
         .into_iter()
@@ -207,7 +207,7 @@ where
                 "trace height must be power of two (index {idx})"
             );
 
-            let log_trace_height = log2_strict_usize(trace_height);
+            let log_trace_height = log2_strict_u8(trace_height);
 
             // Use LiftedCoset to compute the coset shift
             let coset = LiftedCoset::new(log_trace_height, log_blowup, log_max_trace_height);
@@ -216,7 +216,7 @@ where
             // Compute coset LDE and bit-reverse rows
             config
                 .dft()
-                .coset_lde_batch(trace, log_blowup, coset_shift)
+                .coset_lde_batch(trace, log_blowup.into(), coset_shift)
                 .bit_reverse_rows()
                 .to_row_major_matrix()
         })

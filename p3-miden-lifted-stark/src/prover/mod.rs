@@ -133,11 +133,11 @@ use constraints::{evaluate_constraints_into, get_constraint_layout};
 use p3_field::{BasedVectorSpace, ExtensionField, TwoAdicField};
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_lifted_air::{
-    AirValidationError, AirWitness, AuxBuilder, LiftedAir, VarLenPublicInputs, validate_instances,
+    AirValidationError, AirWitness, AuxBuilder, LiftedAir, VarLenPublicInputs, log2_strict_u8,
+    validate_instances,
 };
 use p3_miden_lifted_fri::prover::open_with_channel;
 use p3_miden_transcript::{Channel, ProverChannel, ProverTranscript};
-use p3_util::log2_strict_usize;
 use periodic::PeriodicLde;
 use thiserror::Error;
 use tracing::{info_span, instrument};
@@ -154,8 +154,8 @@ pub enum ProverError {
          log_quotient_degree {log_quotient_degree} > log_blowup {log_blowup}"
     )]
     ConstraintDegreeTooHigh {
-        log_quotient_degree: usize,
-        log_blowup: usize,
+        log_quotient_degree: u8,
+        log_blowup: u8,
     },
 }
 
@@ -247,14 +247,14 @@ where
         })
         .collect::<Result<_, _>>()?;
     let log_max_trace_height = validate_instances(&verifier_instances)?;
-    let log_blowup = config.pcs().fri.log_blowup;
+    let log_blowup = config.pcs().log_blowup();
 
     // Infer constraint degree from symbolic AIR analysis (max across all AIRs)
     let log_constraint_degree = instances
         .iter()
         .map(|(air, _, _)| air.log_quotient_degree())
         .max()
-        .unwrap_or(1);
+        .unwrap_or(1) as u8;
 
     if log_constraint_degree > log_blowup {
         return Err(ProverError::ConstraintDegreeTooHigh {
@@ -272,7 +272,7 @@ where
 
     // 1. Commit all main traces
     // Clone with blowup × capacity so the DFT resize doesn't reallocate.
-    let blowup = 1usize << log_blowup;
+    let blowup = 1 << log_blowup as usize;
     let main_traces: Vec<_> = instances
         .iter()
         .map(|(_, w, _)| {
@@ -356,7 +356,7 @@ where
     //   3. Add constraint evaluations in-place: acc[i] += eval(i)
     //
     // Pre-allocate with LDE capacity so commit_quotient's resize doesn't reallocate.
-    let constraint_degree = 1 << log_constraint_degree;
+    let constraint_degree = 1 << log_constraint_degree as usize;
     let mut accumulator: Vec<EF> = Vec::with_capacity(max_quotient_height * blowup);
 
     // Pre-compute constraint layouts for each AIR (base/ext index mapping)
@@ -368,7 +368,7 @@ where
     info_span!("evaluate constraints").in_scope(|| {
         for (i, (air, w, _)) in instances.iter().enumerate() {
             let trace_height = w.trace.height();
-            let log_trace_height = log2_strict_usize(trace_height);
+            let log_trace_height = log2_strict_u8(trace_height);
 
             // Create LiftedCoset for this trace (may be lifted relative to max)
             let this_lde_coset =
@@ -435,7 +435,7 @@ where
 
     // 8. Sample OOD point (outside H and gK)
     let z: EF = max_lde_coset.sample_ood_point(&mut channel);
-    let h = F::two_adic_generator(log_max_trace_height);
+    let h = F::two_adic_generator(log_max_trace_height.into());
     let z_next = z * h;
 
     // 9. Open via PCS

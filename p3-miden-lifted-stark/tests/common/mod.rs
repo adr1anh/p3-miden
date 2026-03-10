@@ -5,7 +5,7 @@ use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_stark::{
     GenericStarkConfig,
     air::{AirWitness, AuxBuilder, LiftedAir},
-    fri::{DeepParams, FriFold, FriParams, PcsParams},
+    fri::PcsParams,
     lmcs::LmcsConfig,
     proof::StarkTranscript,
 };
@@ -16,17 +16,16 @@ pub type TestDft = p3_dft::Radix2DitParallel<bb::F>;
 pub type TestConfig = GenericStarkConfig<bb::F, bb::EF, TestLmcs, TestDft, bb::Challenger>;
 
 pub fn test_config() -> TestConfig {
-    let pcs = PcsParams {
-        fri: FriParams {
-            log_blowup: 2,
-            fold: FriFold::ARITY_2,
-            log_final_degree: 2,
-            folding_pow_bits: 0,
-        },
-        deep: DeepParams { deep_pow_bits: 0 },
-        num_queries: 2,
-        query_pow_bits: 0,
-    };
+    let pcs = PcsParams::new(
+        2, // log_blowup
+        1, // log_folding_arity
+        2, // log_final_degree
+        0, // folding_pow_bits
+        0, // deep_pow_bits
+        2, // num_queries
+        0, // query_pow_bits
+    )
+    .unwrap();
 
     let (_, sponge, compress) = bb::test_components();
     let lmcs: TestLmcs = LmcsConfig::new(sponge, compress);

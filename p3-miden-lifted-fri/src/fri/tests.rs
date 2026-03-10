@@ -10,8 +10,9 @@ use p3_challenger::CanObserve;
 use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::PrimeCharacteristicRing;
 use p3_matrix::{Matrix, bitrev::BitReversibleMatrix, dense::RowMajorMatrix};
+use p3_miden_lmcs::log2_strict_u8;
 use p3_miden_transcript::VerifierTranscript;
-use p3_util::{log2_strict_usize, reverse_bits_len};
+use p3_util::reverse_bits_len;
 use rand::{RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
 use super::{prover::FriPolys, verifier::FriOracle, *};
@@ -26,9 +27,9 @@ use crate::tests::{
 
 struct FriRoundtripCase {
     name: &'static str,
-    log_poly_degree: usize,
-    log_blowup: usize,
-    log_final_degree: usize,
+    log_poly_degree: u8,
+    log_blowup: u8,
+    log_final_degree: u8,
     fold: FriFold,
     folding_pow_bits: usize,
     num_queries: usize,
@@ -109,7 +110,7 @@ fn verify_queries(
         Some(challenger) => VerifierTranscript::from_data(challenger, transcript),
         None => verifier_channel(transcript),
     };
-    let log_domain_size = log2_strict_usize(lde_size);
+    let log_domain_size = log2_strict_u8(lde_size);
     let oracle = FriOracle::new(params, log_domain_size, &mut channel)?;
     oracle.test_low_degree(lmcs, params, initial_evals.clone(), &mut channel)?;
     let digest = channel
@@ -133,11 +134,11 @@ fn run_roundtrip_case(case: &FriRoundtripCase, seed: u64) -> Result<(), FriError
         random_lde_matrix::<F, EF>(&mut rng, case.log_poly_degree, case.log_blowup, 1, F::ONE)
             .values;
     let lde_size = evals.len();
-    let log_domain_size = log2_strict_usize(lde_size);
+    let log_domain_size = log2_strict_u8(lde_size);
     // Sample exponents and convert to tree indices (bit-reversed)
     let tree_indices: BTreeSet<usize> = sample_indices(&mut rng, lde_size, case.num_queries)
         .into_iter()
-        .map(|exp| reverse_bits_len(exp, log_domain_size))
+        .map(|exp| reverse_bits_len(exp, log_domain_size as usize))
         .collect();
     let initial_evals = build_initial_evals(&evals, &tree_indices);
 
@@ -179,9 +180,9 @@ fn test_fri_verify_wrong_eval() {
     let mut rng = SmallRng::seed_from_u64(42);
     let lmcs = test_lmcs();
 
-    let log_poly_degree = 8;
-    let log_blowup = 2;
-    let log_final_degree = 2;
+    let log_poly_degree: u8 = 8;
+    let log_blowup: u8 = 2;
+    let log_final_degree: u8 = 2;
 
     let params = FriParams {
         log_blowup,
@@ -192,10 +193,10 @@ fn test_fri_verify_wrong_eval() {
 
     let evals = random_lde_matrix::<F, EF>(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
     let lde_size = evals.len();
-    let log_domain_size = log2_strict_usize(lde_size);
+    let log_domain_size = log2_strict_u8(lde_size);
     let tree_indices: BTreeSet<usize> = sample_indices(&mut rng, lde_size, 2)
         .into_iter()
-        .map(|exp| reverse_bits_len(exp, log_domain_size))
+        .map(|exp| reverse_bits_len(exp, log_domain_size as usize))
         .collect();
     let mut initial_evals = build_initial_evals(&evals, &tree_indices);
 
@@ -228,9 +229,9 @@ fn test_fri_verify_wrong_beta() {
     let mut rng = SmallRng::seed_from_u64(42);
     let lmcs = test_lmcs();
 
-    let log_poly_degree = 8;
-    let log_blowup = 2;
-    let log_final_degree = 2;
+    let log_poly_degree: u8 = 8;
+    let log_blowup: u8 = 2;
+    let log_final_degree: u8 = 2;
 
     let params = FriParams {
         log_blowup,
@@ -245,12 +246,12 @@ fn test_fri_verify_wrong_beta() {
     let evals2 =
         random_lde_matrix::<F, EF>(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
     let lde_size = evals1.len();
-    let log_domain_size = log2_strict_usize(lde_size);
+    let log_domain_size = log2_strict_u8(lde_size);
 
     // Prover 1: generate FRI transcript (grinds per-round internally).
     let tree_indices: BTreeSet<usize> = sample_indices(&mut rng, lde_size, 2)
         .into_iter()
-        .map(|exp| reverse_bits_len(exp, log_domain_size))
+        .map(|exp| reverse_bits_len(exp, log_domain_size as usize))
         .collect();
     let initial_evals = build_initial_evals(&evals1, &tree_indices);
     let (_prover_digest, transcript) = prove_queries(&params, &lmcs, evals1, &tree_indices);
@@ -294,9 +295,9 @@ fn test_fri_zero_rounds_final_poly_only() {
     let mut rng = SmallRng::seed_from_u64(123);
     let lmcs = test_lmcs();
 
-    let log_poly_degree = 4;
-    let log_blowup = 0;
-    let log_final_degree = log_poly_degree; // final degree >= domain size => zero rounds
+    let log_poly_degree: u8 = 4;
+    let log_blowup: u8 = 0;
+    let log_final_degree: u8 = log_poly_degree; // final degree >= domain size => zero rounds
 
     let params = FriParams {
         log_blowup,
@@ -307,10 +308,10 @@ fn test_fri_zero_rounds_final_poly_only() {
 
     let evals = random_lde_matrix::<F, EF>(&mut rng, log_poly_degree, log_blowup, 1, F::ONE).values;
     let lde_size = evals.len();
-    let log_domain_size = log2_strict_usize(lde_size);
+    let log_domain_size = log2_strict_u8(lde_size);
     let tree_indices: BTreeSet<usize> = sample_indices(&mut rng, lde_size, 2)
         .into_iter()
-        .map(|exp| reverse_bits_len(exp, log_domain_size))
+        .map(|exp| reverse_bits_len(exp, log_domain_size as usize))
         .collect();
     let initial_evals = build_initial_evals(&evals, &tree_indices);
     let (prover_digest, transcript) = prove_queries(&params, &lmcs, evals, &tree_indices);
@@ -343,9 +344,9 @@ fn test_final_polynomial_correctness() {
     let mut rng = SmallRng::seed_from_u64(123);
     let lmcs = test_lmcs();
 
-    let log_poly_degree = 6;
-    let log_blowup = 2;
-    let log_final_degree = 3;
+    let log_poly_degree: u8 = 6;
+    let log_blowup: u8 = 2;
+    let log_final_degree: u8 = 3;
 
     let params = FriParams {
         log_blowup,
@@ -354,10 +355,10 @@ fn test_final_polynomial_correctness() {
         folding_pow_bits: 0, // No grinding for this test
     };
 
-    let poly_degree = 1 << log_poly_degree;
-    let final_degree = 1 << log_final_degree;
+    let poly_degree = 1usize << log_poly_degree;
+    let final_degree = 1usize << log_final_degree;
     let rounds = log_poly_degree - log_final_degree;
-    let stride = 1 << rounds;
+    let stride = 1usize << rounds;
 
     let g_coeffs: Vec<EF> = (0..final_degree)
         .map(|_| rng.sample(StandardUniform))
@@ -371,7 +372,7 @@ fn test_final_polynomial_correctness() {
     let dft = Radix2DFTSmallBatch::<F>::default();
     // DFT output is already in standard order for Radix2DFTSmallBatch.
     let evals_h = dft.coset_dft_algebra_batch(coeffs_matrix, F::ONE);
-    let lde = dft.coset_lde_algebra_batch(evals_h, log_blowup, F::ONE);
+    let lde = dft.coset_lde_algebra_batch(evals_h, log_blowup as usize, F::ONE);
     let evals = lde.bit_reverse_rows().to_row_major_matrix().values;
 
     let log_domain_size = log_poly_degree + log_blowup;

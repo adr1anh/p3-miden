@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 
 use p3_field::{ExtensionField, TwoAdicField, batch_multiplicative_inverse};
 use p3_maybe_rayon::prelude::*;
+use p3_miden_lifted_fri::MAX_LOG_DOMAIN_SIZE;
 use p3_miden_transcript::Channel;
 
 use crate::selectors::Selectors;
@@ -35,11 +36,11 @@ use crate::selectors::Selectors;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LiftedCoset {
     /// Log₂ of the original trace height.
-    pub log_trace_height: usize,
+    pub log_trace_height: u8,
     /// Log₂ of this matrix's LDE height.
-    pub log_lde_height: usize,
+    pub log_lde_height: u8,
     /// Log₂ of the maximum LDE height in the commitment.
-    pub log_max_lde_height: usize,
+    pub log_max_lde_height: u8,
 }
 
 impl LiftedCoset {
@@ -50,17 +51,25 @@ impl LiftedCoset {
     ///
     /// # Panics
     ///
-    /// Panics if `log_trace_height > log_max_trace_height`.
+    /// Panics if `log_trace_height > log_max_trace_height` or if
+    /// `log_max_trace_height + log_blowup > MAX_LOG_DOMAIN_SIZE`.
     #[inline]
-    pub fn new(log_trace_height: usize, log_blowup: usize, log_max_trace_height: usize) -> Self {
+    pub fn new(log_trace_height: u8, log_blowup: u8, log_max_trace_height: u8) -> Self {
         assert!(
             log_trace_height <= log_max_trace_height,
             "trace height cannot exceed max trace height"
         );
+        let log_lde_height = log_trace_height as u16 + log_blowup as u16;
+        let log_max_lde_height = log_max_trace_height as u16 + log_blowup as u16;
+        assert!(
+            log_max_lde_height <= MAX_LOG_DOMAIN_SIZE as u16,
+            "LDE height 2^{log_max_lde_height} exceeds maximum 2^{}",
+            MAX_LOG_DOMAIN_SIZE,
+        );
         Self {
             log_trace_height,
-            log_lde_height: log_trace_height + log_blowup,
-            log_max_lde_height: log_max_trace_height + log_blowup,
+            log_lde_height: log_lde_height as u8,
+            log_max_lde_height: log_max_lde_height as u8,
         }
     }
 
@@ -69,12 +78,17 @@ impl LiftedCoset {
     /// Convenience for the common single-trace case where the LDE height
     /// equals the max LDE height.
     #[inline]
-    pub fn unlifted(log_trace_height: usize, log_blowup: usize) -> Self {
-        let log_lde_height = log_trace_height + log_blowup;
+    pub fn unlifted(log_trace_height: u8, log_blowup: u8) -> Self {
+        let log_lde_height = log_trace_height as u16 + log_blowup as u16;
+        assert!(
+            log_lde_height <= MAX_LOG_DOMAIN_SIZE as u16,
+            "LDE height 2^{log_lde_height} exceeds maximum 2^{}",
+            MAX_LOG_DOMAIN_SIZE,
+        );
         Self {
             log_trace_height,
-            log_lde_height,
-            log_max_lde_height: log_lde_height,
+            log_lde_height: log_lde_height as u8,
+            log_max_lde_height: log_lde_height as u8,
         }
     }
 
@@ -85,7 +99,7 @@ impl LiftedCoset {
     /// Returns `log_lde_height - log_trace_height`.
     #[inline]
     pub fn log_blowup(&self) -> usize {
-        self.log_lde_height - self.log_trace_height
+        (self.log_lde_height - self.log_trace_height) as usize
     }
 
     /// Log₂ of the lift ratio for this matrix.
@@ -96,7 +110,7 @@ impl LiftedCoset {
     /// Returns `log_max_lde_height - log_lde_height`.
     #[inline]
     pub fn log_lift_ratio(&self) -> usize {
-        self.log_max_lde_height - self.log_lde_height
+        (self.log_max_lde_height - self.log_lde_height) as usize
     }
 
     /// Whether this matrix is lifted (its LDE height is less than the max).
@@ -122,19 +136,19 @@ impl LiftedCoset {
     /// The trace height (number of constraint rows).
     #[inline]
     pub fn trace_height(&self) -> usize {
-        1 << self.log_trace_height
+        1 << self.log_trace_height as usize
     }
 
     /// The LDE height for this matrix.
     #[inline]
     pub fn lde_height(&self) -> usize {
-        1 << self.log_lde_height
+        1 << self.log_lde_height as usize
     }
 
     /// The maximum LDE height across all matrices.
     #[inline]
     pub fn max_lde_height(&self) -> usize {
-        1 << self.log_max_lde_height
+        1 << self.log_max_lde_height as usize
     }
 
     /// The blowup factor for this matrix.
@@ -160,8 +174,8 @@ impl LiftedCoset {
     /// verifier's reconstruction. The PCS uses a larger blowup `B`, so the committed
     /// LDE domain `gK` has `N * B` points, but constraint evaluation only needs the
     /// sub-coset `gJ` of size `N * D` (with `D <= B`).
-    pub fn quotient_domain(&self, log_constraint_degree: usize) -> Self {
-        let log_blowup = self.log_blowup();
+    pub fn quotient_domain(&self, log_constraint_degree: u8) -> Self {
+        let log_blowup = self.log_lde_height - self.log_trace_height;
         assert!(
             log_constraint_degree <= log_blowup,
             "constraint degree cannot exceed blowup"
@@ -200,7 +214,7 @@ impl LiftedCoset {
 
         // Z_H(x) = xⁿ − 1 evaluated at coset points.
         // Periodic with 2^log_blowup distinct values; expand to full coset size for zip.
-        let s_pow_n = shift.exp_power_of_2(self.log_trace_height);
+        let s_pow_n = shift.exp_power_of_2(self.log_trace_height as usize);
         let z_h_periodic: Vec<F> = F::two_adic_generator(log_blowup)
             .shifted_powers(s_pow_n)
             .take(1 << log_blowup)
@@ -209,10 +223,10 @@ impl LiftedCoset {
         let period = z_h_periodic.len();
 
         // Coset points in natural order: shift·ω_Jⁱ
-        let omega_j = F::two_adic_generator(self.log_lde_height);
+        let omega_j = F::two_adic_generator(self.log_lde_height as usize);
         let xs: Vec<F> = omega_j.shifted_powers(shift).collect_n(coset_size);
 
-        let omega_h_inv = F::two_adic_generator(self.log_trace_height).inverse();
+        let omega_h_inv = F::two_adic_generator(self.log_trace_height as usize).inverse();
 
         // Unnormalized Lagrange selector: selᵢ = Z_H(xᵢ) / (xᵢ − basis_point)
         // Uses modular indexing into z_h_periodic to avoid a full-size allocation.
@@ -252,7 +266,7 @@ impl LiftedCoset {
     {
         let z_lift = z.exp_power_of_2(self.log_lift_ratio());
         let vanishing = self.vanishing_at::<F, _>(z_lift);
-        let omega_inv = F::two_adic_generator(self.log_trace_height).inverse();
+        let omega_inv = F::two_adic_generator(self.log_trace_height as usize).inverse();
 
         Selectors {
             is_first_row: vanishing / (z_lift - F::ONE),
@@ -271,7 +285,7 @@ impl LiftedCoset {
         F: TwoAdicField,
         EF: ExtensionField<F>,
     {
-        z.exp_power_of_2(self.log_trace_height) - EF::ONE
+        z.exp_power_of_2(self.log_trace_height as usize) - EF::ONE
     }
 
     // ============ Domain membership ============
@@ -286,7 +300,7 @@ impl LiftedCoset {
         F: TwoAdicField,
         EF: ExtensionField<F>,
     {
-        z.exp_power_of_2(self.log_trace_height) == EF::ONE
+        z.exp_power_of_2(self.log_trace_height as usize) == EF::ONE
     }
 
     /// Check if a point is in the LDE coset gK.
@@ -301,7 +315,7 @@ impl LiftedCoset {
     {
         let shift: F = self.lde_shift();
         let z_over_shift = z * shift.inverse();
-        z_over_shift.exp_power_of_2(self.log_lde_height) == EF::ONE
+        z_over_shift.exp_power_of_2(self.log_lde_height as usize) == EF::ONE
     }
 
     // ============ OOD point sampling ============

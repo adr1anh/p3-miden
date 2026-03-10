@@ -53,7 +53,7 @@ where
         params: &PcsParams,
         lmcs: &L,
         commitments: &[(L::Commitment, Vec<usize>)],
-        log_lde_height: usize,
+        log_lde_height: u8,
         eval_points: [EF; N],
         channel: &mut Ch,
     ) -> Result<Self, TranscriptError>
@@ -74,14 +74,14 @@ where
         let fri_transcript =
             FriTranscript::from_verifier_channel(&params.fri, log_lde_height, channel)?;
 
-        let query_pow_witness = channel.grind(params.query_pow_bits)?;
+        let query_pow_witness = channel.grind(params.query_pow_bits())?;
 
         // Sample exponents and convert to tree indices (bit-reversed),
         // matching the prover/verifier convention.
-        let tree_indices: Vec<usize> = (0..params.num_queries)
+        let tree_indices: Vec<usize> = (0..params.num_queries())
             .map(|_| {
-                let exp = channel.sample_bits(log_lde_height);
-                reverse_bits_len(exp, log_lde_height)
+                let exp = channel.sample_bits(log_lde_height as usize);
+                reverse_bits_len(exp, log_lde_height as usize)
             })
             .collect();
 
@@ -96,13 +96,14 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let log_arity = params.fri.fold.log_arity();
+        let log_arity = params.fri.fold.log_arity() as usize; // usize for shift arithmetic
         let arity = params.fri.fold.arity();
         let num_rounds = params.fri.num_rounds(log_lde_height);
 
         let mut fri_openings = Vec::with_capacity(num_rounds);
         for round in 0..num_rounds {
-            let log_num_rows = log_lde_height.saturating_sub(log_arity * (round + 1));
+            let log_num_rows =
+                (log_lde_height as usize).saturating_sub(log_arity * (round + 1)) as u8;
             let round_indices: Vec<usize> = tree_indices
                 .iter()
                 .map(|&idx| idx >> (log_arity * (round + 1)))

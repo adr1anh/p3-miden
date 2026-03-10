@@ -21,9 +21,9 @@ pub const TRACE1_WIDTH: usize = 51;
 /// Main trace width for the second (taller) trace.
 pub const TRACE2_WIDTH: usize = 20;
 /// Log₂ height of the first trace (2^18 = 262144 rows).
-pub const TRACE1_LOG_HEIGHT: usize = 18;
+pub const TRACE1_LOG_HEIGHT: u8 = 18;
 /// Log₂ height of the second trace (2^19 = 524288 rows).
-pub const TRACE2_LOG_HEIGHT: usize = 19;
+pub const TRACE2_LOG_HEIGHT: u8 = 19;
 /// Number of extension-field auxiliary columns.
 pub const NUM_AUX_COLS: usize = 8;
 
@@ -122,14 +122,14 @@ impl<F: Field, EF: ExtensionField<F>> AuxBuilder<F, EF> for DummyMidenAuxBuilder
 ///
 /// Column 0 is zero everywhere (satisfying the product constraint).
 /// Columns 1..width are filled with deterministic pseudo-random values.
-pub fn generate_dummy_trace<F>(width: usize, log_height: usize) -> RowMajorMatrix<F>
+pub fn generate_dummy_trace<F>(width: usize, log_height: u8) -> RowMajorMatrix<F>
 where
     F: Field,
     rand::distr::StandardUniform: rand::distr::Distribution<F>,
 {
     use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
-    let height = 1usize << log_height;
+    let height = 1 << log_height as usize;
     let mut values = F::zero_vec(height * width);
     let mut rng = SmallRng::seed_from_u64(42);
 

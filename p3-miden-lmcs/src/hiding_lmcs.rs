@@ -158,7 +158,7 @@ where
         &self,
         commitment: &Self::Commitment,
         widths: &[usize],
-        log_max_height: usize,
+        log_max_height: u8,
         indices: impl IntoIterator<Item = usize>,
         channel: &mut Ch,
     ) -> Result<OpenedRows<Self::F>, LmcsError>
@@ -172,7 +172,7 @@ where
     fn read_batch_proof_from_channel<Ch>(
         &self,
         widths: &[usize],
-        log_max_height: usize,
+        log_max_height: u8,
         indices: &[usize],
         channel: &mut Ch,
     ) -> Result<Self::BatchProof, LmcsError>

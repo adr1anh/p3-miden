@@ -159,7 +159,7 @@ use p3_matrix::Matrix;
 use p3_miden_transcript::{ProverChannel, TranscriptError, VerifierChannel};
 pub use proof::{BatchProof, LeafOpening, Proof};
 use thiserror::Error;
-pub use utils::RowList;
+pub use utils::{RowList, log2_strict_u8};
 
 // ============================================================================
 // Type Aliases
@@ -227,7 +227,7 @@ pub trait Lmcs: Clone {
         &self,
         commitment: &Self::Commitment,
         widths: &[usize],
-        log_max_height: usize,
+        log_max_height: u8,
         indices: impl IntoIterator<Item = usize>,
         channel: &mut Ch,
     ) -> Result<OpenedRows<Self::F>, LmcsError>
@@ -243,7 +243,7 @@ pub trait Lmcs: Clone {
     fn read_batch_proof_from_channel<Ch>(
         &self,
         widths: &[usize],
-        log_max_height: usize,
+        log_max_height: u8,
         indices: &[usize],
         channel: &mut Ch,
     ) -> Result<Self::BatchProof, LmcsError>

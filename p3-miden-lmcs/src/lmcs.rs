@@ -168,14 +168,14 @@ where
         &self,
         commitment: &Self::Commitment,
         widths: &[usize],
-        log_max_height: usize,
+        log_max_height: u8,
         indices: impl IntoIterator<Item = usize>,
         channel: &mut Ch,
     ) -> Result<OpenedRows<Self::F>, LmcsError>
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>,
     {
-        let max_height = 1usize << log_max_height;
+        let max_height = 1 << log_max_height as usize;
 
         // Collect and deduplicate indices. BTreeSet iteration yields sorted order.
         let unique_indices: BTreeSet<usize> = indices.into_iter().collect();
@@ -235,7 +235,7 @@ where
             let mut parents = Vec::new();
 
             // Process each level from leaves (level 0) up to root (level tree_depth).
-            for _level in 0..log_max_height {
+            for _level in 0..log_max_height as usize {
                 parents.reserve(children.len());
                 let mut children_iter = children.iter().peekable();
 
@@ -298,7 +298,7 @@ where
     fn read_batch_proof_from_channel<Ch>(
         &self,
         widths: &[usize],
-        log_max_height: usize,
+        log_max_height: u8,
         indices: &[usize],
         channel: &mut Ch,
     ) -> Result<Self::BatchProof, LmcsError>
@@ -329,9 +329,8 @@ mod tests {
     use p3_matrix::dense::RowMajorMatrix;
     use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
     use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
-    use p3_util::log2_strict_usize;
 
-    use crate::{Lmcs, LmcsConfig, LmcsError, LmcsTree};
+    use crate::{Lmcs, LmcsConfig, LmcsError, LmcsTree, log2_strict_u8};
 
     type TestLmcs =
         LmcsConfig<bb::P, bb::P, bb::Sponge, bb::Compress, { bb::WIDTH }, { bb::DIGEST }>;
@@ -350,7 +349,7 @@ mod tests {
         let matrices = vec![small_matrix(4, 2, 0), small_matrix(4, 3, 100)];
         let tree = lmcs.build_tree(matrices);
         let widths = tree.widths();
-        let log_max_height = log2_strict_usize(tree.height());
+        let log_max_height = log2_strict_u8(tree.height());
         let commitment = tree.root();
 
         let make_transcript = |indices: &[usize]| {
@@ -389,7 +388,7 @@ mod tests {
 
         let tiny_tree = lmcs.build_tree(vec![small_matrix(1, 1, 7)]);
         let widths_tiny = tiny_tree.widths();
-        let log_tiny = log2_strict_usize(tiny_tree.height());
+        let log_tiny = log2_strict_u8(tiny_tree.height());
         let mut prover_channel = ProverTranscript::new(bb::test_challenger());
         tiny_tree.prove_batch([0], &mut prover_channel);
         let (prover_digest, transcript) = prover_channel.finalize();
@@ -514,7 +513,7 @@ mod tests {
 
         let tree = lmcs.build_tree(vec![matrix]);
         let widths = tree.widths();
-        let log_max_height = log2_strict_usize(tree.height());
+        let log_max_height = log2_strict_u8(tree.height());
         let commitment = tree.root();
 
         // Prove then verify a single index.

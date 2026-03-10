@@ -19,9 +19,9 @@ fn deep_quotient_end_to_end() {
     let lmcs = test_lmcs();
 
     // Parameters
-    let log_blowup: usize = 2;
-    let log_lde_height = 10;
-    let lde_height = 1 << log_lde_height;
+    let log_blowup: u8 = 2;
+    let log_lde_height: u8 = 10;
+    let lde_height = 1 << log_lde_height as usize;
 
     let params = DeepParams { deep_pow_bits: 1 };
     // Two random opening points
@@ -57,7 +57,7 @@ fn deep_quotient_end_to_end() {
     // Sample tree indices (bit-reversed exponents). Tree stores in bit-reversed order.
     let tree_indices: BTreeSet<usize> = [0, 1, lde_height / 4, lde_height / 2, lde_height - 1]
         .into_iter()
-        .map(|exp| reverse_bits_len(exp, log_lde_height))
+        .map(|exp| reverse_bits_len(exp, log_lde_height as usize))
         .collect();
     tree.prove_batch(tree_indices.iter().copied(), &mut prover_channel);
     let (prover_digest, transcript) = prover_channel.finalize();

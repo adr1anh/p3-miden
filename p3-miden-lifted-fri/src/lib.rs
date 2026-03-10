@@ -45,7 +45,7 @@ pub mod verifier;
 pub mod utils;
 
 pub use deep::OpenedValues;
-pub use params::PcsParams;
+pub use params::{MAX_LOG_DOMAIN_SIZE, PcsParams, PcsParamsError};
 pub use proof::PcsTranscript;
 pub use verifier::PcsError;
 

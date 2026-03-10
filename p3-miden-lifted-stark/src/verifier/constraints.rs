@@ -184,7 +184,7 @@ where
     let omega_s = F::two_adic_generator(log_d);
 
     // u = (z/s)ᴺ where s = lde_shift
-    let u = (z * shift.inverse()).exp_power_of_2(coset.log_trace_height);
+    let u = (z * shift.inverse()).exp_power_of_2(coset.log_trace_height as usize);
 
     // Compute weighted sum: Σₜ wₜ·qₜ(z) and Σₜ wₜ
     let mut numerator = EF::ZERO;

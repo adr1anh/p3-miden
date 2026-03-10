@@ -5,9 +5,9 @@ use p3_dft::{Radix2DFTSmallBatch, TwoAdicSubgroupDft};
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::{dense::RowMajorMatrix, extension::FlatMatrixView};
 use p3_maybe_rayon::prelude::*;
-use p3_miden_lmcs::{Lmcs, LmcsTree};
+use p3_miden_lmcs::{Lmcs, LmcsTree, log2_strict_u8};
 use p3_miden_transcript::ProverChannel;
-use p3_util::{log2_strict_usize, reverse_slice_index_bits};
+use p3_util::reverse_slice_index_bits;
 use tracing::{debug_span, info_span};
 
 use crate::fri::FriParams;
@@ -97,7 +97,7 @@ where
         let mut folded_trees = Vec::new();
 
         let mut domain_size = evals.len();
-        let log_domain_size = log2_strict_usize(domain_size);
+        let log_domain_size = log2_strict_u8(domain_size);
         let final_poly_degree = params.final_poly_degree(log_domain_size);
         let final_domain_size = final_poly_degree << params.log_blowup;
 
@@ -122,8 +122,11 @@ where
         //
         // We generate sequential powers of g_inv and bit-reverse to get s_inv values
         // in the correct order for each row.
-        let g_inv = F::two_adic_generator(log_domain_size).inverse();
-        let mut s_invs: Vec<F> = g_inv.powers().take(domain_size >> log_arity).collect();
+        let g_inv = F::two_adic_generator(log_domain_size as usize).inverse();
+        let mut s_invs: Vec<F> = g_inv
+            .powers()
+            .take(domain_size >> log_arity as usize)
+            .collect();
         reverse_slice_index_bits(&mut s_invs);
 
         let mut folded_evals = evals;
@@ -134,7 +137,7 @@ where
             // ─────────────────────────────────────────────────────────────────────
             // domain_size evaluations → matrix with folded_domain_size rows × arity columns.
             // FlatMatrixView presents the EF matrix as F matrix without copying.
-            let folded_domain_size = domain_size >> log_arity;
+            let folded_domain_size = domain_size >> log_arity as usize;
             let matrix = RowMajorMatrix::new(folded_evals, arity);
             let flat_view = FlatMatrixView::new(matrix);
             // FRI round commitments use `build_tree` (unaligned) rather than
@@ -181,10 +184,10 @@ where
             //             = s_inv[k·arity]^arity
             //
             // So we select every `arity`-th element and raise to power `arity`.
-            let next_folded_size = domain_size >> log_arity;
+            let next_folded_size = domain_size >> log_arity as usize;
             s_invs = (0..next_folded_size)
                 .into_par_iter()
-                .map(|k| s_invs[k * arity].exp_power_of_2(log_arity))
+                .map(|k| s_invs[k * arity].exp_power_of_2(log_arity as usize))
                 .collect();
         }
 
@@ -237,7 +240,7 @@ where
     ) where
         Ch: ProverChannel<F = F, Commitment = L::Commitment>,
     {
-        let log_arity = params.fold.log_arity();
+        let log_arity = params.fold.log_arity() as usize; // usize for shift arithmetic
 
         // For each round, compute row indices from current indices
         for (round, tree) in self.folded_trees.iter().enumerate() {

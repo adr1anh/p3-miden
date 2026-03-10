@@ -35,7 +35,7 @@ use crate::{PcsParams, deep::prover::DeepPoly, fri::prover::FriPolys};
 pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
-    log_lde_height: usize,
+    log_lde_height: u8,
     eval_points: [EF; N],
     trace_trees: &[&L::Tree<M>],
     channel: &mut Ch,
@@ -51,7 +51,7 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     // Determine LDE domain size from the supplied LDE height.
     // For now, all trace trees must share this height; mixed LDE heights are not supported yet.
     assert!(!trace_trees.is_empty(), "at least one trace tree required");
-    let expected_height = 1usize << log_lde_height;
+    let expected_height = 1 << log_lde_height as usize;
     assert!(
         trace_trees
             .iter()
@@ -82,7 +82,7 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     // ─────────────────────────────────────────────────────────────────────────
     // Grind for query sampling
     // ─────────────────────────────────────────────────────────────────────────
-    let _query_pow_witness = channel.grind(params.query_pow_bits);
+    let _query_pow_witness = channel.grind(params.query_pow_bits());
 
     // ─────────────────────────────────────────────────────────────────────────
     // Sample query exponents and convert to tree indices
@@ -90,10 +90,10 @@ pub fn open_with_channel<F, EF, L, M, Ch, const N: usize>(
     // Exponents are domain point indices: domain point = g·ω^{exp}.
     // Tree indices are bit-reversed exponents (LMCS stores in bit-reversed order).
     // Collecting into BTreeSet ensures deduplication and sorted order.
-    let tree_indices: BTreeSet<usize> = (0..params.num_queries)
+    let tree_indices: BTreeSet<usize> = (0..params.num_queries())
         .map(|_| {
-            let exp = channel.sample_bits(log_lde_height);
-            reverse_bits_len(exp, log_lde_height)
+            let exp = channel.sample_bits(log_lde_height as usize);
+            reverse_bits_len(exp, log_lde_height as usize)
         })
         .collect();
 

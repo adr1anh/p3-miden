@@ -27,13 +27,13 @@ use crate::fixtures::BENCH_SEED;
 /// Matrices in each group are sorted by ascending height.
 pub fn generate_matrices_from_specs<F: Field>(
     specs: &[&[(usize, usize)]],
-    log_max_height: usize,
+    log_max_height: u8,
 ) -> Vec<Vec<RowMajorMatrix<F>>>
 where
     StandardUniform: Distribution<F>,
 {
     let rng = &mut SmallRng::seed_from_u64(BENCH_SEED);
-    let max_height = 1usize << log_max_height;
+    let max_height = 1 << log_max_height as usize;
 
     specs
         .iter()
@@ -53,12 +53,12 @@ where
 }
 
 /// Generate a single flat matrix for FRI fold benchmarks.
-pub fn generate_flat_matrix<F: Field>(log_height: usize, width: usize) -> RowMajorMatrix<F>
+pub fn generate_flat_matrix<F: Field>(log_height: u8, width: usize) -> RowMajorMatrix<F>
 where
     StandardUniform: Distribution<F>,
 {
     let rng = &mut SmallRng::seed_from_u64(BENCH_SEED);
-    RowMajorMatrix::rand(rng, 1 << log_height, width)
+    RowMajorMatrix::rand(rng, 1 << log_height as usize, width)
 }
 
 /// Calculate total elements across all matrices.
@@ -97,8 +97,8 @@ pub fn total_elements_flat<F: Clone + Send + Sync>(matrices: &[RowMajorMatrix<F>
 /// the coset evaluations f(gX) = Σ (c_j g^j) X^j are obtained by DFT of scaled coefficients.
 pub fn random_lde_matrix<F, V>(
     rng: &mut SmallRng,
-    log_poly_degree: usize,
-    log_blowup: usize,
+    log_poly_degree: u8,
+    log_blowup: u8,
     num_columns: usize,
     shift: F,
 ) -> RowMajorMatrix<V>
@@ -107,11 +107,11 @@ where
     V: BasedVectorSpace<F> + Clone + Send + Sync + Default,
     StandardUniform: Distribution<V>,
 {
-    let poly_degree = 1 << log_poly_degree;
+    let poly_degree = 1 << log_poly_degree as usize;
     let dft = Radix2DFTSmallBatch::<F>::default();
 
     let evals = RowMajorMatrix::rand(rng, poly_degree, num_columns);
-    let lde = dft.coset_lde_algebra_batch(evals, log_blowup, shift);
+    let lde = dft.coset_lde_algebra_batch(evals, log_blowup as usize, shift);
     lde.bit_reverse_rows().to_row_major_matrix()
 }
 

@@ -11,12 +11,11 @@ use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 use p3_miden_lifted_stark::{
     air::{
         AirBuilder, AirInstance, AuxBuilder, BaseAir, ExtensionBuilder, LiftedAir,
-        LiftedAirBuilder, ReducedAuxValues, VarLenPublicInputs, WindowAccess,
+        LiftedAirBuilder, ReducedAuxValues, VarLenPublicInputs, WindowAccess, log2_strict_u8,
     },
     prover::prove_multi,
     verifier::verify_multi,
 };
-use p3_util::log2_strict_usize;
 
 // ---------------------------------------------------------------------------
 // BusTestAir: exercises reduced_aux_values with multiset + logup buses.
@@ -230,7 +229,7 @@ fn bus_identity_check() {
         .expect("proving should succeed");
 
     let instance = AirInstance {
-        log_trace_height: log2_strict_usize(height),
+        log_trace_height: log2_strict_u8(height),
         public_values: &public_values,
         var_len_public_inputs: &var_len_pi,
     };
@@ -279,7 +278,7 @@ fn bus_wrong_var_len_pi_fails() {
     let wrong_var_len_pi: [&[bb::F]; 2] = [&wrong_input_0, &input_1];
 
     let instance = AirInstance {
-        log_trace_height: log2_strict_usize(height),
+        log_trace_height: log2_strict_u8(height),
         public_values: &public_values,
         var_len_public_inputs: &wrong_var_len_pi,
     };
@@ -331,7 +330,7 @@ fn bus_wrong_input_count_fails() {
     // Verify with WRONG input count (1 instead of 2)
     let only_one: [&[bb::F]; 1] = [&input_0];
     let instance = AirInstance {
-        log_trace_height: log2_strict_usize(height),
+        log_trace_height: log2_strict_u8(height),
         public_values: &public_values,
         var_len_public_inputs: &only_one,
     };

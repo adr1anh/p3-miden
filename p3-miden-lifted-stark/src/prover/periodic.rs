@@ -10,7 +10,7 @@
 use p3_dft::{NaiveDft, TwoAdicSubgroupDft};
 use p3_field::{PackedValue, TwoAdicField};
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
-use p3_util::log2_strict_usize;
+use p3_miden_lifted_air::log2_strict_u8;
 
 use crate::coset::LiftedCoset;
 
@@ -52,11 +52,11 @@ impl<F: TwoAdicField> PeriodicLde<F> {
         };
 
         let max_period = repeated_matrix.height();
-        let log_max_period = log2_strict_usize(max_period);
+        let log_max_period = log2_strict_u8(max_period);
         assert!(
             coset.log_trace_height >= log_max_period,
             "periodic column period ({max_period}) exceeds trace height ({})",
-            1usize << coset.log_trace_height,
+            1 << coset.log_trace_height as usize,
         );
         let log_blowup = coset.log_blowup();
 
@@ -66,7 +66,7 @@ impl<F: TwoAdicField> PeriodicLde<F> {
         // We derive the corresponding coset shift by taking the lifted coset shift
         // gʳ and mapping from trace height down to `max_period` via a power-of-two ratio.
         let log_ratio = coset.log_trace_height - log_max_period;
-        let period_shift: F = coset.lde_shift::<F>().exp_power_of_2(log_ratio);
+        let period_shift: F = coset.lde_shift::<F>().exp_power_of_2(log_ratio as usize);
 
         // Compute LDE using NaiveDft (periods are small)
         let ldes = NaiveDft
@@ -113,13 +113,9 @@ mod tests {
     type F = bb::F;
 
     /// Verify that periodic LDE values match the full LDE computation.
-    fn assert_periodic_lde_matches_full(
-        columns: &[Vec<F>],
-        log_trace_height: usize,
-        log_blowup: usize,
-    ) {
-        let trace_height = 1 << log_trace_height;
-        let lde_height = trace_height << log_blowup;
+    fn assert_periodic_lde_matches_full(columns: &[Vec<F>], log_trace_height: u8, log_blowup: u8) {
+        let trace_height = 1 << log_trace_height as usize;
+        let lde_height = trace_height << log_blowup as usize;
 
         // Create a coset at max height (no lifting)
         let coset = LiftedCoset::unlifted(log_trace_height, log_blowup);
@@ -144,7 +140,7 @@ mod tests {
                 let full: Vec<F> = (0..trace_height).map(|i| col[i % col.len()]).collect();
                 let matrix = RowMajorMatrix::new(full, 1);
                 NaiveDft
-                    .coset_lde_batch(matrix, log_blowup, F::GENERATOR)
+                    .coset_lde_batch(matrix, log_blowup.into(), F::GENERATOR)
                     .to_row_major_matrix()
                     .values
             })

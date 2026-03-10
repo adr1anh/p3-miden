@@ -5,7 +5,16 @@ use core::array;
 
 use p3_field::PackedValue;
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
+use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
+
+/// Strict log₂ returning `u8`.
+///
+/// Panics if `n` is not a power of two.
+#[inline]
+pub fn log2_strict_u8(n: usize) -> u8 {
+    log2_strict_usize(n) as u8
+}
 
 // ============================================================================
 // RowList

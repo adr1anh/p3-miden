@@ -88,8 +88,8 @@ pub enum VerifierError {
          log_quotient_degree {log_quotient_degree} > log_blowup {log_blowup}"
     )]
     ConstraintDegreeTooHigh {
-        log_quotient_degree: usize,
-        log_blowup: usize,
+        log_quotient_degree: u8,
+        log_blowup: u8,
     },
     #[error("global reduced aux identity check failed")]
     InvalidReducedAux,
@@ -118,7 +118,7 @@ pub enum VerifierError {
 pub fn verify_single<F, EF, A, SC>(
     config: &SC,
     air: &A,
-    log_trace_height: usize,
+    log_trace_height: u8,
     public_values: &[F],
     var_len_public_inputs: VarLenPublicInputs<'_, F>,
     proof: &StarkProof<F, EF, SC>,
@@ -183,7 +183,7 @@ where
     // Validate AIR properties, instance dimensions, and ascending height.
     let log_max_trace_height = validate_instances(instances)?;
 
-    let log_blowup = config.pcs().fri.log_blowup;
+    let log_blowup = config.pcs().log_blowup();
 
     // Infer constraint degree from symbolic AIR analysis (max across all AIRs).
     // NOTE: `log_quotient_degree()` runs symbolic eval and may panic if the AIR is
@@ -192,7 +192,7 @@ where
         .iter()
         .map(|(air, _)| air.log_quotient_degree())
         .max()
-        .unwrap_or(1);
+        .unwrap_or(1) as u8;
 
     if log_constraint_degree > log_blowup {
         return Err(VerifierError::ConstraintDegreeTooHigh {
@@ -201,9 +201,9 @@ where
         });
     }
 
-    let constraint_degree = 1 << log_constraint_degree;
+    let constraint_degree = 1 << log_constraint_degree as usize;
 
-    let max_trace_height = 1usize << log_max_trace_height;
+    let max_trace_height = 1 << log_max_trace_height as usize;
     let log_lde_height = log_max_trace_height + log_blowup;
 
     // Max LDE coset (for the largest trace, no lifting)
@@ -247,7 +247,7 @@ where
 
     // 6. Sample OOD point (outside max trace domain H and max LDE coset gK)
     let z: EF = max_lde_coset.sample_ood_point(&mut channel);
-    let h = F::two_adic_generator(log_max_trace_height);
+    let h = F::two_adic_generator(log_max_trace_height.into());
     let z_next = z * h;
 
     // 7. Widths per commitment group (unpadded data widths).

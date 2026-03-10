@@ -12,11 +12,11 @@ use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 pub use p3_miden_dev_utils::matrix::concatenate_matrices;
 use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
-use p3_util::log2_strict_usize;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 use crate::{
     BatchProof, HidingLmcsConfig, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, LmcsTree, Proof,
+    log2_strict_u8,
     utils::{RowList, aligned_len},
 };
 
@@ -49,7 +49,7 @@ fn verify_open_batch<C>(
     lmcs: &C,
     commitment: &Commitment,
     widths: &[usize],
-    log_max_height: usize,
+    log_max_height: u8,
     indices: &[usize],
     transcript: &TestTranscriptData,
     prover_digest: &TestDigest,
@@ -84,7 +84,7 @@ where
     M: Matrix<F>,
 {
     let widths = tree.widths();
-    let log_max_height = log2_strict_usize(tree.height());
+    let log_max_height = log2_strict_u8(tree.height());
 
     let (prover_digest, transcript) = {
         let mut prover_channel = ProverTranscript::new(bb::test_challenger());
@@ -161,7 +161,7 @@ fn lmcs_duplicate_indices_roundtrip() {
 
     let tree = lmcs.build_tree(matrices);
     let widths = tree.widths();
-    let log_max_height = log2_strict_usize(tree.height());
+    let log_max_height = log2_strict_u8(tree.height());
     let indices = [3usize, 1, 3, 0, 1];
 
     let (transcript, opened_rows) =
@@ -244,7 +244,7 @@ fn open_batch_handles_empty_or_oob() {
     let matrices = vec![RowMajorMatrix::rand(&mut rng, 4, 3)];
     let tree = lmcs.build_tree(matrices);
     let widths = tree.widths();
-    let log_max_height = log2_strict_usize(tree.height());
+    let log_max_height = log2_strict_u8(tree.height());
     let commitment = tree.root();
 
     let (prover_digest, transcript) = ProverTranscript::new(bb::test_challenger()).finalize();
@@ -327,7 +327,7 @@ fn batch_proof_handles_empty_or_oob() {
     let matrices = vec![RowMajorMatrix::rand(&mut rng, 4, 3)];
     let tree = lmcs.build_tree(matrices);
     let widths = tree.widths();
-    let log_max_height = log2_strict_usize(tree.height());
+    let log_max_height = log2_strict_u8(tree.height());
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
     tree.prove_batch([0], &mut prover_channel);

@@ -107,6 +107,7 @@ pub mod air {
         TracePart,
         VarLenPublicInputs,
         WindowAccess,
+        log2_strict_u8,
         validate_instances,
     };
 
@@ -129,9 +130,9 @@ pub mod air {
 /// PCS parameter types, transcript views, and error types for DEEP + FRI.
 pub mod fri {
     pub use p3_miden_lifted_fri::{
-        OpenedValues, PcsError, PcsParams, PcsTranscript,
-        deep::{DeepError, DeepParams, DeepTranscript},
-        fri::{FriError, FriFold, FriParams, FriRoundTranscript, FriTranscript},
+        OpenedValues, PcsError, PcsParams, PcsParamsError, PcsTranscript,
+        deep::{DeepError, DeepTranscript},
+        fri::{FriError, FriRoundTranscript, FriTranscript},
     };
 }
 
