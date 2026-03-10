@@ -16,7 +16,7 @@ use alloc::{vec, vec::Vec};
 
 use p3_challenger::CanFinalizeDigest;
 use p3_field::{ExtensionField, Field, TwoAdicField};
-use p3_miden_lifted_air::{AirInstance, LiftedAir};
+use p3_miden_lifted_air::{AirInstance, LiftedAir, validate_instances};
 use p3_miden_lifted_fri::PcsTranscript;
 use p3_miden_lmcs::{Lmcs, utils::aligned_len};
 use p3_miden_transcript::{Channel, TranscriptData, VerifierChannel, VerifierTranscript};
@@ -108,6 +108,8 @@ where
         A: LiftedAir<L::F, EF>,
         SC: StarkConfig<L::F, EF, Lmcs = L>,
     {
+        let log_max_trace_height = validate_instances(instances)?;
+
         let mut channel = VerifierTranscript::from_data(challenger, proof);
         let log_blowup = config.pcs().log_blowup();
         let alignment = config.lmcs().alignment();
@@ -118,9 +120,6 @@ where
             .map(|(air, _)| air.constraint_degree())
             .max()
             .unwrap_or(2);
-
-        // Max trace height determines the LDE domain
-        let log_max_trace_height = instances.last().unwrap().1.log_trace_height;
         let log_lde_height = log_max_trace_height + log_blowup;
 
         // Max LDE coset (for the largest trace, no lifting)
