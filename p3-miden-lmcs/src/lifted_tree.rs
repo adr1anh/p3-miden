@@ -1,12 +1,8 @@
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use core::{array, mem};
 
-use crate::utils::{PackedValueExt, RowList, aligned_widths, pad_row_to_alignment};
-use crate::{LmcsTree, Proof};
 use p3_field::PackedValue;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_maybe_rayon::prelude::*;
 use p3_miden_stateful_hasher::StatefulHasher;
 use p3_miden_transcript::ProverChannel;
@@ -14,6 +10,11 @@ use p3_symmetric::{Hash, PseudoCompressionFunction};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
 use tracing::{debug_span, info_span};
+
+use crate::{
+    LmcsTree, Proof,
+    utils::{PackedValueExt, RowList, aligned_widths, pad_row_to_alignment},
+};
 
 /// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///
@@ -106,7 +107,7 @@ where
     M: Matrix<F>,
 {
     fn root(&self) -> Hash<F, D, DIGEST_ELEMS> {
-        self.digest_layers.last().unwrap()[0].into()
+        Hash::from(self.digest_layers.last().unwrap()[0])
     }
 
     fn height(&self) -> usize {
@@ -134,6 +135,16 @@ where
                 .to_vec()
         });
         RowList::from_rows_aligned(rows_iter, self.alignment)
+    }
+
+    fn alignment(&self) -> usize {
+        self.alignment
+    }
+
+    fn widths(&self) -> Vec<usize> {
+        let alignment = self.alignment;
+        let widths = self.leaves.iter().map(|m| m.width()).collect();
+        aligned_widths(widths, alignment)
     }
 
     /// Prove a batch opening and stream it into a transcript channel.
@@ -210,16 +221,6 @@ where
 
             known = parents;
         }
-    }
-
-    fn alignment(&self) -> usize {
-        self.alignment
-    }
-
-    fn widths(&self) -> Vec<usize> {
-        let alignment = self.alignment;
-        let widths = self.leaves.iter().map(|m| m.width()).collect();
-        aligned_widths(widths, alignment)
     }
 }
 
@@ -568,15 +569,15 @@ fn validate_heights(heights: impl IntoIterator<Item = usize>) -> usize {
 mod tests {
     use alloc::vec::Vec;
 
-    use p3_matrix::Matrix;
-    use p3_matrix::dense::RowMajorMatrix;
+    use p3_matrix::{Matrix, dense::RowMajorMatrix};
     use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
     use p3_miden_stateful_hasher::StatefulHasher;
-    use rand::SeedableRng;
-    use rand::rngs::SmallRng;
+    use rand::{SeedableRng, rngs::SmallRng};
 
-    use crate::tests::{DIGEST, F, P, RATE, Sponge, build_leaves_single, concatenate_matrices};
-    use crate::utils::upsample_matrix;
+    use crate::{
+        tests::{DIGEST, F, P, RATE, Sponge, build_leaves_single, concatenate_matrices},
+        utils::upsample_matrix,
+    };
 
     fn build_leaves_upsampled(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
         let mut states = super::build_leaf_states_upsampled::<P, P, _, _, _, _>(matrices, sponge);

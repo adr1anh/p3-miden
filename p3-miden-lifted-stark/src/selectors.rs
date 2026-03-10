@@ -1,9 +1,9 @@
 //! Selector container for constraint folding.
 //!
 //! The [`Selectors`] struct is a plain container holding selector values.
-//! Computation is done via [`LiftedCoset`](crate::LiftedCoset) methods:
-//! - [`LiftedCoset::selectors`](crate::LiftedCoset::selectors) for coset evaluation (prover)
-//! - [`LiftedCoset::selectors_at`](crate::LiftedCoset::selectors_at) for lifted OOD point evaluation (verifier)
+//! Computation is done via [`LiftedCoset`](crate::coset::LiftedCoset) methods:
+//! - [`LiftedCoset::selectors`](crate::coset::LiftedCoset::selectors) for coset evaluation (prover)
+//! - [`LiftedCoset::selectors_at`](crate::coset::LiftedCoset::selectors_at) for lifted OOD point evaluation (verifier)
 
 use alloc::vec::Vec;
 
@@ -11,7 +11,7 @@ use p3_field::{PackedField, TwoAdicField};
 
 /// Selector values for constraint evaluation.
 ///
-/// Plain container for selector values. Use [`LiftedCoset`](crate::LiftedCoset) methods
+/// Plain container for selector values. Use [`LiftedCoset`](crate::coset::LiftedCoset) methods
 /// to compute selectors.
 ///
 /// Generic over `T` to support:
@@ -47,11 +47,11 @@ mod tests {
 
     use std::vec::Vec;
 
-    use super::*;
-    use crate::LiftedCoset;
     use p3_baby_bear::BabyBear;
-    use p3_field::PrimeCharacteristicRing;
-    use p3_field::extension::BinomialExtensionField;
+    use p3_field::{PrimeCharacteristicRing, extension::BinomialExtensionField};
+
+    use super::*;
+    use crate::coset::LiftedCoset;
 
     type F = BabyBear;
     type EF = BinomialExtensionField<F, 4>;

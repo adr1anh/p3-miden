@@ -153,16 +153,15 @@ macro_rules! impl_poseidon2_config {
         field_name: $field_name:literal
     ) => {
         use p3_challenger::DuplexChallenger;
-        use p3_field::Field;
-        use p3_field::extension::BinomialExtensionField;
+        use p3_field::{Field, extension::BinomialExtensionField};
         use p3_merkle_tree::MerkleTreeMmcs;
         use p3_miden_stateful_hasher::StatefulSponge;
         use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-        use rand::SeedableRng;
-        use rand::rngs::SmallRng;
-
-        use $crate::configs::{BenchScenario, PcsScenario};
-        use $crate::fixtures::TEST_SEED;
+        use rand::{SeedableRng, rngs::SmallRng};
+        use $crate::{
+            configs::{BenchScenario, PcsScenario},
+            fixtures::TEST_SEED,
+        };
 
         // =====================================================================
         // Constants
@@ -203,7 +202,7 @@ macro_rules! impl_poseidon2_config {
         pub type Compress = TruncatedPermutation<Perm, 2, DIGEST, WIDTH>;
 
         /// Base Merkle tree MMCS over packed field.
-        pub type BaseMmcs = MerkleTreeMmcs<P, P, MmcsSponge, Compress, DIGEST>;
+        pub type BaseMmcs = MerkleTreeMmcs<P, P, MmcsSponge, Compress, 2, DIGEST>;
 
         /// Duplex challenger for Fiat-Shamir.
         pub type Challenger = DuplexChallenger<F, Perm, WIDTH, RATE>;
@@ -250,7 +249,7 @@ macro_rules! impl_poseidon2_config {
 
             fn mmcs() -> Self::Mmcs {
                 let perm = create_perm();
-                Self::Mmcs::new(MmcsSponge::new(perm.clone()), Compress::new(perm))
+                Self::Mmcs::new(MmcsSponge::new(perm.clone()), Compress::new(perm), 0)
             }
         }
 
@@ -278,12 +277,10 @@ macro_rules! impl_keccak_config {
         ext_degree: $ext_deg:literal,
         field_name: $field_name:literal
     ) => {
-        use p3_field::Field;
-        use p3_field::extension::BinomialExtensionField;
+        use p3_field::{Field, extension::BinomialExtensionField};
         use p3_keccak::KeccakF;
         use p3_merkle_tree::MerkleTreeMmcs;
         use p3_symmetric::{CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher};
-
         use $crate::configs::BenchScenario;
 
         // =====================================================================
@@ -320,7 +317,7 @@ macro_rules! impl_keccak_config {
 
         /// Base Merkle tree MMCS for Keccak (with serialization).
         pub type BaseMmcs =
-            MerkleTreeMmcs<F, u64, SerializingHasher<KeccakMmcsSponge>, KeccakCompress, DIGEST>;
+            MerkleTreeMmcs<F, u64, SerializingHasher<KeccakMmcsSponge>, KeccakCompress, 2, DIGEST>;
 
         // =====================================================================
         // Scenario struct and trait implementation
@@ -342,6 +339,7 @@ macro_rules! impl_keccak_config {
                 Self::Mmcs::new(
                     SerializingHasher::new(inner.clone()),
                     KeccakCompress::new(inner),
+                    0,
                 )
             }
         }

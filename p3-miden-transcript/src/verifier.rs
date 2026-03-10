@@ -6,8 +6,10 @@ use p3_challenger::{CanSample, CanSampleBits, CanSampleUniformBits};
 use p3_field::{BasedVectorSpace, Field};
 use thiserror::Error;
 
-use crate::TranscriptData;
-use crate::channel::{Channel, TranscriptChallenger};
+use crate::{
+    TranscriptData,
+    channel::{Channel, TranscriptChallenger},
+};
 
 /// Verifier channel that reads transcript data and observes into the challenger.
 #[derive(Clone, Debug)]
@@ -31,6 +33,23 @@ impl<'a, F, C, Ch> VerifierTranscript<'a, F, C, Ch> {
     pub fn from_data(challenger: Ch, data: &'a TranscriptData<F, C>) -> Self {
         let (fields, commitments) = data.as_slices();
         Self::new(challenger, fields, commitments)
+    }
+
+    /// Finalize the transcript, checking emptiness and producing a binding digest.
+    ///
+    /// Returns [`TranscriptError::TrailingData`] if any unread fields or commitments
+    /// remain. On success, delegates to [`CanFinalizeDigest::finalize`](p3_challenger::CanFinalizeDigest::finalize) on the inner
+    /// challenger — the digest must match the prover's digest for the proof to be valid.
+    pub fn finalize(self) -> Result<Ch::Digest, TranscriptError>
+    where
+        F: Field,
+        C: Clone,
+        Ch: TranscriptChallenger<F, C>,
+    {
+        if !self.fields.is_empty() || !self.commitments.is_empty() {
+            return Err(TranscriptError::TrailingData);
+        }
+        Ok(self.challenger.finalize())
     }
 
     /// Returns the total byte size of the remaining unconsumed transcript data.
@@ -234,4 +253,6 @@ pub enum TranscriptError {
     NoMoreCommitments,
     #[error("invalid grinding witness")]
     InvalidGrinding,
+    #[error("trailing data in transcript")]
+    TrailingData,
 }

@@ -20,25 +20,65 @@
 //! Use [`LiftedAir::is_valid_builder`] to verify that a concrete builder's
 //! dimensions match the AIR before calling `eval()`.
 
-use p3_air::BaseAir;
+use alloc::vec::Vec;
+
+use p3_air::{BaseAir, WindowAccess};
 use p3_field::{ExtensionField, Field};
-use p3_matrix::{Dimensions, Matrix};
+use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_ceil_usize;
 use thiserror::Error;
 
-use crate::auxiliary::{ReducedAuxValues, ReductionError, VarLenPublicInputs};
-use crate::{AirWithPeriodicColumns, LiftedAirBuilder, SymbolicAirBuilder};
+use crate::{
+    LiftedAirBuilder,
+    auxiliary::{ReducedAuxValues, ReductionError, VarLenPublicInputs},
+    symbolic::{AirLayout, SymbolicAirBuilder, SymbolicExpressionExt},
+};
 
 /// Super-trait for AIR definitions used by the lifted STARK prover/verifier.
 ///
-/// Inherits from upstream traits for width, public values, and periodic columns.
-/// Adds Miden-specific auxiliary trace support. Every `LiftedAir` must provide
-/// an auxiliary trace (even if it is a minimal 1-column dummy).
+/// Inherits from upstream traits for width and public values.
+/// Adds Miden-specific auxiliary trace support and periodic column data.
+/// Every `LiftedAir` must provide an auxiliary trace (even if it is a minimal
+/// 1-column dummy).
 ///
 /// # Type Parameters
 /// - `F`: Base field
 /// - `EF`: Extension field (for aux trace challenges and aux values)
-pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F> {
+pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> {
+    /// Return the periodic table data: a list of columns, each a `Vec<F>` of evaluations.
+    ///
+    /// Each inner `Vec<F>` represents one periodic column. Its length is the period of
+    /// that column, and the entries are the evaluations over a subgroup of that order.
+    ///
+    /// Default: no periodic columns.
+    fn periodic_columns(&self) -> Vec<Vec<F>> {
+        Vec::new()
+    }
+
+    /// Return a matrix with all periodic columns extended to a common height.
+    ///
+    /// Columns with smaller periods are repeated cyclically to fill the extended domain.
+    /// Returns `None` if there are no periodic columns.
+    fn periodic_columns_matrix(&self) -> Option<RowMajorMatrix<F>> {
+        let cols = self.periodic_columns();
+        if cols.is_empty() {
+            return None;
+        }
+
+        let max_period = cols.iter().map(|col| col.len()).max()?;
+        let num_cols = cols.len();
+
+        let mut values = Vec::with_capacity(max_period * num_cols);
+        for row in 0..max_period {
+            for col in &cols {
+                let period = col.len();
+                values.push(col[row % period]);
+            }
+        }
+
+        Some(RowMajorMatrix::new(values, num_cols))
+    }
+
     /// Number of extension-field challenges required for the auxiliary trace.
     fn num_randomness(&self) -> usize;
 
@@ -64,9 +104,7 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
     /// Implementors of [`reduced_aux_values`](Self::reduced_aux_values) should verify
     /// that `var_len_public_inputs` contains exactly this many slices, returning
     /// [`ReductionError`] otherwise.
-    fn num_var_len_public_inputs(&self) -> usize {
-        0
-    }
+    fn num_var_len_public_inputs(&self) -> usize;
 
     /// Reduce this AIR's aux values to a [`ReducedAuxValues`] contribution.
     ///
@@ -102,6 +140,22 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
         EF: ExtensionField<F>,
     {
         Ok(ReducedAuxValues::identity())
+    }
+
+    /// Return the [`AirLayout`] describing this AIR's dimensions.
+    ///
+    /// This is the single source of truth for building symbolic or layout builders.
+    /// `preprocessed_width` is always 0 because lifted AIRs forbid preprocessed traces.
+    fn air_layout(&self) -> AirLayout {
+        AirLayout {
+            preprocessed_width: 0,
+            main_width: self.width(),
+            num_public_values: self.num_public_values(),
+            permutation_width: self.aux_width(),
+            num_permutation_challenges: self.num_randomness(),
+            num_permutation_values: self.num_aux_values(),
+            num_periodic_columns: self.periodic_columns().len(),
+        }
     }
 
     /// Validate that this AIR satisfies the [`LiftedAir`] contract.
@@ -143,7 +197,7 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
 
     /// Log₂ of the number of quotient chunks, inferred from symbolic constraint analysis.
     ///
-    /// Evaluates the AIR on a [`SymbolicAirBuilder`](crate::SymbolicAirBuilder) to determine
+    /// Evaluates the AIR on a [`SymbolicAirBuilder`](crate::symbolic::SymbolicAirBuilder) to determine
     /// the maximum constraint degree M, then returns `log2_ceil(M - 1)` (padded so M ≥ 2).
     ///
     /// Uses `SymbolicAirBuilder<F>` (i.e. `EF = F`) which is sufficient for degree
@@ -172,16 +226,7 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
     where
         Self: Sized,
     {
-        let preprocessed_width = self.preprocessed_trace().map_or(0, |t| t.width());
-        let mut builder = SymbolicAirBuilder::<F>::new(
-            preprocessed_width,
-            self.width(),
-            self.num_public_values(),
-            self.aux_width(),
-            self.num_randomness(),
-            self.num_aux_values(),
-            self.periodic_columns().len(),
-        );
+        let mut builder = SymbolicAirBuilder::<F>::new(self.air_layout());
         self.eval(&mut builder);
 
         let base_degree = builder
@@ -193,7 +238,7 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
         let ext_degree = builder
             .extension_constraints()
             .iter()
-            .map(|c| c.degree_multiple())
+            .map(|c: &SymbolicExpressionExt<F, F>| c.degree_multiple())
             .max()
             .unwrap_or(0);
         let constraint_degree = base_degree.max(ext_degree).max(2);
@@ -222,87 +267,63 @@ pub trait LiftedAir<F: Field, EF>: Sync + BaseAir<F> + AirWithPeriodicColumns<F>
     fn is_valid_builder<AB: LiftedAirBuilder<F = F>>(
         &self,
         builder: &AB,
-    ) -> Result<(), BuilderMismatchError> {
-        let expected = Dimensions {
-            width: self.width(),
-            height: 2,
-        };
-        let actual = builder.main().dimensions();
-        if actual != expected {
-            return Err(BuilderMismatchError::MainDimensions { expected, actual });
-        }
+    ) -> Result<(), AirValidationError> {
+        let check =
+            |part: TracePart, expected: usize, actual: usize| -> Result<(), AirValidationError> {
+                if actual != expected {
+                    return Err(AirValidationError::BuilderMismatch {
+                        part,
+                        expected,
+                        actual,
+                    });
+                }
+                Ok(())
+            };
 
-        let expected = Dimensions {
-            width: self.aux_width(),
-            height: 2,
-        };
-        let actual = builder.permutation().dimensions();
-        if actual != expected {
-            return Err(BuilderMismatchError::AuxDimensions { expected, actual });
-        }
+        let main = builder.main();
+        // Check current and next slices of the main trace.
+        check(TracePart::Main, self.width(), main.current_slice().len())?;
+        check(TracePart::Main, self.width(), main.next_slice().len())?;
 
-        // LiftedAir rejects preprocessed traces (checked by validate()).
-        if builder.preprocessed().is_some() {
-            return Err(BuilderMismatchError::PreprocessedPresent);
-        }
+        // Check current and next slices of the aux trace.
+        let perm = builder.permutation();
+        check(TracePart::Aux, self.aux_width(), perm.current_slice().len())?;
+        check(TracePart::Aux, self.aux_width(), perm.next_slice().len())?;
 
-        let (expected, actual) = (self.num_public_values(), builder.public_values().len());
-        if actual != expected {
-            return Err(BuilderMismatchError::PublicValuesLength { expected, actual });
-        }
-
-        let (expected, actual) = (
+        check(
+            TracePart::PublicValues,
+            self.num_public_values(),
+            builder.public_values().len(),
+        )?;
+        check(
+            TracePart::Randomness,
             self.num_randomness(),
             builder.permutation_randomness().len(),
-        );
-        if actual != expected {
-            return Err(BuilderMismatchError::RandomnessLength { expected, actual });
-        }
-
-        let (expected, actual) = (self.num_aux_values(), builder.permutation_values().len());
-        if actual != expected {
-            return Err(BuilderMismatchError::AuxValuesLength { expected, actual });
-        }
-
-        let (expected, actual) = (
+        )?;
+        check(
+            TracePart::AuxValues,
+            self.num_aux_values(),
+            builder.permutation_values().len(),
+        )?;
+        check(
+            TracePart::PeriodicValues,
             self.periodic_columns().len(),
             builder.periodic_values().len(),
-        );
-        if actual != expected {
-            return Err(BuilderMismatchError::PeriodicValuesLength { expected, actual });
-        }
+        )?;
 
         Ok(())
     }
 }
 
-/// Builder dimensions do not match the AIR specification.
-///
-/// Returned by [`LiftedAir::is_valid_builder`] when any builder accessor
-/// (main trace, aux trace, public values, randomness, aux values, or periodic values)
-/// has dimensions incompatible with the AIR.
-#[derive(Debug, Error)]
-pub enum BuilderMismatchError {
-    #[error("main trace dimensions: expected {expected:?}, got {actual:?}")]
-    MainDimensions {
-        expected: Dimensions,
-        actual: Dimensions,
-    },
-    #[error("aux trace dimensions: expected {expected:?}, got {actual:?}")]
-    AuxDimensions {
-        expected: Dimensions,
-        actual: Dimensions,
-    },
-    #[error("preprocessed trace must not be present")]
-    PreprocessedPresent,
-    #[error("public values length: expected {expected}, got {actual}")]
-    PublicValuesLength { expected: usize, actual: usize },
-    #[error("randomness length: expected {expected}, got {actual}")]
-    RandomnessLength { expected: usize, actual: usize },
-    #[error("aux values length: expected {expected}, got {actual}")]
-    AuxValuesLength { expected: usize, actual: usize },
-    #[error("periodic values length: expected {expected}, got {actual}")]
-    PeriodicValuesLength { expected: usize, actual: usize },
+/// Which part of the trace a builder mismatch refers to.
+#[derive(Copy, Clone, Debug)]
+pub enum TracePart {
+    Main,
+    Aux,
+    PublicValues,
+    Randomness,
+    AuxValues,
+    PeriodicValues,
 }
 
 /// Errors from AIR validation.
@@ -320,6 +341,12 @@ pub enum AirValidationError {
     InvalidPeriodicColumn { index: usize, length: usize },
     #[error("preprocessed traces are not supported")]
     PreprocessedTrace,
+    #[error("{part:?} dimension mismatch: expected {expected}, got {actual}")]
+    BuilderMismatch {
+        part: TracePart,
+        expected: usize,
+        actual: usize,
+    },
     #[error("aux width must be positive")]
     ZeroAuxWidth,
     #[error("trace height {height} is not a power of two")]

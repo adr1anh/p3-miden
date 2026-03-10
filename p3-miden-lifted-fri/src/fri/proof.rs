@@ -1,9 +1,11 @@
 //! FRI transcript data structures.
 
-use crate::fri::FriParams;
 use alloc::vec::Vec;
+
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
+
+use crate::fri::FriParams;
 
 /// Structured transcript view for a single FRI folding round.
 pub struct FriRoundTranscript<F, EF, Commitment> {
@@ -37,7 +39,7 @@ where
     /// that validation happens in `FriOracle::test_low_degree`.
     pub fn from_verifier_channel<Ch>(
         params: &FriParams,
-        log_domain_size: usize,
+        log_domain_size: u8,
         channel: &mut Ch,
     ) -> Result<Self, TranscriptError>
     where

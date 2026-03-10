@@ -1,25 +1,18 @@
 [workspace]
 members = [
-  "p3-air-next",
-  "p3-miden-air",
   "p3-miden-dev-utils",
-  "p3-miden-fri",
   "p3-miden-lifted-air",
   "p3-miden-lifted-examples",
   "p3-miden-lifted-fri",
-  "p3-miden-lifted-prover",
   "p3-miden-lifted-stark",
-  "p3-miden-lifted-verifier",
   "p3-miden-lmcs",
-  "p3-miden-prover",
   "p3-miden-stateful-hasher",
   "p3-miden-transcript",
-  "p3-miden-uni-stark",
 ]
 resolver = "3"
 
 [workspace.package]
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
@@ -38,57 +31,48 @@ num-bigint = { version = "0.4", default-features = false }
 paste = { version = "1.0", default-features = false }
 
 # Upstream Plonky3 dependencies
-p3-air = { default-features = false, version = "0.4.2" }
-p3-baby-bear = { default-features = false, version = "0.4.2" }
-p3-batch-stark = { default-features = false, version = "0.4.2" }
-p3-bn254 = { default-features = false, version = "0.4.2" }
-p3-challenger = { default-features = false, version = "0.4.2" }
-p3-circle = { default-features = false, version = "0.4.2" }
-p3-commit = { default-features = false, version = "0.4.2" }
-p3-dft = { default-features = false, version = "0.4.2" }
-p3-field = { default-features = false, version = "0.4.2" }
-p3-field-testing = { default-features = false, version = "0.4.2" }
-p3-fri = { default-features = false, version = "0.4.2" }
-p3-goldilocks = { default-features = false, version = "0.4.2" }
-p3-interpolation = { default-features = false, version = "0.4.2" }
-p3-keccak = { default-features = false, version = "0.4.2" }
-p3-keccak-air = { default-features = false, version = "0.4.2" }
-p3-lookup = { default-features = false, version = "0.4.2" }
-p3-koala-bear = { default-features = false, version = "0.4.2" }
-p3-matrix = { default-features = false, version = "0.4.2" }
-p3-maybe-rayon = { default-features = false, version = "0.4.2" }
-p3-mds = { default-features = false, version = "0.4.2" }
-p3-merkle-tree = { default-features = false, version = "0.4.2" }
-p3-mersenne-31 = { default-features = false, version = "0.4.2" }
-p3-poseidon = { default-features = false, version = "0.4.2" }
-p3-poseidon2 = { default-features = false, version = "0.4.2" }
-p3-poseidon2-air = { default-features = false, version = "0.4.2" }
-p3-blake3 = { default-features = false, version = "0.4.2" }
-p3-blake3-air = { default-features = false, version = "0.4.2" }
-p3-symmetric = { default-features = false, version = "0.4.2" }
-p3-uni-stark = { default-features = false, version = "0.4.2" }
-p3-util = { default-features = false, version = "0.4.2" }
-
-# Forked Plonky3 crates (pre-adapting for upstream upgrade)
-p3-air-next = { path = "p3-air-next", default-features = false }
+p3-air = { version = "0.5.0", default-features = false }
+p3-baby-bear = { version = "0.5.0", default-features = false }
+p3-batch-stark = { version = "0.5.0", default-features = false }
+p3-blake3 = { version = "0.5.0", default-features = false }
+p3-bn254 = { version = "0.5.0", default-features = false }
+p3-challenger = { version = "0.5.0", default-features = false }
+p3-circle = { version = "0.5.0", default-features = false }
+p3-commit = { version = "0.5.0", default-features = false }
+p3-dft = { version = "0.5.0", default-features = false }
+p3-field = { version = "0.5.0", default-features = false }
+p3-field-testing = { version = "0.5.0", default-features = false }
+p3-fri = { version = "0.5.0", default-features = false }
+p3-goldilocks = { version = "0.5.0", default-features = false }
+p3-interpolation = { version = "0.5.0", default-features = false }
+p3-keccak = { version = "0.5.0", default-features = false }
+p3-keccak-air = { version = "0.5.0", default-features = false }
+p3-lookup = { version = "0.5.0", default-features = false }
+p3-koala-bear = { version = "0.5.0", default-features = false }
+p3-matrix = { version = "0.5.0", default-features = false }
+p3-maybe-rayon = { version = "0.5.0", default-features = false }
+p3-mds = { version = "0.5.0", default-features = false }
+p3-merkle-tree = { version = "0.5.0", default-features = false }
+p3-mersenne-31 = { version = "0.5.0", default-features = false }
+p3-poseidon = { version = "0.5.0", default-features = false }
+p3-poseidon2 = { version = "0.5.0", default-features = false }
+p3-poseidon2-air = { version = "0.5.0", default-features = false }
+p3-blake3-air = { version = "0.5.0", default-features = false }
+p3-symmetric = { version = "0.5.0", default-features = false }
+p3-uni-stark = { version = "0.5.0", default-features = false }
+p3-util = { version = "0.5.0", default-features = false }
 
 # Internal p3-miden crates
-p3-miden-air = { path = "p3-miden-air", version = "0.4.2" }
-p3-miden-dev-utils = { path = "p3-miden-dev-utils", version = "0.4.2" }
-p3-miden-fri = { path = "p3-miden-fri", version = "0.4.2" }
-p3-miden-lifted-air = { path = "p3-miden-lifted-air", version = "0.4.2" }
-p3-miden-lifted-examples = { path = "p3-miden-lifted-examples", version = "0.4.2" }
-p3-miden-lifted-fri = { path = "p3-miden-lifted-fri", version = "0.4.2" }
-p3-miden-lifted-prover = { path = "p3-miden-lifted-prover", version = "0.4.2" }
-p3-miden-lifted-stark = { path = "p3-miden-lifted-stark", version = "0.4.2" }
-p3-miden-lifted-verifier = { path = "p3-miden-lifted-verifier", version = "0.4.2" }
-p3-miden-lmcs = { path = "p3-miden-lmcs", version = "0.4.2" }
-p3-miden-prover = { path = "p3-miden-prover", version = "0.4.2" }
-p3-miden-stateful-hasher = { path = "p3-miden-stateful-hasher", version = "0.4.2" }
-p3-miden-transcript = { path = "p3-miden-transcript", version = "0.4.2" }
-p3-miden-uni-stark = { path = "p3-miden-uni-stark", version = "0.4.2" }
+p3-miden-dev-utils = { path = "p3-miden-dev-utils", version = "0.5.0" }
+p3-miden-lifted-air = { path = "p3-miden-lifted-air", version = "0.5.0" }
+p3-miden-lifted-examples = { path = "p3-miden-lifted-examples", version = "0.5.0" }
+p3-miden-lifted-fri = { path = "p3-miden-lifted-fri", version = "0.5.0" }
+p3-miden-lifted-stark = { path = "p3-miden-lifted-stark", version = "0.5.0" }
+p3-miden-lmcs = { path = "p3-miden-lmcs", version = "0.5.0" }
+p3-miden-stateful-hasher = { path = "p3-miden-stateful-hasher", version = "0.5.0" }
+p3-miden-transcript = { path = "p3-miden-transcript", version = "0.5.0" }
 
-rand = { version = "0.9", default-features = false }
+rand = { version = "0.10.0", default-features = false }
 serde = { version = "1.0", default-features = false, features = [
   "derive",
   "alloc",

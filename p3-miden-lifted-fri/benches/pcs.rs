@@ -32,19 +32,14 @@ use p3_commit::{ExtensionMmcs, Pcs};
 use p3_dft::{Radix2DitParallel, TwoAdicSubgroupDft};
 use p3_field::Field;
 use p3_fri::{FriParameters, TwoAdicFriPcs};
-use p3_matrix::Matrix;
-use p3_matrix::bitrev::BitReversibleMatrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, bitrev::BitReversibleMatrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::{
     BenchScenario, LOG_HEIGHTS, PARALLEL_STR, PcsScenario, RELATIVE_SPECS, criterion_config_long,
     generate_matrices_from_specs, total_elements,
 };
-use p3_miden_lifted_fri::deep::DeepParams;
-use p3_miden_lifted_fri::fri::{FriFold, FriParams};
 use p3_miden_lifted_fri::{PcsParams, prover as lifted_prover};
-use p3_miden_lmcs::{Lmcs, LmcsTree};
+use p3_miden_lmcs::{Lmcs, LmcsTree, log2_strict_u8};
 use p3_miden_transcript::ProverTranscript;
-use p3_util::log2_strict_usize;
 use utils::LmcsScenario;
 
 // =============================================================================
@@ -59,6 +54,9 @@ const NUM_QUERIES: usize = 30;
 
 /// Log degree of final polynomial.
 const LOG_FINAL_DEGREE: usize = 8;
+
+/// Maximum log arity for FRI.
+const MAX_LOG_ARITY: usize = 1;
 
 // =============================================================================
 // Scenario-specific benchmark runner
@@ -115,6 +113,7 @@ macro_rules! bench_scenario {
                     let fri_params = FriParameters {
                         log_blowup: LOG_BLOWUP,
                         log_final_poly_len: LOG_FINAL_DEGREE,
+                        max_log_arity: MAX_LOG_ARITY,
                         num_queries: NUM_QUERIES,
                         commit_proof_of_work_bits: 0,
                         query_proof_of_work_bits: 0,
@@ -146,7 +145,7 @@ macro_rules! bench_scenario {
                         b.iter(|| {
                             let mut challenger = base_challenger.clone();
                             for (commitment, _) in &commits_and_data {
-                                challenger.observe(*commitment);
+                                challenger.observe(commitment.clone());
                             }
                             let z1: EF = challenger.sample_algebra_element();
                             let z2: EF = challenger.sample_algebra_element();
@@ -200,27 +199,23 @@ macro_rules! bench_scenario {
                     // Build a single LMCS tree with all matrices
                     let tree = lmcs.build_aligned_tree(all_lde_matrices);
                     let commitment = tree.root();
-                    let log_lde_height = log2_strict_usize(tree.height());
+                    let log_lde_height = log2_strict_u8(tree.height());
 
                     let base_challenger = S::challenger();
 
-                    for (name, fold) in [
-                        ("lifted/arity2", FriFold::ARITY_2),
-                        ("lifted/arity4", FriFold::ARITY_4),
+                    for (name, log_folding_arity) in [
+                        ("lifted/arity2", 1u8),
+                        ("lifted/arity4", 2u8),
                     ] {
-                        let params = PcsParams {
-                            deep: DeepParams {
-                                deep_pow_bits: 0,
-                            },
-                            fri: FriParams {
-                                log_blowup: LOG_BLOWUP,
-                                fold,
-                                log_final_degree: LOG_FINAL_DEGREE,
-                                folding_pow_bits: 0,
-                            },
-                            num_queries: NUM_QUERIES,
-                            query_pow_bits: 0,
-                        };
+                        let params = PcsParams::new(
+                            LOG_BLOWUP as u8,
+                            log_folding_arity,
+                            LOG_FINAL_DEGREE as u8,
+                            0,  // folding_pow_bits
+                            0,  // deep_pow_bits
+                            NUM_QUERIES,
+                            0,  // query_pow_bits
+                        ).expect("valid PCS params");
 
                         group.bench_function(BenchmarkId::from_parameter(name), |b| {
                             b.iter(|| {
@@ -240,7 +235,7 @@ macro_rules! bench_scenario {
                                     trace_trees,
                                     &mut channel,
                                 );
-                                black_box(channel.into_data())
+                                black_box(channel.finalize())
                             });
                         });
                     }

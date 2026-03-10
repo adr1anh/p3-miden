@@ -1,19 +1,13 @@
 //! End-to-end tests for DEEP quotient prover/verifier agreement.
 
-use alloc::collections::BTreeSet;
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec, vec::Vec};
 
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_lmcs::{Lmcs, LmcsTree};
 use p3_util::reverse_bits_len;
-use rand::distr::StandardUniform;
-use rand::prelude::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
-use super::DeepParams;
-use super::prover::DeepPoly;
-use super::verifier::DeepOracle;
+use super::{DeepParams, DeepTranscript, prover::DeepPoly, verifier::DeepOracle};
 use crate::tests::{
     EF, F, prover_channel_with_commitment, test_lmcs, verifier_channel_with_commitment,
 };
@@ -25,9 +19,9 @@ fn deep_quotient_end_to_end() {
     let lmcs = test_lmcs();
 
     // Parameters
-    let log_blowup: usize = 2;
-    let log_lde_height = 10;
-    let lde_height = 1 << log_lde_height;
+    let log_blowup: u8 = 2;
+    let log_lde_height: u8 = 10;
+    let lde_height = 1 << log_lde_height as usize;
 
     let params = DeepParams { deep_pow_bits: 1 };
     // Two random opening points
@@ -63,10 +57,10 @@ fn deep_quotient_end_to_end() {
     // Sample tree indices (bit-reversed exponents). Tree stores in bit-reversed order.
     let tree_indices: BTreeSet<usize> = [0, 1, lde_height / 4, lde_height / 2, lde_height - 1]
         .into_iter()
-        .map(|exp| reverse_bits_len(exp, log_lde_height))
+        .map(|exp| reverse_bits_len(exp, log_lde_height as usize))
         .collect();
     tree.prove_batch(tree_indices.iter().copied(), &mut prover_channel);
-    let transcript = prover_channel.into_data();
+    let (prover_digest, transcript) = prover_channel.finalize();
 
     // Create commitments slice for multi-commitment API (single commitment in this case)
     let commitments = vec![(commitment, widths)];
@@ -96,4 +90,20 @@ fn deep_quotient_end_to_end() {
             "Prover and verifier disagree at tree index {tree_idx}"
         );
     }
+
+    let verifier_digest = verifier_channel
+        .finalize()
+        .expect("transcript should finalize cleanly");
+    assert_eq!(prover_digest, verifier_digest);
+
+    // Re-parse DeepTranscript (DEEP phase only) from a fresh channel.
+    let reparse_commitments = vec![(commitment, tree.widths())];
+    let mut reparse_channel = verifier_channel_with_commitment(&transcript, &commitment);
+    DeepTranscript::<F, EF>::from_verifier_channel(
+        &params,
+        &reparse_commitments,
+        2, // num_eval_points
+        &mut reparse_channel,
+    )
+    .expect("DeepTranscript re-parse should succeed");
 }

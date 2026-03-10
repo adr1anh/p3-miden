@@ -8,20 +8,18 @@
 use p3_baby_bear::BabyBear;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_examples::DummyAuxBuilder;
-use p3_miden_lifted_examples::keccak::{LiftedKeccakAir, generate_keccak_trace};
-use p3_miden_lifted_examples::stats;
-use p3_miden_lifted_prover::{
-    AirWitness, DeepParams, FriFold, FriParams, LmcsConfig, PcsParams, ProverTranscript,
-    prove_multi,
+use p3_miden_lifted_air::{AirInstance, AirWitness};
+use p3_miden_lifted_examples::{
+    DummyAuxBuilder,
+    keccak::{LiftedKeccakAir, generate_keccak_trace},
+    stats,
 };
-use p3_miden_lifted_verifier::{AirInstance, GenericStarkConfig, VerifierTranscript};
-use p3_util::log2_strict_usize;
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use p3_miden_lifted_stark::{
+    GenericStarkConfig, air::log2_strict_u8, fri::PcsParams, lmcs::LmcsConfig, prover::prove_multi,
+};
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use tracing::info_span;
 
 // Trace S: 2^15 rows → floor(32768/24) = 1365 hashes.
@@ -34,7 +32,7 @@ const NUM_HASHES_B: usize = 21845;
 type Val = BabyBear;
 type Challenge = BinomialExtensionField<Val, 4>;
 
-const LOG_BLOWUP: usize = 1;
+const LOG_BLOWUP: u8 = 1;
 const NUM_QUERIES: usize = 100;
 const POW_BITS: usize = 16;
 
@@ -46,17 +44,16 @@ fn main() {
     type Dft = Radix2DitParallel<Val>;
     type Config = GenericStarkConfig<Val, Challenge, Lmcs, Dft, bb::Challenger>;
 
-    let pcs = PcsParams {
-        fri: FriParams {
-            log_blowup: LOG_BLOWUP,
-            fold: FriFold::ARITY_2,
-            log_final_degree: 0,
-            folding_pow_bits: POW_BITS,
-        },
-        deep: DeepParams { deep_pow_bits: 0 },
-        num_queries: NUM_QUERIES,
-        query_pow_bits: 0,
-    };
+    let pcs = PcsParams::new(
+        LOG_BLOWUP,  // log_blowup
+        1,           // log_folding_arity
+        0,           // log_final_degree
+        POW_BITS,    // folding_pow_bits
+        0,           // deep_pow_bits
+        NUM_QUERIES, // num_queries
+        0,           // query_pow_bits
+    )
+    .unwrap();
 
     let (_, sponge, compress) = bb::test_components();
     let lmcs: Lmcs = LmcsConfig::new(sponge, compress);
@@ -84,9 +81,9 @@ fn main() {
         "trace dims"
     );
 
-    let log_s = log2_strict_usize(trace_s.height());
-    let log_a = log2_strict_usize(trace_a.height());
-    let log_b = log2_strict_usize(trace_b.height());
+    let log_s = log2_strict_u8(trace_s.height());
+    let log_a = log2_strict_u8(trace_a.height());
+    let log_b = log2_strict_u8(trace_b.height());
 
     for i in 0..=bench_iters {
         if i == 0 {
@@ -103,19 +100,17 @@ fn main() {
             (&air, AirWitness::new(&trace_b, &[], &[]), &dummy_aux),
         ];
 
-        let mut channel = ProverTranscript::new(bb::test_challenger());
-        info_span!("prove").in_scope(|| {
-            prove_multi(&config, &instances, &mut channel).expect("proving failed");
+        let output = info_span!("prove").in_scope(|| {
+            prove_multi(&config, &instances, bb::test_challenger()).expect("proving failed")
         });
-        let transcript = channel.into_data();
 
         if i == 1 {
-            let size = stats::serialized_size(&transcript);
+            let size = stats::serialized_size(&output.proof);
             println!(
                 "proof size: {} ({} field elems, {} commitments)",
                 stats::format_bytes(size),
-                transcript.fields().len(),
-                transcript.commitments().len(),
+                output.proof.fields().len(),
+                output.proof.commitments().len(),
             );
         }
 
@@ -146,14 +141,14 @@ fn main() {
                     },
                 ),
             ];
-            let mut verifier_channel =
-                VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-            p3_miden_lifted_verifier::verify_multi(
+            let digest = p3_miden_lifted_stark::verifier::verify_multi(
                 &config,
                 &verifier_instances,
-                &mut verifier_channel,
+                &output.proof,
+                bb::test_challenger(),
             )
             .expect("verification failed");
+            assert_eq!(output.digest, digest);
         });
 
         if i == 0 {

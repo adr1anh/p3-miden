@@ -22,8 +22,7 @@ mod arity8;
 use alloc::vec::Vec;
 
 use p3_field::{ExtensionField, PackedValue, TwoAdicField};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrixView;
+use p3_matrix::{Matrix, dense::RowMajorMatrixView};
 use p3_maybe_rayon::prelude::*;
 
 use crate::utils::PackedFieldExtensionExt;
@@ -33,7 +32,7 @@ use crate::utils::PackedFieldExtensionExt;
 /// This struct encapsulates different folding arities (2, 4, 8).
 #[derive(Clone, Copy, Debug)]
 pub struct FriFold {
-    log_arity: usize,
+    log_arity: u8,
 }
 
 impl FriFold {
@@ -42,7 +41,7 @@ impl FriFold {
     pub const ARITY_8: Self = Self { log_arity: 3 };
 
     /// Create a new folder for a supported log-arity (currently only 1, 2, 3).
-    pub const fn new(log_arity: usize) -> Option<Self> {
+    pub const fn new(log_arity: u8) -> Option<Self> {
         if log_arity == 1 || log_arity == 2 || log_arity == 3 {
             Some(Self { log_arity })
         } else {
@@ -52,11 +51,11 @@ impl FriFold {
 
     #[inline]
     pub const fn arity(&self) -> usize {
-        1 << self.log_arity()
+        1 << self.log_arity as usize
     }
 
     #[inline]
-    pub const fn log_arity(&self) -> usize {
+    pub const fn log_arity(&self) -> u8 {
         self.log_arity
     }
 
@@ -193,9 +192,11 @@ pub mod tests {
     use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, TwoAdicField};
     use p3_matrix::dense::RowMajorMatrix;
     use p3_util::reverse_slice_index_bits;
-    use rand::distr::{Distribution, StandardUniform};
-    use rand::prelude::SmallRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{
+        RngExt, SeedableRng,
+        distr::{Distribution, StandardUniform},
+        prelude::SmallRng,
+    };
 
     use super::*;
     pub(super) use crate::tests::{EF, F};
@@ -251,7 +252,7 @@ pub mod tests {
         let rng = &mut SmallRng::seed_from_u64(1);
         let beta: Ext = rng.sample(StandardUniform);
         let arity = fold.arity();
-        let log_arity = fold.log_arity();
+        let log_arity = fold.log_arity() as usize;
 
         // Random polynomial of degree arity - 1
         let poly: Vec<Ext> = (0..arity).map(|_| rng.sample(StandardUniform)).collect();
@@ -326,7 +327,7 @@ pub mod tests {
     fn test_folding_preserves_low_degree(fold: &FriFold) {
         let rng = &mut SmallRng::seed_from_u64(42);
         let arity = fold.arity();
-        let log_arity = fold.log_arity();
+        let log_arity = fold.log_arity() as usize;
 
         let log_blowup = 2;
         let log_poly_degree = 4; // degree 16 polynomial

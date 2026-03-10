@@ -2,31 +2,30 @@
 //!
 //! Verifies polynomial evaluation claims against commitments.
 //!
-//! Three entry points with the same signature, differing only in post-processing:
+//! Two entry points with the same signature, differing only in alignment handling:
 //!
-//! | Function         | Alignment | Transcript check |
-//! |------------------|-----------|------------------|
-//! | [`verify`]       | caller    | no               |
-//! | [`verify_strict`]| caller    | yes              |
-//! | [`verify_aligned`]| automatic| no              |
+//! | Function          | Alignment |
+//! |-------------------|-----------|
+//! | [`verify`]        | caller    |
+//! | [`verify_aligned`]| automatic |
+//!
+//! Callers should use [`VerifierTranscript::finalize`](p3_miden_transcript::VerifierTranscript::finalize)
+//! after verification to check that the transcript is fully consumed.
 
-use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec::Vec};
 
 use p3_field::{ExtensionField, TwoAdicField};
-use p3_matrix::Matrix;
-use p3_matrix::horizontally_truncated::HorizontallyTruncated;
-use p3_miden_lmcs::Lmcs;
-use p3_miden_lmcs::utils::aligned_widths;
+use p3_matrix::{Matrix, horizontally_truncated::HorizontallyTruncated};
+use p3_miden_lmcs::{Lmcs, utils::aligned_widths};
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
 use thiserror::Error;
 
-use crate::deep::DeepError;
-use crate::deep::verifier::DeepOracle;
-use crate::fri::FriError;
-use crate::fri::verifier::FriOracle;
-use crate::{OpenedValues, PcsParams};
+use crate::{
+    OpenedValues, PcsParams,
+    deep::{DeepError, verifier::DeepOracle},
+    fri::{FriError, verifier::FriOracle},
+};
 
 /// Verify polynomial evaluation claims against commitments.
 ///
@@ -36,7 +35,8 @@ use crate::{OpenedValues, PcsParams};
 /// See [`verify_aligned`] for automatic alignment handling.
 ///
 /// Does **not** check that the channel is fully consumed after verification.
-/// See [`verify_strict`] for standalone usage where trailing data should be rejected.
+/// Callers should use [`VerifierTranscript::finalize`](p3_miden_transcript::VerifierTranscript::finalize)
+/// to enforce transcript exhaustion.
 ///
 /// # Preconditions
 /// - `eval_points` must lie outside both the trace-domain subgroup `H` and the
@@ -51,7 +51,7 @@ pub fn verify<F, EF, L, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
     commitments: &[(L::Commitment, Vec<usize>)],
-    log_lde_height: usize,
+    log_lde_height: u8,
     eval_points: [EF; N],
     channel: &mut Ch,
 ) -> Result<OpenedValues<EF>, PcsError>
@@ -80,14 +80,14 @@ where
     let fri_oracle = FriOracle::new(&params.fri, log_lde_height, channel)?;
 
     // Check query PoW witness and sample query indices
-    channel.grind(params.query_pow_bits)?;
+    channel.grind(params.query_pow_bits())?;
 
     // Sample exponents and convert to tree indices immediately.
     // Tree indices are bit-reversed exponents (LMCS stores in bit-reversed order).
-    let tree_indices: BTreeSet<usize> = (0..params.num_queries)
+    let tree_indices: BTreeSet<usize> = (0..params.num_queries())
         .map(|_| {
-            let exp = channel.sample_bits(log_lde_height);
-            reverse_bits_len(exp, log_lde_height)
+            let exp = channel.sample_bits(log_lde_height as usize);
+            reverse_bits_len(exp, log_lde_height as usize)
         })
         .collect();
 
@@ -101,38 +101,6 @@ where
     Ok(evals)
 }
 
-/// Like [`verify`], but rejects proofs with trailing transcript data.
-///
-/// Returns [`PcsError::TrailingData`] if any unread data remains after verification.
-/// Use this for standalone verification where the entire transcript belongs to the PCS.
-pub fn verify_strict<F, EF, L, Ch, const N: usize>(
-    params: &PcsParams,
-    lmcs: &L,
-    commitments: &[(L::Commitment, Vec<usize>)],
-    log_lde_height: usize,
-    eval_points: [EF; N],
-    channel: &mut Ch,
-) -> Result<OpenedValues<EF>, PcsError>
-where
-    F: TwoAdicField,
-    EF: ExtensionField<F> + PartialEq + Clone,
-    L: Lmcs<F = F>,
-    Ch: VerifierChannel<F = F, Commitment = L::Commitment>,
-{
-    let result = verify(
-        params,
-        lmcs,
-        commitments,
-        log_lde_height,
-        eval_points,
-        channel,
-    )?;
-    if !channel.is_empty() {
-        return Err(PcsError::TrailingData);
-    }
-    Ok(result)
-}
-
 /// Like [`verify`], but handles LMCS alignment automatically.
 ///
 /// Commitment widths should be the original (unpadded) data widths. This function:
@@ -143,7 +111,7 @@ pub fn verify_aligned<F, EF, L, Ch, const N: usize>(
     params: &PcsParams,
     lmcs: &L,
     commitments: &[(L::Commitment, Vec<usize>)],
-    log_lde_height: usize,
+    log_lde_height: u8,
     eval_points: [EF; N],
     channel: &mut Ch,
 ) -> Result<OpenedValues<EF>, PcsError>
@@ -197,8 +165,6 @@ where
 pub enum PcsError {
     #[error("no commitments provided")]
     NoCommitments,
-    #[error("trailing data in transcript after verification")]
-    TrailingData,
     #[error("DEEP error: {0}")]
     DeepError(#[from] DeepError),
     #[error("FRI error: {0}")]

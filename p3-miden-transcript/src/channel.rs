@@ -1,30 +1,34 @@
 //! Shared `Channel` trait and `TranscriptChallenger` supertrait.
 
-use p3_challenger::{CanObserve, CanSample, CanSampleBits, GrindingChallenger};
+use p3_challenger::{CanFinalizeDigest, CanObserve, CanSample, CanSampleBits, GrindingChallenger};
 use p3_field::{BasedVectorSpace, Field};
 
 /// Bundle of challenger bounds required by transcript channels.
 ///
 /// Any challenger that satisfies `CanObserve<F>`, `CanObserve<C>`, `CanSample<F>`,
-/// `CanSampleBits<usize>`, and `GrindingChallenger<Witness = F>` automatically
-/// implements this trait via a blanket impl.
+/// `CanSampleBits<usize>`, `GrindingChallenger<Witness = F>`, and
+/// `CanFinalizeDigest` automatically implements this trait via a blanket impl.
 pub trait TranscriptChallenger<F: Field, C>:
-    CanObserve<F>
+    Clone
+    + CanObserve<F>
     + CanObserve<C>
     + CanSample<F>
     + CanSampleBits<usize>
     + GrindingChallenger<Witness = F>
+    + CanFinalizeDigest
 {
 }
 
 impl<F, C, Ch> TranscriptChallenger<F, C> for Ch
 where
     F: Field,
-    Ch: CanObserve<F>
+    Ch: Clone
+        + CanObserve<F>
         + CanObserve<C>
         + CanSample<F>
         + CanSampleBits<usize>
-        + GrindingChallenger<Witness = F>,
+        + GrindingChallenger<Witness = F>
+        + CanFinalizeDigest,
 {
 }
 

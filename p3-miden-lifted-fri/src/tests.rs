@@ -2,31 +2,23 @@
 //!
 //! Re-exports test fixtures from `p3_miden_dev_utils` for use in tests.
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use p3_challenger::CanObserve;
 use p3_field::Field;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_lmcs::{Lmcs, LmcsConfig, LmcsTree};
-use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript};
-use p3_util::log2_strict_usize;
-use rand::distr::StandardUniform;
-use rand::prelude::SmallRng;
-use rand::{Rng, SeedableRng};
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
+pub use p3_miden_dev_utils::{configs::baby_bear_poseidon2::*, matrix::random_lde_matrix};
+use p3_miden_lmcs::{Lmcs, LmcsConfig, LmcsTree, log2_strict_u8, utils::aligned_widths};
+use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
+use rand::{Rng, RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
-use crate::deep::DeepParams;
-use crate::fri::{FriFold, FriParams};
-use crate::{PcsParams, prover::open_with_channel, verifier::verify_aligned};
-
-pub use p3_miden_dev_utils::configs::baby_bear_poseidon2::*;
-pub use p3_miden_dev_utils::matrix::random_lde_matrix;
+use crate::{PcsParams, PcsTranscript, prover::open_with_channel, verifier::verify_aligned};
 
 pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 pub type TestTree = <BaseLmcs as Lmcs>::Tree<RowMajorMatrix<F>>;
 pub type TestCommitment = <BaseLmcs as Lmcs>::Commitment;
 pub type TestTranscriptData = TranscriptData<F, TestCommitment>;
+pub type TestDigest = <Challenger as p3_challenger::CanFinalizeDigest>::Digest;
 pub type TestProverChannel = ProverTranscript<F, TestCommitment, Challenger>;
 pub type TestVerifierChannel<'a> = VerifierTranscript<'a, F, TestCommitment, Challenger>;
 
@@ -67,19 +59,16 @@ pub fn sample_indices<R: Rng>(rng: &mut R, upper: usize, count: usize) -> Vec<us
 }
 
 fn test_params() -> PcsParams {
-    let fri = FriParams {
-        log_blowup: 2,
-        fold: FriFold::ARITY_2,
-        log_final_degree: 2,
-        folding_pow_bits: 1,
-    };
-    let deep = DeepParams { deep_pow_bits: 1 };
-    PcsParams {
-        deep,
-        fri,
-        num_queries: 5,
-        query_pow_bits: 1,
-    }
+    PcsParams::new(
+        2, // log_blowup
+        1, // log_folding_arity (arity 2)
+        2, // log_final_degree
+        1, // folding_pow_bits
+        1, // deep_pow_bits
+        5, // num_queries
+        1, // query_pow_bits
+    )
+    .expect("valid PCS params")
 }
 
 // ============================================================================
@@ -95,7 +84,7 @@ fn run_pcs_case(params: &PcsParams, trees: Vec<TestTree>, seed: u64) -> Result<(
     let lmcs = test_lmcs();
 
     let lde_height = trees[0].leaves().last().map(|m| m.height()).unwrap_or(0);
-    let log_lde_height = log2_strict_usize(lde_height);
+    let log_lde_height = log2_strict_u8(lde_height);
     let eval_points: [EF; 2] = [rng.sample(StandardUniform), rng.sample(StandardUniform)];
 
     let commitments: Vec<_> = trees
@@ -123,7 +112,7 @@ fn run_pcs_case(params: &PcsParams, trees: Vec<TestTree>, seed: u64) -> Result<(
         &trace_trees,
         &mut prover_channel,
     );
-    let transcript = prover_channel.into_data();
+    let (prover_digest, transcript) = prover_channel.finalize();
 
     // Verifier: observe commitments in the same order.
     let mut challenger = test_challenger();
@@ -142,10 +131,38 @@ fn run_pcs_case(params: &PcsParams, trees: Vec<TestTree>, seed: u64) -> Result<(
     );
 
     if result.is_ok() {
-        assert!(
-            verifier_channel.is_empty(),
-            "transcript should be fully consumed"
-        );
+        let verifier_digest = verifier_channel
+            .finalize()
+            .expect("transcript should finalize cleanly");
+        assert_eq!(prover_digest, verifier_digest);
+
+        // Re-parse PcsTranscript from a fresh channel and verify digest agreement.
+        let alignment = lmcs.alignment();
+        let aligned_commitments: Vec<_> = commitments
+            .iter()
+            .map(|(c, widths)| (*c, aligned_widths(widths.clone(), alignment)))
+            .collect();
+
+        let mut challenger = test_challenger();
+        for (c, _) in &commitments {
+            challenger.observe(*c);
+        }
+        let mut reparse_channel = VerifierTranscript::from_data(challenger, &transcript);
+
+        PcsTranscript::<EF, BaseLmcs>::from_verifier_channel::<_, 2>(
+            params,
+            &lmcs,
+            &aligned_commitments,
+            log_lde_height,
+            eval_points,
+            &mut reparse_channel,
+        )
+        .expect("PcsTranscript re-parse should succeed");
+
+        let reparse_digest = reparse_channel
+            .finalize()
+            .expect("re-parsed transcript should finalize cleanly");
+        assert_eq!(prover_digest, reparse_digest);
     }
     result.map(|_| ())
 }
@@ -178,17 +195,16 @@ fn test_pcs_cases() {
 
     // Case 4: random (non-low-degree) data — FRI should reject.
     let rng = &mut SmallRng::seed_from_u64(77);
-    let reject_params = PcsParams {
-        deep: DeepParams { deep_pow_bits: 1 },
-        fri: FriParams {
-            log_blowup: 1,
-            fold: FriFold::ARITY_2,
-            log_final_degree: 2,
-            folding_pow_bits: 1,
-        },
-        num_queries: 20,
-        query_pow_bits: 1,
-    };
+    let reject_params = PcsParams::new(
+        1,  // log_blowup
+        1,  // log_folding_arity (arity 2)
+        2,  // log_final_degree
+        1,  // folding_pow_bits
+        1,  // deep_pow_bits
+        20, // num_queries
+        1,  // query_pow_bits
+    )
+    .expect("valid PCS params");
     let height = 1 << 8;
     let matrix = RowMajorMatrix::<F>::rand(rng, height, 3);
     let tree = lmcs.build_aligned_tree(vec![matrix]);

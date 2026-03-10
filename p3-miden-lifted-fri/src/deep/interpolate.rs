@@ -46,20 +46,15 @@
 //! where `w'ᵢ` is the weight on the squared domain. The factor of 2 cancels with the
 //! halved scaling `s'(z²) = 2·s(z)`, so the interpolation identity is preserved.
 
-use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec::Vec};
 use core::marker::PhantomData;
 
 use p3_field::{ExtensionField, FieldArray, TwoAdicField, batch_multiplicative_inverse};
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
-use p3_util::linear_map::LinearMap;
-use p3_util::{log2_strict_usize, reconstitute_from_base};
-use tracing::{debug_span, info_span};
-
 use p3_miden_lmcs::RowList;
-
-use crate::utils::MatrixExt;
+use p3_util::{linear_map::LinearMap, log2_strict_usize, reconstitute_from_base};
+use tracing::{debug_span, info_span};
 
 /// Precomputed `1/(zⱼ − xᵢ)` for N evaluation points.
 ///
@@ -129,11 +124,11 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
         &self,
         matrices_groups: &[Vec<&M>],
         coset_points: &[F],
-        log_blowup: usize,
+        log_blowup: u8,
     ) -> RowList<FieldArray<EF, N>> {
         let _span = info_span!("batch_eval_lifted", n_groups = matrices_groups.len()).entered();
         let n = coset_points.len();
-        let d = n >> log_blowup;
+        let d = n >> log_blowup as usize;
         let log_d = log2_strict_usize(d);
 
         let shift = coset_points[0]; // g in bit-reversed order
@@ -149,7 +144,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
 
         let used_degrees: BTreeSet<usize> = matrices_groups
             .iter()
-            .flat_map(|g| g.iter().map(|m| m.height() >> log_blowup))
+            .flat_map(|g| g.iter().map(|m| m.height() >> log_blowup as usize))
             .collect();
 
         // Compute barycentric weights for each point at each height:
@@ -189,7 +184,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
             .iter()
             .flat_map(|group| {
                 group.iter().map(|m| {
-                    let weights = &barycentric_weights[&(m.height() >> log_blowup)];
+                    let weights = &barycentric_weights[&(m.height() >> log_blowup as usize)];
                     let _guard =
                         debug_span!("evaluate matrix", height = weights.len(), width = m.width())
                             .entered();
@@ -208,23 +203,20 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, E
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
-    use alloc::vec::Vec;
+    use alloc::{vec, vec::Vec};
 
     use p3_dft::{NaiveDft, TwoAdicSubgroupDft};
     use p3_field::{Field, FieldArray, PrimeCharacteristicRing};
     use p3_interpolation::{interpolate_coset, interpolate_coset_with_precomputation};
-    use p3_matrix::Matrix;
-    use p3_matrix::bitrev::BitReversibleMatrix;
-    use p3_matrix::dense::RowMajorMatrix;
+    use p3_matrix::{Matrix, bitrev::BitReversibleMatrix, dense::RowMajorMatrix};
     use p3_util::reverse_slice_index_bits;
-    use rand::distr::StandardUniform;
-    use rand::prelude::SmallRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng, distr::StandardUniform, prelude::SmallRng};
 
     use super::PointQuotients;
-    use crate::tests::{EF, F};
-    use crate::utils::bit_reversed_coset_points;
+    use crate::{
+        tests::{EF, F},
+        utils::bit_reversed_coset_points,
+    };
 
     /// Verify `batch_eval_lifted` matches `interpolate_coset` for various lift factors.
     ///

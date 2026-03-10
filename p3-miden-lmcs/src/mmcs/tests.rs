@@ -4,18 +4,15 @@ use alloc::vec::Vec;
 
 use p3_commit::{BatchOpeningRef, Mmcs};
 use p3_field::PrimeCharacteristicRing;
-use p3_matrix::dense::RowMajorMatrix;
-use p3_matrix::{Dimensions, Matrix};
+use p3_matrix::{Dimensions, Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2::{
     Compress, DIGEST, F, P, Sponge, WIDTH, test_challenger, test_components,
 };
 use p3_miden_transcript::{ProverTranscript, VerifierTranscript};
-use p3_symmetric::Hash;
-use p3_util::log2_strict_usize;
-use rand::SeedableRng;
-use rand::rngs::SmallRng;
+use p3_symmetric::{Hash, MerkleCap};
+use rand::{SeedableRng, rngs::SmallRng};
 
-use crate::{BatchProof, HidingLmcsConfig, Lmcs, LmcsConfig, LmcsError, LmcsTree};
+use crate::{BatchProof, HidingLmcsConfig, Lmcs, LmcsConfig, LmcsError, LmcsTree, log2_strict_u8};
 
 type BaseMmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 type RowMatrix = RowMajorMatrix<F>;
@@ -34,11 +31,11 @@ fn hiding_mmcs(rng: SmallRng) -> HidingMmcs {
     HidingLmcsConfig::new(sponge, compress, rng)
 }
 
-fn tree_context<C, T>(tree: &T) -> (C, Vec<Dimensions>, usize)
+fn tree_context_cap<T>(tree: &T) -> (MerkleCap<F, [F; DIGEST]>, Vec<Dimensions>, usize)
 where
-    T: LmcsTree<F, C, RowMatrix>,
+    T: LmcsTree<F, Hash<F, F, DIGEST>, RowMatrix>,
 {
-    let commitment = tree.root();
+    let commitment = MerkleCap::from(tree.root());
     let dimensions = tree
         .leaves()
         .iter()
@@ -81,12 +78,12 @@ fn extract_proofs_roundtrip() {
     let test = |seed: u64, shapes: &[(usize, usize)], indices: &[usize]| {
         let tree = build_tree_with_alignment(&mmcs, seed, shapes, false);
         let widths = tree.widths();
-        let log_max_height = log2_strict_usize(tree.height());
-        let (commitment, dimensions, _) = tree_context(&tree);
+        let log_max_height = log2_strict_u8(tree.height());
+        let (commitment, dimensions, _) = tree_context_cap(&tree);
 
         let mut prover_channel = ProverTranscript::new(test_challenger());
         tree.prove_batch(indices.iter().copied(), &mut prover_channel);
-        let transcript = prover_channel.into_data();
+        let (_, transcript) = prover_channel.finalize();
 
         let mut verifier_channel = VerifierTranscript::from_data(test_challenger(), &transcript);
         let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
@@ -109,7 +106,13 @@ fn extract_proofs_roundtrip() {
                 "path mismatch for index {idx} at position {pos}"
             );
 
-            let opening_proof = (proof.salt, proof.siblings.clone());
+            let siblings_cap: Vec<MerkleCap<F, [F; DIGEST]>> = proof
+                .siblings
+                .iter()
+                .copied()
+                .map(MerkleCap::from)
+                .collect();
+            let opening_proof = (proof.salt, siblings_cap);
             let rows_vec: Vec<Vec<F>> = proof.rows.iter_rows().map(|r| r.to_vec()).collect();
             let batch_opening = BatchOpeningRef {
                 opened_values: &rows_vec,
@@ -130,7 +133,7 @@ fn extract_proofs_roundtrip() {
 fn mmcs_roundtrip_non_hiding() {
     let mmcs = mmcs();
     let tree = build_tree_with_alignment(&mmcs, 10, BASE_SHAPES, false);
-    let (commitment, dimensions, index) = tree_context(&tree);
+    let (commitment, dimensions, index) = tree_context_cap(&tree);
 
     let batch_opening = Mmcs::open_batch(&mmcs, index, &tree);
     Mmcs::verify_batch(
@@ -156,7 +159,7 @@ fn mmcs_roundtrip_non_hiding() {
 fn mmcs_roundtrip_hiding() {
     let mmcs = hiding_mmcs(SmallRng::seed_from_u64(12));
     let tree = build_tree_with_alignment(&mmcs, 11, BASE_SHAPES, false);
-    let (commitment, dimensions, index) = tree_context(&tree);
+    let (commitment, dimensions, index) = tree_context_cap(&tree);
 
     let batch_opening = Mmcs::open_batch(&mmcs, index, &tree);
     Mmcs::verify_batch(
@@ -267,7 +270,7 @@ fn mmcs_verify_rejects_invalid_openings() {
 
     for case in cases {
         let tree = build_tree_with_alignment(&mmcs, case.seed, BASE_SHAPES, case.aligned);
-        let (commitment, dimensions, index) = tree_context(&tree);
+        let (commitment, dimensions, index) = tree_context_cap(&tree);
         let unaligned_dimensions: Vec<Dimensions> = tree
             .leaves()
             .iter()

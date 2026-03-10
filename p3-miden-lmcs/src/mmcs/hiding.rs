@@ -12,13 +12,14 @@ use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::PackedValue;
 use p3_matrix::{Dimensions, Matrix};
 use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
-use p3_symmetric::{Hash, PseudoCompressionFunction};
-use rand::Rng;
-use rand::distr::{Distribution, StandardUniform};
+use p3_symmetric::{MerkleCap, PseudoCompressionFunction};
+use rand::{
+    Rng,
+    distr::{Distribution, StandardUniform},
+};
 use serde::{Deserialize, Serialize};
 
-use crate::lifted_tree::LiftedMerkleTree;
-use crate::{HidingLmcsConfig, Lmcs, LmcsError, LmcsTree};
+use crate::{HidingLmcsConfig, Lmcs, LmcsError, LmcsTree, lifted_tree::LiftedMerkleTree};
 
 // ============================================================================
 // Mmcs implementation for HidingLmcsConfig
@@ -43,7 +44,7 @@ where
     [PF::Value; SALT_ELEMS]: Serialize + for<'de> Deserialize<'de>,
 {
     type ProverData<M> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST_ELEMS, SALT_ELEMS>;
-    type Commitment = Hash<PF::Value, PD::Value, DIGEST_ELEMS>;
+    type Commitment = MerkleCap<PF::Value, [PD::Value; DIGEST_ELEMS]>;
     /// Proof includes salt and siblings: `([F; SALT_ELEMS], Vec<Self::Commitment>)`
     type Proof = ([PF::Value; SALT_ELEMS], Vec<Self::Commitment>);
     type Error = LmcsError;
@@ -53,7 +54,7 @@ where
         inputs: Vec<M>,
     ) -> (Self::Commitment, Self::ProverData<M>) {
         let tree = self.build_tree(inputs);
-        (tree.root(), tree)
+        (MerkleCap::from(tree.root()), tree)
     }
 
     fn open_batch<M: Matrix<PF::Value>>(
@@ -63,11 +64,11 @@ where
     ) -> BatchOpening<PF::Value, Self> {
         let BatchOpening {
             opened_values,
-            opening_proof,
+            opening_proof: (salt, siblings_cap),
         } = Mmcs::open_batch(&self.inner, index, tree);
         BatchOpening {
             opened_values,
-            opening_proof,
+            opening_proof: (salt, siblings_cap),
         }
     }
 

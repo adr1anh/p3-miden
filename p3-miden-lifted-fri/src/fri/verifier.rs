@@ -22,8 +22,7 @@
 //!
 //! After each fold, we shift off `log_arity` bits, moving to the parent coset.
 
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_miden_lmcs::{Lmcs, LmcsError};
@@ -31,8 +30,7 @@ use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use p3_util::reverse_bits_len;
 use thiserror::Error;
 
-use crate::fri::FriParams;
-use crate::utils::horner;
+use crate::{fri::FriParams, utils::horner};
 
 /// FRI low-degree test oracle.
 ///
@@ -51,7 +49,7 @@ where
     L: Lmcs<F = F>,
 {
     /// Log₂ of the initial domain size.
-    log_domain_size: usize,
+    log_domain_size: u8,
     /// Per-round commitment and folding challenge.
     rounds: Vec<FriRoundOracle<L::Commitment, EF>>,
     /// Coefficients of the final low-degree polynomial in descending degree order
@@ -73,7 +71,7 @@ where
     /// Create oracle by reading from a verifier channel.
     pub fn new<Ch>(
         params: &FriParams,
-        log_domain_size: usize,
+        log_domain_size: u8,
         channel: &mut Ch,
     ) -> Result<Self, FriError>
     where
@@ -129,13 +127,13 @@ where
         let widths = [base_width];
 
         let mut log_domain_size = self.log_domain_size;
-        let mut g_inv = F::two_adic_generator(log_domain_size).inverse();
+        let mut g_inv = F::two_adic_generator(log_domain_size as usize).inverse();
 
         for (round_idx, round) in self.rounds.iter().enumerate() {
             let log_folded_domain_size = log_domain_size - log_arity;
 
             // Compute row indices: shift off position-within-coset bits
-            let row_indices = evals.keys().map(|&idx| idx >> log_arity);
+            let row_indices = evals.keys().map(|&idx| idx >> log_arity as usize);
 
             let opened_rows = lmcs
                 .open_batch(
@@ -191,7 +189,7 @@ where
                     }
 
                     // s⁻¹ = (g^{bitrev(row_idx)})⁻¹, needed for iFFT over <s>.
-                    let s_pow = reverse_bits_len(row_idx, log_folded_domain_size);
+                    let s_pow = reverse_bits_len(row_idx, log_folded_domain_size as usize);
                     let s_inv = g_inv.exp_u64(s_pow as u64);
                     let folded = params.fold.fold_evals(&row, s_inv, round.beta);
                     Ok((row_idx, folded))
@@ -199,7 +197,7 @@ where
                 .collect::<Result<_, _>>()?;
 
             log_domain_size = log_folded_domain_size;
-            g_inv = g_inv.exp_power_of_2(log_arity);
+            g_inv = g_inv.exp_power_of_2(log_arity as usize);
         }
 
         // After all folding rounds, the polynomial has been reduced to degree < final_degree.
@@ -210,9 +208,9 @@ where
         //
         // `final_poly` is in descending degree order [cₙ, ..., c₁, c₀], which is
         // the native order for Horner evaluation.
-        let generator = F::two_adic_generator(log_domain_size);
+        let generator = F::two_adic_generator(log_domain_size as usize);
         for (idx, eval) in evals {
-            let exp = reverse_bits_len(idx, log_domain_size);
+            let exp = reverse_bits_len(idx, log_domain_size as usize);
             let x = generator.exp_u64(exp as u64);
             let final_eval: EF = horner(x, self.final_poly.iter().copied());
 

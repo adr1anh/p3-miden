@@ -1,24 +1,29 @@
-//! Lifted STARK shared scaffolding (LMCS-based).
+//! Lifted STARK prover and verifier (LMCS-based).
 //!
-//! This crate contains shared types and utilities used by the lifted STARK
-//! prover and verifier crates:
+//! This crate is the main facade for the lifted STARK protocol. It re-exports types from
+//! sub-crates under namespaced modules so consumers can depend on just this crate.
 //!
-//! - [`LiftedCoset`]: Central abstraction for domain operations (selectors, vanishing, etc.)
-//! - [`StarkConfig`]: Minimal configuration wrapping PCS params, LMCS, and DFT
-//! - [`Selectors`]: Constraint selectors for OOD and coset evaluation
-//! - [`AirWitness`]: Prover witness (trace + public values)
-//! - [`AirInstance`]: Verifier instance (log height + public values)
+//! # Modules
+//!
+//! - [`proof`]: [`proof::StarkProof`], [`proof::StarkDigest`], [`proof::StarkOutput`], [`proof::StarkTranscript`]
+//! - [`air`]: AIR traits, instance/witness types, and upstream `p3-air` re-exports
+//! - [`prover`]: [`prover::prove_single`] / [`prover::prove_multi`] entry points
+//! - [`verifier`]: [`verifier::verify_single`] / [`verifier::verify_multi`] entry points
+//! - [`fri`]: PCS parameters, transcript types, and error types (DEEP + FRI)
+//! - [`lmcs`]: LMCS configuration, proof types, and MMCS compatibility
+//! - [`transcript`]: Fiat-Shamir channels and transcript data
+//! - [`hasher`]: Stateful hasher primitives for LMCS construction
 //!
 //! # AIR Trust Model
 //!
 //! The lifted STARK has three trust domains:
 //!
-//! 1. **AIR = trusted** — [`LiftedAir`](p3_miden_lifted_air::LiftedAir) implementations are
+//! 1. **AIR = trusted** — [`air::LiftedAir`] implementations are
 //!    correct application code. It is the AIR implementer's responsibility to satisfy the
-//!    contract below. [`LiftedAir::validate`](p3_miden_lifted_air::LiftedAir::validate)
+//!    contract below. [`air::LiftedAir::validate`]
 //!    checks the statically-verifiable subset.
 //!
-//! 2. **Instance = validated** — The prover validates that its witness matches the AIR spec
+//! 2. **Instance = validated** — The prover validates that its witness matches the AIR spec.
 //!    The verifier validates instance metadata.
 //!    Both return structured errors.
 //!
@@ -27,8 +32,8 @@
 //!
 //! ## Validated properties
 //!
-//! These are checked by [`LiftedAir::validate`](p3_miden_lifted_air::LiftedAir::validate)
-//! and [`AirInstance::validate`](p3_miden_lifted_air::AirInstance::validate), and enforced
+//! These are checked by [`air::LiftedAir::validate`]
+//! and [`air::AirInstance::validate`], and enforced
 //! by both prover and verifier before proceeding:
 //!
 //! - **No preprocessed trace** — the lifted protocol does not support them.
@@ -56,23 +61,98 @@
 extern crate alloc;
 
 mod config;
-mod coset;
-mod selectors;
-mod util;
+/// Domain/coset operations for lifted traces.
+pub mod coset;
+/// Debug constraint checker for lifted AIRs.
+pub mod debug;
+pub(crate) mod selectors;
 
 pub use config::*;
-pub use coset::*;
-pub use p3_miden_lifted_air::{AirInstance, AirWitness};
-pub use selectors::*;
-pub use util::*;
 
-// Re-export PCS parameter types from p3-miden-lifted-fri.
-pub use p3_miden_lifted_fri::PcsParams;
-pub use p3_miden_lifted_fri::deep::DeepParams;
-pub use p3_miden_lifted_fri::fri::{FriFold, FriParams};
+pub mod proof;
+pub mod prover;
+pub mod verifier;
 
-// Re-export LMCS types from p3-miden-lmcs.
-pub use p3_miden_lmcs::{Lmcs, LmcsConfig};
+// ============================================================================
+// Namespaced re-exports from sub-crates
+// ============================================================================
 
-// Re-export transcript data type (needed to transfer proofs between prover and verifier).
-pub use p3_miden_transcript::TranscriptData;
+/// AIR traits, instance/witness types, and upstream `p3-air` re-exports.
+///
+/// This module re-exports items from [`p3_miden_lifted_air`], which in turn
+/// re-exports `p3-air` types. Consumers should never need to depend on `p3-air`
+/// directly.
+pub mod air {
+    pub use p3_miden_lifted_air::{
+        // Upstream p3-air re-exports
+        Air,
+        AirBuilder,
+        AirBuilderWithContext,
+        // Lifted AIR types
+        AirInstance,
+        AirValidationError,
+        AirWitness,
+        AuxBuilder,
+        BaseAir,
+        EmptyWindow,
+        ExtensionBuilder,
+        FilteredAirBuilder,
+        LiftedAir,
+        LiftedAirBuilder,
+        PeriodicAirBuilder,
+        PermutationAirBuilder,
+        ReducedAuxValues,
+        ReductionError,
+        RowWindow,
+        TracePart,
+        VarLenPublicInputs,
+        WindowAccess,
+        log2_strict_u8,
+        validate_instances,
+    };
+
+    /// Symbolic constraint analysis types from upstream p3-air.
+    pub mod symbolic {
+        pub use p3_miden_lifted_air::symbolic::*;
+    }
+
+    /// Auxiliary trace types (builder, cross-AIR identity checking).
+    pub mod auxiliary {
+        pub use p3_miden_lifted_air::auxiliary::*;
+    }
+
+    /// AIR constraint utility functions from upstream p3-air.
+    pub mod utils {
+        pub use p3_miden_lifted_air::utils::*;
+    }
+}
+
+/// PCS parameter types, transcript views, and error types for DEEP + FRI.
+pub mod fri {
+    pub use p3_miden_lifted_fri::{
+        OpenedValues, PcsError, PcsParams, PcsParamsError, PcsTranscript,
+        deep::{DeepError, DeepTranscript},
+        fri::{FriError, FriRoundTranscript, FriTranscript},
+    };
+}
+
+/// LMCS configuration, tree types, and proof structures.
+pub mod lmcs {
+    pub use p3_miden_lmcs::{
+        HidingLmcsConfig, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, LmcsTree, OpenedRows,
+        proof::{BatchProof, LeafOpening, Proof},
+        utils::RowList,
+    };
+}
+
+/// Fiat-Shamir transcript channels and data types.
+pub mod transcript {
+    pub use p3_miden_transcript::{TranscriptChallenger, TranscriptData, TranscriptError};
+}
+
+/// Stateful hasher primitives for LMCS construction.
+pub mod hasher {
+    pub use p3_miden_stateful_hasher::{
+        Alignable, ChainingHasher, SerializingStatefulSponge, StatefulHasher, StatefulSponge,
+    };
+}

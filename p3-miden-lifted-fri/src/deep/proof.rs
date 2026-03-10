@@ -1,10 +1,12 @@
 //! DEEP transcript data structures.
 
-use crate::deep::{DeepParams, read_eval_matrices};
 use alloc::vec::Vec;
+
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_transcript::{Channel, TranscriptError, VerifierChannel};
+
+use crate::deep::{DeepParams, read_eval_matrices};
 
 /// Opened evaluations grouped by commitment group and matrix.
 ///

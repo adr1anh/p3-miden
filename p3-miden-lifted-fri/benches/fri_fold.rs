@@ -19,13 +19,14 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use p3_field::{ExtensionField, TwoAdicField};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::{BENCH_SEED, BenchScenario, LOG_HEIGHTS, PARALLEL_STR, criterion_config};
 use p3_miden_lifted_fri::fri::FriFold;
-use rand::distr::{Distribution, StandardUniform};
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{
+    RngExt, SeedableRng,
+    distr::{Distribution, StandardUniform},
+    rngs::SmallRng,
+};
 
 /// Target number of rows after all folding rounds.
 const TARGET: usize = 8;

@@ -13,17 +13,13 @@ use std::time::Instant;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_dft::{Radix2DitParallel, TwoAdicSubgroupDft};
 use p3_field::Field;
-use p3_matrix::Matrix;
-use p3_matrix::bitrev::BitReversibleMatrix;
-use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_dev_utils::configs::goldilocks_poseidon2 as gl;
-use p3_miden_dev_utils::{LOG_HEIGHTS, RELATIVE_SPECS, generate_matrices_from_specs};
-use p3_miden_lifted_fri::deep::DeepParams;
-use p3_miden_lifted_fri::fri::{FriFold, FriParams};
+use p3_matrix::{Matrix, bitrev::BitReversibleMatrix, dense::RowMajorMatrix};
+use p3_miden_dev_utils::{
+    LOG_HEIGHTS, RELATIVE_SPECS, configs::goldilocks_poseidon2 as gl, generate_matrices_from_specs,
+};
 use p3_miden_lifted_fri::{PcsParams, prover as lifted_prover};
-use p3_miden_lmcs::{Lmcs, LmcsConfig, LmcsTree};
+use p3_miden_lmcs::{Lmcs, LmcsConfig, LmcsTree, log2_strict_u8};
 use p3_miden_transcript::ProverTranscript;
-use p3_util::log2_strict_usize;
 use tracing_subscriber::EnvFilter;
 
 type F = gl::F;
@@ -44,17 +40,16 @@ fn main() {
     let dft = Radix2DitParallel::<F>::default();
     let shift = F::GENERATOR;
 
-    let params = PcsParams {
-        deep: DeepParams { deep_pow_bits: 0 },
-        fri: FriParams {
-            log_blowup: 2,
-            fold: FriFold::ARITY_4,
-            log_final_degree: 8,
-            folding_pow_bits: 0,
-        },
-        num_queries: 30,
-        query_pow_bits: 0,
-    };
+    let params = PcsParams::new(
+        2,  // log_blowup
+        2,  // log_folding_arity (arity 4)
+        8,  // log_final_degree
+        0,  // folding_pow_bits
+        0,  // deep_pow_bits
+        30, // num_queries
+        0,  // query_pow_bits
+    )
+    .expect("valid PCS params");
 
     for &log_lde_height in LOG_HEIGHTS {
         let size = 1usize << log_lde_height;
@@ -84,7 +79,7 @@ fn main() {
 
         let tree = lmcs.build_aligned_tree(all_lde_matrices);
         let commitment = tree.root();
-        let log_lde_height = log2_strict_usize(tree.height());
+        let log_lde_height = log2_strict_u8(tree.height());
 
         let mut challenger = gl::test_challenger();
         challenger.observe(commitment);

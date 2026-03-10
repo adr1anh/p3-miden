@@ -16,16 +16,19 @@
 //! cargo bench --bench fri_comparison -- goldilocks
 //! ```
 
+use core::marker::PhantomData;
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use p3_fri::{FriFoldingStrategy, TwoAdicFriFolding};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_miden_dev_utils::{BENCH_SEED, BenchScenario, LOG_HEIGHTS, PARALLEL_STR, criterion_config};
-use p3_miden_fri::{FriFoldingStrategy, TwoAdicFriFolding};
 use p3_miden_lifted_fri::fri::FriFold;
-use rand::distr::{Distribution, StandardUniform};
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{
+    RngExt, SeedableRng,
+    distr::{Distribution, StandardUniform},
+    rngs::SmallRng,
+};
 
 /// Benchmark FRI fold comparison for a specific field scenario.
 fn bench_scenario<S: BenchScenario>(c: &mut Criterion)
@@ -47,9 +50,9 @@ where
         let mat = RowMajorMatrix::new(values, 2);
 
         // Workspace benchmark - TwoAdicFriFolding computes domain points internally
-        let workspace_folding: TwoAdicFriFolding<(), ()> = TwoAdicFriFolding::default();
+        let workspace_folding = TwoAdicFriFolding::<(), ()>(PhantomData);
         group.bench_function(BenchmarkId::from_parameter("workspace"), |b| {
-            b.iter(|| workspace_folding.fold_matrix(black_box(beta), black_box(mat.clone())));
+            b.iter(|| workspace_folding.fold_matrix(black_box(beta), 1, black_box(mat.clone())));
         });
 
         // Lifted benchmark - FriFold requires precomputed s_inv values

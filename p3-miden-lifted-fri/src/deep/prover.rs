@@ -1,21 +1,17 @@
 use alloc::vec::Vec;
 use core::iter::zip;
 
-use super::DeepParams;
-use super::interpolate::PointQuotients;
-use crate::utils::{PackedFieldExtensionExt, horner};
 use p3_field::{
     ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue, TwoAdicField,
 };
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
-use p3_miden_lmcs::utils::aligned_widths;
-use p3_miden_lmcs::{Lmcs, LmcsTree, RowList};
+use p3_miden_lmcs::{Lmcs, LmcsTree, RowList, log2_strict_u8, utils::aligned_widths};
 use p3_miden_transcript::ProverChannel;
-use p3_util::log2_strict_usize;
 use tracing::info_span;
 
-use crate::utils::bit_reversed_coset_points;
+use super::{DeepParams, interpolate::PointQuotients};
+use crate::utils::{PackedFieldExtensionExt, bit_reversed_coset_points, horner};
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
@@ -52,7 +48,7 @@ impl<EF> DeepPoly<EF> {
         params: &DeepParams,
         trace_trees: &[&L::Tree<M>],
         eval_points: [EF; N],
-        log_blowup: usize,
+        log_blowup: u8,
         channel: &mut Ch,
     ) -> Self
     where
@@ -71,7 +67,7 @@ impl<EF> DeepPoly<EF> {
             "mixed trace tree heights are not supported"
         );
 
-        let log_lde_height = log2_strict_usize(lde_height);
+        let log_lde_height = log2_strict_u8(lde_height);
         let coset_points = bit_reversed_coset_points::<L::F>(log_lde_height);
 
         let matrices_groups: Vec<Vec<&M>> = trace_trees
@@ -369,15 +365,15 @@ fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>, C: AsRef<[
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
-    use alloc::vec::Vec;
+    use alloc::{vec, vec::Vec};
 
-    use crate::utils::horner;
     use p3_field::{PrimeCharacteristicRing, dot_product};
-    use p3_miden_lmcs::RowList;
-    use p3_miden_lmcs::utils::aligned_widths;
+    use p3_miden_lmcs::{RowList, utils::aligned_widths};
 
-    use crate::tests::{EF, F};
+    use crate::{
+        tests::{EF, F},
+        utils::horner,
+    };
 
     /// `reduce_with_powers` (Horner) must match explicit negative coeffs + dot product.
     #[test]

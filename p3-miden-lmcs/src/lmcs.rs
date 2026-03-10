@@ -1,7 +1,9 @@
 //! LMCS configuration types.
 
-use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::vec::Vec;
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec::Vec,
+};
 use core::marker::PhantomData;
 
 use p3_field::PackedValue;
@@ -10,8 +12,7 @@ use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
 use p3_miden_transcript::VerifierChannel;
 use p3_symmetric::{Hash, PseudoCompressionFunction};
 
-use crate::utils::RowList;
-use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsError, OpenedRows};
+use crate::{BatchProof, LiftedMerkleTree, Lmcs, LmcsError, OpenedRows, utils::RowList};
 
 type Opening<F, C> = (RowList<F>, C);
 
@@ -138,12 +139,12 @@ where
             self.sponge.absorb_into(&mut state, row.iter().cloned());
         }
         let digest: [PD::Value; DIGEST] = self.sponge.squeeze(&state);
-        Hash::<PF::Value, PD::Value, DIGEST>::from(digest)
+        Hash::from(digest)
     }
 
     fn compress(&self, left: Self::Commitment, right: Self::Commitment) -> Self::Commitment {
-        let left_digest: [PD::Value; DIGEST] = left.into();
-        let right_digest: [PD::Value; DIGEST] = right.into();
+        let left_digest = *left.as_ref();
+        let right_digest = *right.as_ref();
         Hash::from(self.compress.compress([left_digest, right_digest]))
     }
 
@@ -167,14 +168,14 @@ where
         &self,
         commitment: &Self::Commitment,
         widths: &[usize],
-        log_max_height: usize,
+        log_max_height: u8,
         indices: impl IntoIterator<Item = usize>,
         channel: &mut Ch,
     ) -> Result<OpenedRows<Self::F>, LmcsError>
     where
         Ch: VerifierChannel<F = Self::F, Commitment = Self::Commitment>,
     {
-        let max_height = 1usize << log_max_height;
+        let max_height = 1 << log_max_height as usize;
 
         // Collect and deduplicate indices. BTreeSet iteration yields sorted order.
         let unique_indices: BTreeSet<usize> = indices.into_iter().collect();
@@ -234,7 +235,7 @@ where
             let mut parents = Vec::new();
 
             // Process each level from leaves (level 0) up to root (level tree_depth).
-            for _level in 0..log_max_height {
+            for _level in 0..log_max_height as usize {
                 parents.reserve(children.len());
                 let mut children_iter = children.iter().peekable();
 
@@ -297,7 +298,7 @@ where
     fn read_batch_proof_from_channel<Ch>(
         &self,
         widths: &[usize],
-        log_max_height: usize,
+        log_max_height: u8,
         indices: &[usize],
         channel: &mut Ch,
     ) -> Result<Self::BatchProof, LmcsError>
@@ -324,14 +325,12 @@ where
 mod tests {
     use alloc::vec;
 
-    use crate::{Lmcs, LmcsConfig, LmcsError, LmcsTree};
     use p3_field::PrimeCharacteristicRing;
     use p3_matrix::dense::RowMajorMatrix;
     use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-    use p3_miden_transcript::{
-        ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript,
-    };
-    use p3_util::log2_strict_usize;
+    use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
+
+    use crate::{Lmcs, LmcsConfig, LmcsError, LmcsTree, log2_strict_u8};
 
     type TestLmcs =
         LmcsConfig<bb::P, bb::P, bb::Sponge, bb::Compress, { bb::WIDTH }, { bb::DIGEST }>;
@@ -350,17 +349,17 @@ mod tests {
         let matrices = vec![small_matrix(4, 2, 0), small_matrix(4, 3, 100)];
         let tree = lmcs.build_tree(matrices);
         let widths = tree.widths();
-        let log_max_height = log2_strict_usize(tree.height());
+        let log_max_height = log2_strict_u8(tree.height());
         let commitment = tree.root();
 
         let make_transcript = |indices: &[usize]| {
             let mut prover_channel = ProverTranscript::new(bb::test_challenger());
             tree.prove_batch(indices.iter().copied(), &mut prover_channel);
-            prover_channel.into_data()
+            prover_channel.finalize()
         };
 
         let assert_open = |indices: &[usize]| {
-            let transcript = make_transcript(indices);
+            let (prover_digest, transcript) = make_transcript(indices);
             let mut verifier_channel =
                 VerifierTranscript::from_data(bb::test_challenger(), &transcript);
             let opened = lmcs
@@ -375,7 +374,10 @@ mod tests {
             for &idx in indices {
                 assert_eq!(opened[&idx], tree.rows(idx));
             }
-            assert!(verifier_channel.is_empty())
+            let verifier_digest = verifier_channel
+                .finalize()
+                .expect("transcript should finalize cleanly");
+            assert_eq!(prover_digest, verifier_digest);
         };
 
         assert_open(&[0]);
@@ -386,10 +388,10 @@ mod tests {
 
         let tiny_tree = lmcs.build_tree(vec![small_matrix(1, 1, 7)]);
         let widths_tiny = tiny_tree.widths();
-        let log_tiny = log2_strict_usize(tiny_tree.height());
+        let log_tiny = log2_strict_u8(tiny_tree.height());
         let mut prover_channel = ProverTranscript::new(bb::test_challenger());
         tiny_tree.prove_batch([0], &mut prover_channel);
-        let transcript = prover_channel.into_data();
+        let (prover_digest, transcript) = prover_channel.finalize();
         let mut verifier_channel =
             VerifierTranscript::from_data(bb::test_challenger(), &transcript);
         let opened = lmcs
@@ -402,9 +404,13 @@ mod tests {
             )
             .unwrap();
         assert_eq!(opened[&0], tiny_tree.rows(0));
+        let verifier_digest = verifier_channel
+            .finalize()
+            .expect("transcript should finalize cleanly");
+        assert_eq!(prover_digest, verifier_digest);
 
         // oob index
-        let transcript = ProverTranscript::new(bb::test_challenger()).into_data();
+        let (_, transcript) = ProverTranscript::new(bb::test_challenger()).finalize();
         let mut verifier_channel =
             VerifierTranscript::from_data(bb::test_challenger(), &transcript);
         assert_eq!(
@@ -419,7 +425,7 @@ mod tests {
         );
 
         // wrong tree
-        let transcript = make_transcript(&[0]);
+        let (_, transcript) = make_transcript(&[0]);
         let mut verifier_channel =
             VerifierTranscript::from_data(bb::test_challenger(), &transcript);
         let wrong_tree = lmcs.build_tree(vec![small_matrix(4, 2, 999)]);
@@ -436,7 +442,7 @@ mod tests {
 
         // missing item from transcript
         let indices = [0usize];
-        let transcript = make_transcript(&indices);
+        let (_, transcript) = make_transcript(&indices);
         let (fields, mut commitments) = transcript.into_parts();
         commitments.pop();
         let truncated = TranscriptData::new(fields, commitments);
@@ -455,7 +461,7 @@ mod tests {
         );
 
         // empty indices
-        let transcript = ProverTranscript::new(bb::test_challenger()).into_data();
+        let (_, transcript) = ProverTranscript::new(bb::test_challenger()).finalize();
         let mut verifier_channel =
             VerifierTranscript::from_data(bb::test_challenger(), &transcript);
         assert_eq!(
@@ -477,8 +483,7 @@ mod tests {
     /// CompressionFunctionFromHasher<Blake3> work correctly for commit-then-open.
     #[test]
     fn goldilocks_blake3_roundtrip() {
-        use alloc::vec;
-        use alloc::vec::Vec;
+        use alloc::{vec, vec::Vec};
 
         use p3_blake3::Blake3;
         use p3_challenger::{HashChallenger, SerializingChallenger64};
@@ -508,13 +513,13 @@ mod tests {
 
         let tree = lmcs.build_tree(vec![matrix]);
         let widths = tree.widths();
-        let log_max_height = log2_strict_usize(tree.height());
+        let log_max_height = log2_strict_u8(tree.height());
         let commitment = tree.root();
 
         // Prove then verify a single index.
         let mut prover_channel = ProverTranscript::new(challenger());
         tree.prove_batch([0usize], &mut prover_channel);
-        let transcript = prover_channel.into_data();
+        let (prover_digest, transcript) = prover_channel.finalize();
 
         let mut verifier_channel = VerifierTranscript::from_data(challenger(), &transcript);
         let opened = lmcs
@@ -528,6 +533,9 @@ mod tests {
             .expect("Goldilocks+Blake3 LMCS roundtrip should verify");
 
         assert_eq!(opened[&0], tree.rows(0));
-        assert!(verifier_channel.is_empty());
+        let verifier_digest = verifier_channel
+            .finalize()
+            .expect("transcript should finalize cleanly");
+        assert_eq!(prover_digest, verifier_digest);
     }
 }

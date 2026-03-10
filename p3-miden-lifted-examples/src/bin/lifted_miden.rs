@@ -14,24 +14,24 @@ use p3_field::extension::BinomialExtensionField;
 use p3_goldilocks::Goldilocks;
 use p3_matrix::Matrix;
 use p3_miden_dev_utils::configs::goldilocks_poseidon2 as gl;
-use p3_miden_lifted_air::LiftedAir;
-use p3_miden_lifted_examples::miden::{
-    DummyMidenAir, DummyMidenAuxBuilder, NUM_AUX_COLS, TRACE1_LOG_HEIGHT, TRACE1_WIDTH,
-    TRACE2_LOG_HEIGHT, TRACE2_WIDTH, generate_dummy_trace,
+use p3_miden_lifted_air::{AirInstance, AirWitness, LiftedAir};
+use p3_miden_lifted_examples::{
+    miden::{
+        DummyMidenAir, DummyMidenAuxBuilder, NUM_AUX_COLS, TRACE1_LOG_HEIGHT, TRACE1_WIDTH,
+        TRACE2_LOG_HEIGHT, TRACE2_WIDTH, generate_dummy_trace,
+    },
+    stats,
+    stats::{bench_iters, init_tracing},
 };
-use p3_miden_lifted_examples::stats;
-use p3_miden_lifted_examples::stats::{bench_iters, init_tracing};
-use p3_miden_lifted_prover::{
-    AirWitness, DeepParams, FriFold, FriParams, LmcsConfig, PcsParams, ProverTranscript,
-    prove_multi,
+use p3_miden_lifted_stark::{
+    GenericStarkConfig, fri::PcsParams, lmcs::LmcsConfig, prover::prove_multi,
 };
-use p3_miden_lifted_verifier::{AirInstance, GenericStarkConfig, VerifierTranscript};
 use tracing::info_span;
 
 type Val = Goldilocks;
 type Challenge = BinomialExtensionField<Val, 2>;
 
-const LOG_BLOWUP: usize = 3;
+const LOG_BLOWUP: u8 = 3;
 const NUM_QUERIES: usize = 100;
 const POW_BITS: usize = 16;
 
@@ -43,17 +43,16 @@ fn main() {
     type Dft = Radix2DitParallel<Val>;
     type Config = GenericStarkConfig<Val, Challenge, Lmcs, Dft, gl::Challenger>;
 
-    let pcs = PcsParams {
-        fri: FriParams {
-            log_blowup: LOG_BLOWUP,
-            fold: FriFold::ARITY_2,
-            log_final_degree: 0,
-            folding_pow_bits: POW_BITS,
-        },
-        deep: DeepParams { deep_pow_bits: 0 },
-        num_queries: NUM_QUERIES,
-        query_pow_bits: 0,
-    };
+    let pcs = PcsParams::new(
+        LOG_BLOWUP,  // log_blowup
+        1,           // log_folding_arity
+        0,           // log_final_degree
+        POW_BITS,    // folding_pow_bits
+        0,           // deep_pow_bits
+        NUM_QUERIES, // num_queries
+        0,           // query_pow_bits
+    )
+    .unwrap();
 
     let (_, sponge, compress) = gl::test_components();
     let lmcs: Lmcs = LmcsConfig::new(sponge, compress);
@@ -110,19 +109,17 @@ fn main() {
             (&air2, AirWitness::new(&trace2, &[], &[]), &aux2),
         ];
 
-        let mut channel = ProverTranscript::new(gl::test_challenger());
-        info_span!("prove").in_scope(|| {
-            prove_multi(&config, &instances, &mut channel).expect("proving failed");
+        let output = info_span!("prove").in_scope(|| {
+            prove_multi(&config, &instances, gl::test_challenger()).expect("proving failed")
         });
-        let transcript = channel.into_data();
 
         if i == 1 {
-            let size = stats::serialized_size(&transcript);
+            let size = stats::serialized_size(&output.proof);
             println!(
                 "proof size: {} ({} field elems, {} commitments)",
                 stats::format_bytes(size),
-                transcript.fields().len(),
-                transcript.commitments().len(),
+                output.proof.fields().len(),
+                output.proof.commitments().len(),
             );
         }
 
@@ -145,14 +142,14 @@ fn main() {
                     },
                 ),
             ];
-            let mut verifier_channel =
-                VerifierTranscript::from_data(gl::test_challenger(), &transcript);
-            p3_miden_lifted_verifier::verify_multi(
+            let digest = p3_miden_lifted_stark::verifier::verify_multi(
                 &config,
                 &verifier_instances,
-                &mut verifier_channel,
+                &output.proof,
+                gl::test_challenger(),
             )
             .expect("verification failed");
+            assert_eq!(output.digest, digest);
         });
 
         if i == 0 {

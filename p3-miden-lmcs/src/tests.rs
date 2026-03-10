@@ -1,36 +1,29 @@
 //! Integration tests for LMCS.
 
-use alloc::collections::BTreeMap;
-use alloc::vec;
-use alloc::vec::Vec;
-
-use p3_field::PrimeCharacteristicRing;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
-use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierChannel, VerifierTranscript};
-use p3_symmetric::Hash;
-use p3_util::log2_strict_usize;
-use rand::Rng;
-use rand::SeedableRng;
-use rand::rngs::SmallRng;
-
-use crate::utils::{RowList, aligned_len};
-use crate::{
-    BatchProof, HidingLmcsConfig, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, LmcsTree, Proof,
-};
+use alloc::{collections::BTreeMap, vec, vec::Vec};
 
 // ============================================================================
 // Test Helpers and Re-exports
 // ============================================================================
-
 pub use bb::{Compress, DIGEST, F, P, RATE, Sponge, WIDTH};
+use p3_field::PrimeCharacteristicRing;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
+use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
 pub use p3_miden_dev_utils::matrix::concatenate_matrices;
+use p3_miden_stateful_hasher::{Alignable, StatefulHasher};
+use p3_miden_transcript::{ProverTranscript, TranscriptData, VerifierTranscript};
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
+
+use crate::{
+    BatchProof, HidingLmcsConfig, LiftedMerkleTree, Lmcs, LmcsConfig, LmcsError, LmcsTree, Proof,
+    log2_strict_u8,
+    utils::{RowList, aligned_len},
+};
 
 /// Type alias for local LMCS config.
 pub type BaseLmcs = LmcsConfig<P, P, Sponge, Compress, WIDTH, DIGEST>;
 type Commitment = <BaseLmcs as Lmcs>::Commitment;
+type TestDigest = <bb::Challenger as p3_challenger::CanFinalizeDigest>::Digest;
 type TestTranscriptData = TranscriptData<F, Commitment>;
 type OpenedRows = BTreeMap<usize, RowList<F>>;
 
@@ -56,9 +49,10 @@ fn verify_open_batch<C>(
     lmcs: &C,
     commitment: &Commitment,
     widths: &[usize],
-    log_max_height: usize,
+    log_max_height: u8,
     indices: &[usize],
     transcript: &TestTranscriptData,
+    prover_digest: &TestDigest,
 ) -> Result<OpenedRows, LmcsError>
 where
     C: Lmcs<F = F, Commitment = Commitment>,
@@ -72,10 +66,10 @@ where
         &mut verifier_channel,
     );
     if result.is_ok() {
-        assert!(
-            verifier_channel.is_empty(),
-            "transcript should be fully consumed"
-        );
+        let verifier_digest = verifier_channel
+            .finalize()
+            .expect("transcript should finalize cleanly");
+        assert_eq!(verifier_digest, *prover_digest);
     }
     result
 }
@@ -90,12 +84,12 @@ where
     M: Matrix<F>,
 {
     let widths = tree.widths();
-    let log_max_height = log2_strict_usize(tree.height());
+    let log_max_height = log2_strict_u8(tree.height());
 
-    let transcript = {
+    let (prover_digest, transcript) = {
         let mut prover_channel = ProverTranscript::new(bb::test_challenger());
         tree.prove_batch(indices.iter().copied(), &mut prover_channel);
-        prover_channel.into_data()
+        prover_channel.finalize()
     };
     let opened_rows = verify_open_batch(
         lmcs,
@@ -104,6 +98,7 @@ where
         log_max_height,
         indices,
         &transcript,
+        &prover_digest,
     )?;
     Ok((transcript, opened_rows))
 }
@@ -166,7 +161,7 @@ fn lmcs_duplicate_indices_roundtrip() {
 
     let tree = lmcs.build_tree(matrices);
     let widths = tree.widths();
-    let log_max_height = log2_strict_usize(tree.height());
+    let log_max_height = log2_strict_u8(tree.height());
     let indices = [3usize, 1, 3, 0, 1];
 
     let (transcript, opened_rows) =
@@ -180,7 +175,7 @@ fn lmcs_duplicate_indices_roundtrip() {
     }
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
+    let batch = BatchProof::<F, Commitment>::read_from_channel(
         &widths,
         log_max_height,
         &indices,
@@ -249,10 +244,10 @@ fn open_batch_handles_empty_or_oob() {
     let matrices = vec![RowMajorMatrix::rand(&mut rng, 4, 3)];
     let tree = lmcs.build_tree(matrices);
     let widths = tree.widths();
-    let log_max_height = log2_strict_usize(tree.height());
+    let log_max_height = log2_strict_u8(tree.height());
     let commitment = tree.root();
 
-    let transcript = ProverTranscript::new(bb::test_challenger()).into_data();
+    let (prover_digest, transcript) = ProverTranscript::new(bb::test_challenger()).finalize();
 
     assert_eq!(
         verify_open_batch(
@@ -262,6 +257,7 @@ fn open_batch_handles_empty_or_oob() {
             log_max_height,
             &[],
             &transcript,
+            &prover_digest,
         ),
         Err(LmcsError::InvalidProof)
     );
@@ -274,6 +270,7 @@ fn open_batch_handles_empty_or_oob() {
             log_max_height,
             &[tree.height()],
             &transcript,
+            &prover_digest,
         ),
         Err(LmcsError::InvalidProof)
     );
@@ -330,14 +327,14 @@ fn batch_proof_handles_empty_or_oob() {
     let matrices = vec![RowMajorMatrix::rand(&mut rng, 4, 3)];
     let tree = lmcs.build_tree(matrices);
     let widths = tree.widths();
-    let log_max_height = log2_strict_usize(tree.height());
+    let log_max_height = log2_strict_u8(tree.height());
 
     let mut prover_channel = ProverTranscript::new(bb::test_challenger());
     tree.prove_batch([0], &mut prover_channel);
-    let transcript = prover_channel.into_data();
+    let (_, transcript) = prover_channel.finalize();
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
+    let batch = BatchProof::<F, Commitment>::read_from_channel(
         &widths,
         log_max_height,
         &[],
@@ -350,7 +347,7 @@ fn batch_proof_handles_empty_or_oob() {
     assert!(proofs.is_empty());
 
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    let batch = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
+    let batch = BatchProof::<F, Commitment>::read_from_channel(
         &[],
         log_max_height,
         &[0],
@@ -372,7 +369,7 @@ fn batch_proof_handles_empty_or_oob() {
     // Out-of-range indices are not rejected at parse time; they produce proofs that
     // fail verification. Here we just confirm parsing succeeds (verification tested elsewhere).
     let mut verifier_channel = VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-    let _ = BatchProof::<F, Hash<F, F, DIGEST>>::read_from_channel(
+    let _ = BatchProof::<F, Commitment>::read_from_channel(
         &widths,
         log_max_height,
         &[tree.height()],

@@ -11,37 +11,36 @@
 
 use p3_air::{Air, AirBuilder, BaseAir};
 use p3_baby_bear::{BabyBear, GenericPoseidon2LinearLayersBabyBear};
-use p3_batch_stark::{CommonData, StarkInstance, prove_batch, verify_batch};
+use p3_batch_stark::{ProverData, StarkInstance, prove_batch, verify_batch};
 use p3_blake3_air::{Blake3Air, NUM_BLAKE3_COLS};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
-use p3_field::extension::BinomialExtensionField;
+use p3_field::{Field, extension::BinomialExtensionField};
 use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_keccak_air::{KeccakAir, NUM_KECCAK_COLS};
-use p3_lookup::lookup_traits::{AirNoLookup, EmptyLookupGadget};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_lookup::{Lookup, LookupAir};
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_examples::blake3::generate_blake3_trace;
-use p3_miden_lifted_examples::keccak::generate_keccak_trace;
-use p3_miden_lifted_examples::poseidon2::{
-    HALF_FULL_ROUNDS, NUM_POSEIDON2_COLS, PARTIAL_ROUNDS, SBOX_DEGREE, SBOX_REGISTERS, WIDTH,
-    generate_poseidon2_trace,
+use p3_miden_lifted_examples::{
+    blake3::generate_blake3_trace,
+    keccak::generate_keccak_trace,
+    poseidon2::{
+        HALF_FULL_ROUNDS, NUM_POSEIDON2_COLS, PARTIAL_ROUNDS, SBOX_DEGREE, SBOX_REGISTERS, WIDTH,
+        generate_poseidon2_trace,
+    },
+    stats,
+    stats::StatsLayer,
 };
-use p3_miden_lifted_examples::stats;
-use p3_miden_lifted_examples::stats::StatsLayer;
 use p3_poseidon2_air::{Poseidon2Air, RoundConstants};
 use p3_symmetric::PaddingFreeSponge;
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use tracing::info_span;
 use tracing_forest::ForestLayer;
-use tracing_subscriber::Layer as _;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{EnvFilter, Registry};
+use tracing_subscriber::{
+    EnvFilter, Layer as _, Registry, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 // Blake3: 2^15 rows, 1 row/hash → 32768 hashes (widest, shortest).
 const NUM_BLAKE3_HASHES: usize = 32768;
@@ -96,12 +95,31 @@ impl<AB: AirBuilder<F = Val>> Air<AB> for HashAir {
     }
 }
 
+/// Skip defining lookups for these AIRs.
+impl<F: Field> LookupAir<F> for HashAir {
+    fn add_lookup_columns(&mut self) -> Vec<usize> {
+        match self {
+            Self::Poseidon2(_) => vec![],
+            Self::Keccak => vec![],
+            Self::Blake3 => vec![],
+        }
+    }
+
+    fn get_lookups(&mut self) -> Vec<Lookup<F>> {
+        match self {
+            Self::Poseidon2(_) => vec![],
+            Self::Keccak => vec![],
+            Self::Blake3 => vec![],
+        }
+    }
+}
+
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 type Perm = bb::Perm;
 type MmcsSponge = PaddingFreeSponge<Perm, { bb::WIDTH }, { bb::RATE }, { bb::DIGEST }>;
 type Compress = bb::Compress;
-type ValMmcs = MerkleTreeMmcs<bb::P, bb::P, MmcsSponge, Compress, { bb::DIGEST }>;
+type ValMmcs = MerkleTreeMmcs<bb::P, bb::P, MmcsSponge, Compress, 2, { bb::DIGEST }>;
 type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 type Dft = Radix2DitParallel<Val>;
 type BatchPcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
@@ -111,11 +129,12 @@ type BatchConfig = p3_uni_stark::StarkConfig<BatchPcs, Challenge, BatchChallenge
 fn batch_config() -> BatchConfig {
     let (perm, _, compress) = bb::test_components();
     let mmcs_sponge = MmcsSponge::new(perm.clone());
-    let mmcs = ValMmcs::new(mmcs_sponge, compress);
+    let mmcs = ValMmcs::new(mmcs_sponge, compress, 0);
     let challenge_mmcs = ChallengeMmcs::new(mmcs.clone());
     let fri_params = FriParameters {
         log_blowup: LOG_BLOWUP,
         log_final_poly_len: 0,
+        max_log_arity: 1,
         num_queries: NUM_QUERIES,
         commit_proof_of_work_bits: POW_BITS,
         query_proof_of_work_bits: 0,
@@ -180,17 +199,15 @@ fn main() {
         "trace dims"
     );
 
-    let air_poseidon2 = AirNoLookup::new(HashAir::Poseidon2(Box::new(InnerPoseidon2Air::new(
-        poseidon2_constants,
-    ))));
-    let air_keccak = AirNoLookup::new(HashAir::Keccak);
-    let air_blake3 = AirNoLookup::new(HashAir::Blake3);
-    let airs = [air_poseidon2, air_keccak, air_blake3];
-
-    let common = CommonData::empty(3);
+    let air_poseidon2 = HashAir::Poseidon2(Box::new(InnerPoseidon2Air::new(poseidon2_constants)));
+    let air_keccak = HashAir::Keccak;
+    let air_blake3 = HashAir::Blake3;
+    let mut airs: [HashAir; 3] = [air_poseidon2, air_keccak, air_blake3];
+    let degree_bits = [19, 18, 15];
+    let prover_data = ProverData::from_airs_and_degrees(&config, &mut airs, &degree_bits);
+    let common = &prover_data.common;
     let traces = [&trace_poseidon2, &trace_keccak, &trace_blake3];
     let pvs: Vec<Vec<Val>> = vec![vec![], vec![], vec![]];
-    let lookup_gadget = EmptyLookupGadget;
 
     // Run iterations: iteration 0 is warm-up (tracing tree printed, stats discarded).
     for i in 0..=bench_iters {
@@ -200,12 +217,9 @@ fn main() {
             tracing::info!(iteration = i, total = bench_iters, "bench iteration");
         }
 
-        // new_multiple clones the traces internally, so originals survive.
-        let trace_clones: Vec<RowMajorMatrix<Val>> = traces.iter().map(|t| (*t).clone()).collect();
-        let instances = StarkInstance::new_multiple(&airs, &trace_clones, &pvs, &common);
+        let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, common);
 
-        let proof = info_span!("prove")
-            .in_scope(|| prove_batch(&config, &instances, &common, &lookup_gadget));
+        let proof = info_span!("prove").in_scope(|| prove_batch(&config, &instances, &prover_data));
 
         if i == 1 {
             let size = stats::serialized_size(&proof);
@@ -213,7 +227,7 @@ fn main() {
         }
 
         info_span!("verify").in_scope(|| {
-            verify_batch(&config, &airs, &proof, &pvs, &common, &lookup_gadget)
+            verify_batch(&config, &airs, &proof, &pvs, common)
                 .expect("batch-stark verification failed");
         });
 

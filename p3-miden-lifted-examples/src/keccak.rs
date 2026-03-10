@@ -2,13 +2,10 @@
 
 use alloc::vec::Vec;
 
-use p3_air::Air;
 use p3_field::{Field, PrimeField64};
 use p3_keccak_air::{KeccakAir, NUM_KECCAK_COLS, NUM_ROUNDS};
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_lifted_air::{AirWithPeriodicColumns, BaseAir, LiftedAir, LiftedAirBuilder};
-
-use crate::compat::UpstreamCompat;
+use p3_miden_lifted_air::{Air, BaseAir, LiftedAir, LiftedAirBuilder};
 
 /// [`KeccakAir`] adapted for the lifted STARK prover.
 ///
@@ -27,12 +24,6 @@ impl<F> BaseAir<F> for LiftedKeccakAir {
     }
 }
 
-impl<F: Field> AirWithPeriodicColumns<F> for LiftedKeccakAir {
-    fn periodic_columns(&self) -> &[Vec<F>] {
-        &[]
-    }
-}
-
 impl<F: PrimeField64, EF: Field> LiftedAir<F, EF> for LiftedKeccakAir {
     fn num_randomness(&self) -> usize {
         1
@@ -46,8 +37,12 @@ impl<F: PrimeField64, EF: Field> LiftedAir<F, EF> for LiftedKeccakAir {
         0
     }
 
+    fn num_var_len_public_inputs(&self) -> usize {
+        0
+    }
+
     fn eval<AB: LiftedAirBuilder<F = F>>(&self, builder: &mut AB) {
-        Air::eval(&KeccakAir {}, &mut UpstreamCompat(builder));
+        Air::eval(&KeccakAir {}, builder);
     }
 }
 

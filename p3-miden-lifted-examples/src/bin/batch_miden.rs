@@ -9,28 +9,28 @@
 //!   cargo run -p p3-miden-lifted-examples --release --features parallel --bin batch_miden
 //! ```
 
-use p3_air::{
-    Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PairBuilder, PermutationAirBuilder,
-};
-use p3_batch_stark::{CommonData, StarkInstance, prove_batch, verify_batch};
+use p3_air::{Air, AirBuilder, AirLayout, BaseAir, BaseLeaf, SymbolicExpression, WindowAccess};
+use p3_batch_stark::{ProverData, StarkInstance, prove_batch, verify_batch};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
-use p3_field::PrimeCharacteristicRing;
-use p3_field::extension::BinomialExtensionField;
+use p3_field::{Field, PrimeCharacteristicRing, extension::BinomialExtensionField};
 use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_goldilocks::Goldilocks;
-use p3_lookup::logup::LogUpGadget;
-use p3_lookup::lookup_traits::{AirLookupHandler, Direction, Kind, Lookup};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_lookup::{
+    LookupAir,
+    lookup_traits::{Direction, Kind, Lookup},
+};
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_miden_dev_utils::configs::goldilocks_poseidon2 as gl;
-use p3_miden_lifted_examples::miden::{
-    TRACE1_LOG_HEIGHT, TRACE1_WIDTH, TRACE2_LOG_HEIGHT, TRACE2_WIDTH, generate_dummy_trace,
+use p3_miden_lifted_examples::{
+    miden::{
+        TRACE1_LOG_HEIGHT, TRACE1_WIDTH, TRACE2_LOG_HEIGHT, TRACE2_WIDTH, generate_dummy_trace,
+    },
+    stats,
+    stats::{bench_iters, init_tracing},
 };
-use p3_miden_lifted_examples::stats;
-use p3_miden_lifted_examples::stats::{bench_iters, init_tracing};
 use p3_symmetric::PaddingFreeSponge;
 use p3_uni_stark::SymbolicAirBuilder;
 use tracing::info_span;
@@ -76,45 +76,38 @@ impl<AB: AirBuilder> Air<AB> for MidenWithLookups {
     fn eval(&self, builder: &mut AB) {
         // Same degree-9 constraint as DummyMidenAir.
         let main = builder.main();
-        let local = main.row_slice(0).unwrap();
-        let product = (0..9).fold(AB::Expr::ONE, |acc, j| acc * local[j].clone().into());
+        let local = main.current_slice();
+        let product = (0..9).fold(AB::Expr::ONE, |acc, j| acc * local[j].into());
         builder.assert_zero(product);
     }
 }
 
-impl<AB> AirLookupHandler<AB> for MidenWithLookups
-where
-    AB: AirBuilder + AirBuilderWithPublicValues + PairBuilder + PermutationAirBuilder,
-{
+impl<F: Field> LookupAir<F> for MidenWithLookups {
     fn add_lookup_columns(&mut self) -> Vec<usize> {
         let idx = self.num_lookups;
         self.num_lookups += 1;
         vec![idx]
     }
 
-    fn get_lookups(&mut self) -> Vec<Lookup<AB::F>> {
+    fn get_lookups(&mut self) -> Vec<Lookup<F>> {
         self.num_lookups = 0;
 
-        let symbolic = SymbolicAirBuilder::<AB::F>::new(0, self.width, 0, 0, 0);
+        let symbolic = SymbolicAirBuilder::<F>::new(AirLayout {
+            main_width: self.width,
+            ..AirLayout::default()
+        });
         let main = symbolic.main();
-        let local = main.row_slice(0).unwrap();
-        let col0: p3_uni_stark::SymbolicExpression<AB::F> = local[0].into();
+        let local = main.current_slice();
+        let col0: SymbolicExpression<F> = local[0].into();
 
-        let one = p3_uni_stark::SymbolicExpression::Constant(AB::F::ONE);
+        let one = SymbolicExpression::Leaf(BaseLeaf::Constant(F::ONE));
         let lookup_inputs = vec![
             (vec![col0.clone()], one.clone(), Direction::Send),
             (vec![col0], one, Direction::Receive),
         ];
 
-        // Register NUM_LOOKUPS identical local lookups.
         (0..NUM_LOOKUPS)
-            .map(|_| {
-                <MidenWithLookups as AirLookupHandler<AB>>::register_lookup(
-                    self,
-                    Kind::Local,
-                    &lookup_inputs,
-                )
-            })
+            .map(|_| LookupAir::register_lookup(self, Kind::Local, &lookup_inputs))
             .collect()
     }
 }
@@ -126,7 +119,7 @@ where
 type Perm = gl::Perm;
 type MmcsSponge = PaddingFreeSponge<Perm, { gl::WIDTH }, { gl::RATE }, { gl::DIGEST }>;
 type Compress = gl::Compress;
-type ValMmcs = MerkleTreeMmcs<gl::P, gl::P, MmcsSponge, Compress, { gl::DIGEST }>;
+type ValMmcs = MerkleTreeMmcs<gl::P, gl::P, MmcsSponge, Compress, 2, { gl::DIGEST }>;
 type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 type Dft = Radix2DitParallel<Val>;
 type BatchPcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
@@ -136,11 +129,12 @@ type BatchConfig = p3_uni_stark::StarkConfig<BatchPcs, Challenge, BatchChallenge
 fn batch_config() -> BatchConfig {
     let (perm, _, compress) = gl::test_components();
     let mmcs_sponge = MmcsSponge::new(perm.clone());
-    let mmcs = ValMmcs::new(mmcs_sponge, compress);
+    let mmcs = ValMmcs::new(mmcs_sponge, compress, 0);
     let challenge_mmcs = ChallengeMmcs::new(mmcs.clone());
     let fri_params = FriParameters {
         log_blowup: LOG_BLOWUP,
         log_final_poly_len: 0,
+        max_log_arity: 1,
         num_queries: NUM_QUERIES,
         commit_proof_of_work_bits: POW_BITS,
         query_proof_of_work_bits: 0,
@@ -185,15 +179,14 @@ fn main() {
         MidenWithLookups::new(TRACE1_WIDTH),
         MidenWithLookups::new(TRACE2_WIDTH),
     ];
-    let common = CommonData::from_airs_and_degrees(
+    let prover_data = ProverData::from_airs_and_degrees(
         &config,
         &mut airs,
-        &[TRACE1_LOG_HEIGHT, TRACE2_LOG_HEIGHT],
+        &[TRACE1_LOG_HEIGHT as usize, TRACE2_LOG_HEIGHT as usize],
     );
-
+    let common = &prover_data.common;
     let traces = [&trace1, &trace2];
     let pvs: Vec<Vec<Val>> = vec![vec![], vec![]];
-    let lookup_gadget = LogUpGadget::new();
 
     for i in 0..=bench_iters {
         if i == 0 {
@@ -202,11 +195,9 @@ fn main() {
             tracing::info!(iteration = i, total = bench_iters, "bench iteration");
         }
 
-        let trace_clones: Vec<RowMajorMatrix<Val>> = traces.iter().map(|t| (*t).clone()).collect();
-        let instances = StarkInstance::new_multiple(&airs, &trace_clones, &pvs, &common);
+        let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, common);
 
-        let proof = info_span!("prove")
-            .in_scope(|| prove_batch(&config, &instances, &common, &lookup_gadget));
+        let proof = info_span!("prove").in_scope(|| prove_batch(&config, &instances, &prover_data));
 
         if i == 1 {
             let size = stats::serialized_size(&proof);
@@ -214,7 +205,7 @@ fn main() {
         }
 
         info_span!("verify").in_scope(|| {
-            verify_batch(&config, &airs, &proof, &pvs, &common, &lookup_gadget)
+            verify_batch(&config, &airs, &proof, &pvs, common)
                 .expect("batch-stark verification failed");
         });
 

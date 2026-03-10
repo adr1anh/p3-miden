@@ -5,13 +5,10 @@
 
 use alloc::vec::Vec;
 
-use p3_air::Air;
 use p3_baby_bear::{BabyBear, GenericPoseidon2LinearLayersBabyBear};
 use p3_field::Field;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_miden_lifted_air::{AirWithPeriodicColumns, BaseAir, LiftedAir, LiftedAirBuilder};
-
-use crate::compat::UpstreamCompat;
+use p3_miden_lifted_air::{Air, BaseAir, LiftedAir, LiftedAirBuilder};
 use p3_poseidon2_air::{Poseidon2Air, RoundConstants, num_cols};
 
 /// BabyBear Poseidon2 configuration constants.
@@ -59,12 +56,6 @@ impl<F> BaseAir<F> for LiftedPoseidon2Air {
     }
 }
 
-impl<F: Field> AirWithPeriodicColumns<F> for LiftedPoseidon2Air {
-    fn periodic_columns(&self) -> &[Vec<F>] {
-        &[]
-    }
-}
-
 impl<EF: Field> LiftedAir<BabyBear, EF> for LiftedPoseidon2Air {
     fn num_randomness(&self) -> usize {
         1
@@ -78,8 +69,12 @@ impl<EF: Field> LiftedAir<BabyBear, EF> for LiftedPoseidon2Air {
         0
     }
 
+    fn num_var_len_public_inputs(&self) -> usize {
+        0
+    }
+
     fn eval<AB: LiftedAirBuilder<F = BabyBear>>(&self, builder: &mut AB) {
-        Air::eval(&self.inner, &mut UpstreamCompat(builder));
+        Air::eval(&self.inner, builder);
     }
 }
 

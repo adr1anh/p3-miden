@@ -8,12 +8,15 @@
 //! [`BatchProof`] parses hints without hashing, and can be turned into per-index
 //! [`Proof`] objects once the hashing context is available.
 
-use crate::Lmcs;
-use crate::utils::RowList;
-use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::vec::Vec;
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec::Vec,
+};
+
 use p3_miden_transcript::{TranscriptError, VerifierChannel};
 use serde::{Deserialize, Serialize};
+
+use crate::{Lmcs, utils::RowList};
 
 /// Single-opening Merkle proof with rows and authentication path.
 ///
@@ -82,13 +85,13 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
     /// the number of unique indices.
     pub fn read_from_channel<Ch>(
         widths: &[usize],
-        log_max_height: usize,
+        log_max_height: u8,
         indices: &[usize],
         channel: &mut Ch,
     ) -> Result<Self, TranscriptError>
     where
         F: Copy,
-        C: Copy + PartialEq,
+        C: Clone + PartialEq,
         Ch: VerifierChannel<F = F, Commitment = C>,
     {
         // Collect and sort indices to match prover's write order (BTreeSet iteration).
@@ -110,9 +113,9 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
 
         // Consume sibling hints in the same canonical order the prover emits them.
         let siblings: BTreeMap<(usize, usize), C> =
-            required_siblings(openings.keys().copied(), log_max_height)
+            required_siblings(openings.keys().copied(), log_max_height.into())
                 .into_iter()
-                .map(|key| Ok((key, *channel.receive_hint_commitment()?)))
+                .map(|key| Ok((key, channel.receive_hint_commitment()?.clone())))
                 .collect::<Result<_, TranscriptError>>()?;
 
         Ok(Self { openings, siblings })
@@ -129,11 +132,11 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         &self,
         lmcs: &L,
         widths: &[usize],
-        log_max_height: usize,
+        log_max_height: u8,
     ) -> Option<BTreeMap<usize, Proof<F, C, SALT_ELEMS>>>
     where
         F: Copy,
-        C: Copy + PartialEq,
+        C: Clone + PartialEq,
         L: Lmcs<F = F, Commitment = C>,
     {
         let mut proofs: BTreeMap<usize, Proof<F, C, SALT_ELEMS>> = BTreeMap::new();
@@ -160,12 +163,12 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
             proofs.entry(index).or_insert_with(|| Proof {
                 rows: opening.rows.clone(),
                 salt: opening.salt,
-                siblings: Vec::with_capacity(log_max_height),
+                siblings: Vec::with_capacity(log_max_height as usize),
             });
 
             // Reject if two openings claim different data for the same leaf.
             if tree
-                .insert((0, index), leaf_hash)
+                .insert((0, index), leaf_hash.clone())
                 .is_some_and(|existing_hash| existing_hash != leaf_hash)
             {
                 return None;
@@ -173,15 +176,16 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         }
 
         // Preload hinted siblings so combining pairs can assume adjacency.
-        for (depth, index) in required_siblings(self.openings.keys().copied(), log_max_height) {
-            tree.insert((depth, index), *self.siblings.get(&(depth, index))?);
+        let tree_depth = log_max_height as usize;
+        for (depth, index) in required_siblings(self.openings.keys().copied(), tree_depth) {
+            tree.insert((depth, index), self.siblings.get(&(depth, index))?.clone());
         }
 
-        for current_depth in 0..log_max_height {
+        for current_depth in 0..tree_depth {
             // BTreeMap ordering yields left-to-right pairing at this depth.
             let nodes_at_depth: Vec<(usize, C)> = tree
                 .range((current_depth, 0)..=(current_depth, usize::MAX))
-                .map(|(&(_, idx), hash)| (idx, *hash))
+                .map(|(&(_, idx), hash)| (idx, hash.clone()))
                 .collect();
 
             let mut nodes_iter = nodes_at_depth.into_iter().peekable();
@@ -210,9 +214,9 @@ impl<F, C, const SALT_ELEMS: usize> BatchProof<F, C, SALT_ELEMS> {
         // Add authentication paths from the reconstructed tree.
         for (&index, proof) in proofs.iter_mut() {
             let mut current_index = index;
-            for current_depth in 0..log_max_height {
+            for current_depth in 0..tree_depth {
                 let sibling_index = current_index ^ 1;
-                let sibling_hash = tree.get(&(current_depth, sibling_index)).copied()?;
+                let sibling_hash = tree.get(&(current_depth, sibling_index)).cloned()?;
                 proof.siblings.push(sibling_hash);
                 current_index >>= 1;
             }
@@ -273,12 +277,12 @@ mod tests {
     use p3_matrix::dense::RowMajorMatrix;
     use p3_miden_transcript::{VerifierChannel, VerifierTranscript};
     use p3_symmetric::Hash;
-    use p3_util::log2_strict_usize;
-    use rand::SeedableRng;
-    use rand::rngs::SmallRng;
+    use rand::{SeedableRng, rngs::SmallRng};
 
-    use crate::tests::{DIGEST, F, lmcs, roundtrip_open_batch};
-    use crate::{BatchProof, Lmcs, LmcsTree};
+    use crate::{
+        BatchProof, Lmcs, LmcsTree, log2_strict_u8,
+        tests::{DIGEST, F, lmcs, roundtrip_open_batch},
+    };
 
     #[test]
     fn batch_proof_consistent_with_open_batch() {
@@ -292,7 +296,7 @@ mod tests {
                 .collect();
             let tree = lmcs.build_tree(matrices);
             let widths = tree.widths();
-            let log_max_height = log2_strict_usize(tree.height());
+            let log_max_height = log2_strict_u8(tree.height());
 
             // Path A: open_batch (verification)
             let (transcript, opened_rows) =
@@ -334,7 +338,7 @@ mod tests {
             for &idx in indices {
                 let proof = proofs.get(&idx).expect("proof for index");
                 let expected = tree.single_proof(idx);
-                assert_eq!(*proof, expected, "single_proof mismatch at index {idx}");
+                assert_eq!(proof, &expected, "single_proof mismatch at index {idx}");
             }
         };
 

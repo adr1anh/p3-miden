@@ -3,12 +3,10 @@
 //! - [`AirWitness`]: Prover witness — trace + public values
 //! - [`AirInstance`]: Verifier instance — log trace height + public values
 
-use crate::air::AirValidationError;
-use crate::{LiftedAir, VarLenPublicInputs};
 use p3_field::Field;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
-use p3_util::log2_strict_usize;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
+
+use crate::{LiftedAir, VarLenPublicInputs, air::AirValidationError, util::log2_strict_u8};
 
 /// Prover witness: trace matrix, public values, and variable-length public inputs.
 ///
@@ -63,7 +61,7 @@ impl<'a, F> AirWitness<'a, F> {
             return Err(AirValidationError::InvalidTraceHeight { height });
         }
         Ok(AirInstance {
-            log_trace_height: log2_strict_usize(height),
+            log_trace_height: log2_strict_u8(height),
             public_values: self.public_values,
             var_len_public_inputs: self.var_len_public_inputs,
         })
@@ -78,7 +76,7 @@ impl<'a, F> AirWitness<'a, F> {
 #[derive(Clone, Copy)]
 pub struct AirInstance<'a, F> {
     /// Log₂ of the trace height.
-    pub log_trace_height: usize,
+    pub log_trace_height: u8,
     /// Public values for this AIR.
     pub public_values: &'a [F],
     /// Reducible inputs for the cross-AIR identity check. Empty slice if no buses.
@@ -94,12 +92,12 @@ pub struct AirInstance<'a, F> {
 /// Returns the log of the maximum trace height.
 pub fn validate_instances<F, EF, A>(
     instances: &[(&A, AirInstance<'_, F>)],
-) -> Result<usize, AirValidationError>
+) -> Result<u8, AirValidationError>
 where
     F: Field,
     A: LiftedAir<F, EF>,
 {
-    let mut log_prev_height = 0;
+    let mut log_prev_height: u8 = 0;
     for (air, inst) in instances {
         air.validate()?;
         inst.validate(*air)?;
@@ -135,7 +133,7 @@ impl<'a, F> AirInstance<'a, F> {
         if actual != expected {
             return Err(AirValidationError::VarLenPublicInputsMismatch { expected, actual });
         }
-        let trace_height = 1usize << self.log_trace_height;
+        let trace_height = 1 << self.log_trace_height as usize;
         let max_period = air
             .periodic_columns()
             .iter()

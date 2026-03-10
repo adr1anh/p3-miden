@@ -9,38 +9,32 @@
 //! RUST_LOG=debug cargo run -p p3-miden-lifted-examples --release --features parallel --bin lifted_3_hashes
 //! ```
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use p3_baby_bear::BabyBear;
 use p3_dft::Radix2DitParallel;
-use p3_field::Field;
-use p3_field::extension::BinomialExtensionField;
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_field::{Field, extension::BinomialExtensionField};
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_dev_utils::configs::baby_bear_poseidon2 as bb;
-use p3_miden_lifted_air::{AirWithPeriodicColumns, BaseAir, LiftedAir, LiftedAirBuilder};
-use p3_miden_lifted_examples::DummyAuxBuilder;
-use p3_miden_lifted_examples::blake3::{LiftedBlake3Air, generate_blake3_trace};
-use p3_miden_lifted_examples::keccak::{LiftedKeccakAir, generate_keccak_trace};
-use p3_miden_lifted_examples::poseidon2::{LiftedPoseidon2Air, generate_poseidon2_trace};
-use p3_miden_lifted_examples::stats;
-use p3_miden_lifted_examples::stats::StatsLayer;
-use p3_miden_lifted_prover::{
-    AirWitness, DeepParams, FriFold, FriParams, LmcsConfig, PcsParams, ProverTranscript,
-    prove_multi,
+use p3_miden_lifted_air::{AirInstance, AirWitness, BaseAir, LiftedAir, LiftedAirBuilder};
+use p3_miden_lifted_examples::{
+    DummyAuxBuilder,
+    blake3::{LiftedBlake3Air, generate_blake3_trace},
+    keccak::{LiftedKeccakAir, generate_keccak_trace},
+    poseidon2::{LiftedPoseidon2Air, generate_poseidon2_trace},
+    stats,
+    stats::StatsLayer,
 };
-use p3_miden_lifted_verifier::{AirInstance, GenericStarkConfig, VerifierTranscript};
+use p3_miden_lifted_stark::{
+    GenericStarkConfig, air::log2_strict_u8, fri::PcsParams, lmcs::LmcsConfig, prover::prove_multi,
+};
 use p3_poseidon2_air::RoundConstants;
-use p3_util::log2_strict_usize;
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use tracing::info_span;
 use tracing_forest::ForestLayer;
-use tracing_subscriber::Layer as _;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{EnvFilter, Registry};
+use tracing_subscriber::{
+    EnvFilter, Layer as _, Registry, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 extern crate alloc;
 
@@ -54,7 +48,7 @@ const NUM_POSEIDON2_HASHES: usize = 524288;
 type Val = BabyBear;
 type Challenge = BinomialExtensionField<Val, 4>;
 
-const LOG_BLOWUP: usize = 1;
+const LOG_BLOWUP: u8 = 1;
 const NUM_QUERIES: usize = 100;
 const POW_BITS: usize = 16;
 
@@ -78,16 +72,6 @@ impl BaseAir<Val> for HashAir {
     }
 }
 
-impl AirWithPeriodicColumns<Val> for HashAir {
-    fn periodic_columns(&self) -> &[Vec<Val>] {
-        match self {
-            HashAir::Poseidon2(a) => AirWithPeriodicColumns::<Val>::periodic_columns(a.as_ref()),
-            HashAir::Keccak(a) => AirWithPeriodicColumns::<Val>::periodic_columns(a),
-            HashAir::Blake3(a) => AirWithPeriodicColumns::<Val>::periodic_columns(a),
-        }
-    }
-}
-
 impl<EF: Field> LiftedAir<Val, EF> for HashAir {
     fn num_randomness(&self) -> usize {
         1
@@ -98,6 +82,10 @@ impl<EF: Field> LiftedAir<Val, EF> for HashAir {
     }
 
     fn num_aux_values(&self) -> usize {
+        0
+    }
+
+    fn num_var_len_public_inputs(&self) -> usize {
         0
     }
 
@@ -133,17 +121,16 @@ fn main() {
     type Dft = Radix2DitParallel<Val>;
     type Config = GenericStarkConfig<Val, Challenge, Lmcs, Dft, bb::Challenger>;
 
-    let pcs = PcsParams {
-        fri: FriParams {
-            log_blowup: LOG_BLOWUP,
-            fold: FriFold::ARITY_2,
-            log_final_degree: 0,
-            folding_pow_bits: POW_BITS,
-        },
-        deep: DeepParams { deep_pow_bits: 0 },
-        num_queries: NUM_QUERIES,
-        query_pow_bits: 0,
-    };
+    let pcs = PcsParams::new(
+        LOG_BLOWUP,  // log_blowup
+        1,           // log_folding_arity
+        0,           // log_final_degree
+        POW_BITS,    // folding_pow_bits
+        0,           // deep_pow_bits
+        NUM_QUERIES, // num_queries
+        0,           // query_pow_bits
+    )
+    .unwrap();
 
     let (_, sponge, compress) = bb::test_components();
     let lmcs: Lmcs = LmcsConfig::new(sponge, compress);
@@ -186,9 +173,9 @@ fn main() {
     let air_keccak = HashAir::Keccak(LiftedKeccakAir);
     let air_blake3 = HashAir::Blake3(LiftedBlake3Air);
 
-    let log_p = log2_strict_usize(trace_poseidon2.height());
-    let log_k = log2_strict_usize(trace_keccak.height());
-    let log_b = log2_strict_usize(trace_blake3.height());
+    let log_p = log2_strict_u8(trace_poseidon2.height());
+    let log_k = log2_strict_u8(trace_keccak.height());
+    let log_b = log2_strict_u8(trace_blake3.height());
 
     // Run iterations: iteration 0 is warm-up (tracing tree printed, stats discarded).
     for i in 0..=bench_iters {
@@ -218,19 +205,17 @@ fn main() {
             ),
         ];
 
-        let mut channel = ProverTranscript::new(bb::test_challenger());
-        info_span!("prove").in_scope(|| {
-            prove_multi(&config, &instances, &mut channel).expect("proving failed");
+        let output = info_span!("prove").in_scope(|| {
+            prove_multi(&config, &instances, bb::test_challenger()).expect("proving failed")
         });
-        let transcript = channel.into_data();
 
         if i == 1 {
-            let size = stats::serialized_size(&transcript);
+            let size = stats::serialized_size(&output.proof);
             std::println!(
                 "proof size: {} ({} field elems, {} commitments)",
                 stats::format_bytes(size),
-                transcript.fields().len(),
-                transcript.commitments().len(),
+                output.proof.fields().len(),
+                output.proof.commitments().len(),
             );
         }
 
@@ -261,14 +246,14 @@ fn main() {
                     },
                 ),
             ];
-            let mut verifier_channel =
-                VerifierTranscript::from_data(bb::test_challenger(), &transcript);
-            p3_miden_lifted_verifier::verify_multi(
+            let digest = p3_miden_lifted_stark::verifier::verify_multi(
                 &config,
                 &verifier_instances,
-                &mut verifier_channel,
+                &output.proof,
+                bb::test_challenger(),
             )
             .expect("verification failed");
+            assert_eq!(output.digest, digest);
         });
 
         if i == 0 {

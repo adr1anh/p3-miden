@@ -20,16 +20,17 @@ mod utils;
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use p3_matrix::dense::RowMajorMatrix;
-use p3_matrix::extension::FlatMatrixView;
+use p3_matrix::{dense::RowMajorMatrix, extension::FlatMatrixView};
 use p3_miden_dev_utils::{
     LOG_HEIGHTS, PARALLEL_STR, RELATIVE_SPECS, criterion_config, generate_matrices_from_specs,
     total_elements,
 };
 use p3_miden_lmcs::{Lmcs, LmcsTree};
-use rand::SeedableRng;
-use rand::distr::{Distribution, StandardUniform};
-use rand::rngs::SmallRng;
+use rand::{
+    SeedableRng,
+    distr::{Distribution, StandardUniform},
+    rngs::SmallRng,
+};
 use utils::LmcsScenario;
 
 // =============================================================================

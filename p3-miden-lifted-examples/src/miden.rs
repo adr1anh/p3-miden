@@ -4,14 +4,12 @@
 //! single degree-9 base constraint producing 8 quotient chunks, and 8 extension-field
 //! auxiliary columns (= 16 base-field columns with Goldilocks `ext_degree=2`).
 
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
-use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_miden_lifted_air::{
-    AirBuilder, AirWithPeriodicColumns, AuxBuilder, BaseAir, LiftedAir, LiftedAirBuilder,
+    AirBuilder, AuxBuilder, BaseAir, LiftedAir, LiftedAirBuilder, WindowAccess,
 };
 
 // ---------------------------------------------------------------------------
@@ -23,9 +21,9 @@ pub const TRACE1_WIDTH: usize = 51;
 /// Main trace width for the second (taller) trace.
 pub const TRACE2_WIDTH: usize = 20;
 /// Log₂ height of the first trace (2^18 = 262144 rows).
-pub const TRACE1_LOG_HEIGHT: usize = 18;
+pub const TRACE1_LOG_HEIGHT: u8 = 18;
 /// Log₂ height of the second trace (2^19 = 524288 rows).
-pub const TRACE2_LOG_HEIGHT: usize = 19;
+pub const TRACE2_LOG_HEIGHT: u8 = 19;
 /// Number of extension-field auxiliary columns.
 pub const NUM_AUX_COLS: usize = 8;
 
@@ -58,7 +56,7 @@ impl DummyMidenAir {
 /// Shared constraint logic: `local[0] * local[1] * ... * local[8] == 0`.
 fn eval_miden_constraints<AB: AirBuilder>(builder: &mut AB) {
     let main = builder.main();
-    let local = main.row_slice(0).unwrap();
+    let local = main.current_slice();
     let product = (0..9).fold(AB::Expr::ONE, |acc, j| acc * local[j].into());
     builder.assert_zero(product);
 }
@@ -73,12 +71,6 @@ impl<F> BaseAir<F> for DummyMidenAir {
     }
 }
 
-impl<F: Field> AirWithPeriodicColumns<F> for DummyMidenAir {
-    fn periodic_columns(&self) -> &[Vec<F>] {
-        &[]
-    }
-}
-
 impl<F: Field, EF: Field> LiftedAir<F, EF> for DummyMidenAir {
     fn num_randomness(&self) -> usize {
         2
@@ -90,6 +82,10 @@ impl<F: Field, EF: Field> LiftedAir<F, EF> for DummyMidenAir {
 
     fn num_aux_values(&self) -> usize {
         self.num_aux_cols
+    }
+
+    fn num_var_len_public_inputs(&self) -> usize {
+        0
     }
 
     fn eval<AB: LiftedAirBuilder<F = F>>(&self, builder: &mut AB) {
@@ -126,15 +122,14 @@ impl<F: Field, EF: ExtensionField<F>> AuxBuilder<F, EF> for DummyMidenAuxBuilder
 ///
 /// Column 0 is zero everywhere (satisfying the product constraint).
 /// Columns 1..width are filled with deterministic pseudo-random values.
-pub fn generate_dummy_trace<F>(width: usize, log_height: usize) -> RowMajorMatrix<F>
+pub fn generate_dummy_trace<F>(width: usize, log_height: u8) -> RowMajorMatrix<F>
 where
     F: Field,
     rand::distr::StandardUniform: rand::distr::Distribution<F>,
 {
-    use rand::rngs::SmallRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
-    let height = 1usize << log_height;
+    let height = 1 << log_height as usize;
     let mut values = F::zero_vec(height * width);
     let mut rng = SmallRng::seed_from_u64(42);
 
