@@ -1,20 +1,20 @@
-## 0.4.3 (TBD)
+## 0.5.0 (2026-03-10)
 
-- Fix periodic column evaluation on LDE/quotient domains.
-- [BREAKING] Remove forced conversion of periodic values from F to EF.
-- Fix length issue in boundary data length check (#21).
-- Add Lifted STARK implementation
-- [BREAKING] Decouple aux trace building from `LiftedAir` into standalone `AuxBuilder` trait and make auxiliary trace mandatory ([#35](https://github.com/0xMiden/p3-miden/pull/35)).
-- Bump Plonky3 dependencies to v0.5.0
+- Fixed periodic column evaluation on LDE/quotient domains.
+- [BREAKING] Removed forced conversion of periodic values from F to EF.
+- Added Lifted STARK implementation ([#17](https://github.com/0xMiden/p3-miden/pull/17)).
+- Fixed length issue in boundary data length check ([#21](https://github.com/0xMiden/p3-miden/pull/21).
+- [BREAKING] Decoupled aux trace building from `LiftedAir` into standalone `AuxBuilder` trait and made auxiliary trace mandatory ([#35](https://github.com/0xMiden/p3-miden/pull/35)).
+- [BREAKING] Incremented Plonky3 dependencies to v0.5.0 ([#34](https://github.com/0xMiden/p3-miden/pull/34)).
 
-## 0.4.2 (2025-01-14)
+## 0.4.2 (2026-01-14)
 
 - Added `p3-miden-lifted-fri` crate with Lifted FRI PCS (DEEP quotient + FRI), added `p3-miden-symmetric` crate with `StatefulHasher` trait for incremental hashing (#10).
 - [BREAKING] Removed `p3-miden-goldilocks` crate, now uses upstream `p3-goldilocks` (#3).
 - Updated `Pcs` trait implementation for Plonky3 v0.4.2 compatibility (#3).
 - Updated Plonky3 dependencies to v0.4.2 (#3).
 - Handle aux boundary values constraints in prover and verifier (#7).
-- Fix panics in verifier (#19).
+- Fixed panics in verifier (#19).
 
 ## 0.4.0 (2025-12-23)
 
