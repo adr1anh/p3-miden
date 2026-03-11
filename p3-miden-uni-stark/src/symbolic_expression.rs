@@ -63,6 +63,10 @@ where
                 y: Arc::new(Self::from((*y).clone())),
                 degree_multiple,
             },
+            SymbolicExpression::Bool { x, degree_multiple } => Self::Bool {
+                x: Arc::new(Self::from((*x).clone())),
+                degree_multiple,
+            },
         }
     }
 }
@@ -142,9 +146,45 @@ pub enum SymbolicExpression<F> {
         /// Cached degree multiple: `x.degree_multiple + y.degree_multiple`.
         degree_multiple: usize,
     },
+
+    /// An expression that has been marked as boolean (evaluates to 0 or 1).
+    ///
+    /// This variant is a transparent wrapper: it has the same degree and evaluation
+    /// semantics as the inner expression. Its purpose is to carry metadata so that
+    /// symbolic analysis passes can identify which sub-expressions are known to be
+    /// boolean, enabling potential optimizations such as:
+    ///
+    /// - Recognizing `bool * bool` as boolean
+    /// - Recognizing `1 - bool` as boolean
+    /// - Avoiding redundant bool-check constraints
+    ///
+    /// Created via [`BoolExprBuilder::to_bool`] on a `SymbolicAirBuilder`.
+    Bool {
+        /// The boolean expression.
+        x: Arc<Self>,
+        /// Cached degree multiple: same as `x.degree_multiple`.
+        degree_multiple: usize,
+    },
 }
 
 impl<F> SymbolicExpression<F> {
+    /// Mark this expression as boolean, wrapping it in the [`Bool`](Self::Bool) variant.
+    ///
+    /// This is a transparent annotation — it does not change evaluation behavior or
+    /// degree, but allows symbolic analysis to identify boolean sub-expressions.
+    pub fn mark_as_bool(self) -> Self {
+        let degree_multiple = self.degree_multiple();
+        Self::Bool {
+            x: Arc::new(self),
+            degree_multiple,
+        }
+    }
+
+    /// Returns `true` if this expression has been explicitly marked as boolean.
+    pub const fn is_bool(&self) -> bool {
+        matches!(self, Self::Bool { .. })
+    }
+
     /// Returns the degree multiple of this expression.
     ///
     /// The degree multiple represents how many times the trace length `n`
@@ -183,6 +223,9 @@ impl<F> SymbolicExpression<F> {
                 degree_multiple, ..
             }
             | Self::Mul {
+                degree_multiple, ..
+            }
+            | Self::Bool {
                 degree_multiple, ..
             } => *degree_multiple,
         }
@@ -224,6 +267,16 @@ impl<F: Field> PrimeCharacteristicRing for SymbolicExpression<F> {
 impl<F: Field> Algebra<F> for SymbolicExpression<F> {}
 
 impl<F: Field> Algebra<SymbolicVariable<F>> for SymbolicExpression<F> {}
+
+impl<F: Field> p3_miden_air::BoolTaggable for SymbolicExpression<F> {
+    fn tag_as_bool(self) -> Self {
+        self.mark_as_bool()
+    }
+
+    fn is_tagged_bool(&self) -> bool {
+        self.is_bool()
+    }
+}
 
 // Algebra impl for BinomialExtensionField - this works because we have From<SymbolicExpression<F>>
 // and all the arithmetic operations are implemented via Into
@@ -882,5 +935,71 @@ mod tests {
         // (a * b) * c has degree 2 + 1 = 3.
         let abc = ab * c;
         assert_eq!(abc.degree_multiple(), 3);
+    }
+
+    #[test]
+    fn test_bool_variant_preserves_degree() {
+        let var = SymbolicExpression::Variable::<BabyBear>(SymbolicVariable::new(
+            Entry::Main { offset: 0 },
+            0,
+        ));
+        assert_eq!(var.degree_multiple(), 1);
+
+        let bool_var = var.mark_as_bool();
+        assert_eq!(
+            bool_var.degree_multiple(),
+            1,
+            "Bool variant should preserve degree"
+        );
+        assert!(bool_var.is_bool(), "Should be marked as bool");
+    }
+
+    #[test]
+    fn test_bool_variant_not_bool_by_default() {
+        let var = SymbolicExpression::Variable::<BabyBear>(SymbolicVariable::new(
+            Entry::Main { offset: 0 },
+            0,
+        ));
+        assert!(!var.is_bool(), "Regular variable should not be bool");
+
+        let constant = SymbolicExpression::Constant(BabyBear::new(1));
+        assert!(!constant.is_bool(), "Regular constant should not be bool");
+    }
+
+    #[test]
+    fn test_bool_taggable_trait() {
+        use p3_miden_air::BoolTaggable;
+
+        let var = SymbolicExpression::Variable::<BabyBear>(SymbolicVariable::new(
+            Entry::Main { offset: 0 },
+            0,
+        ));
+        assert!(!var.is_tagged_bool());
+
+        let tagged = var.tag_as_bool();
+        assert!(tagged.is_tagged_bool());
+    }
+
+    #[test]
+    fn test_bool_variant_arithmetic() {
+        // Bool-tagged expressions should participate in arithmetic normally.
+        let a = SymbolicExpression::Variable::<BabyBear>(SymbolicVariable::new(
+            Entry::Main { offset: 0 },
+            0,
+        ))
+        .mark_as_bool();
+
+        let b = SymbolicExpression::Variable::<BabyBear>(SymbolicVariable::new(
+            Entry::Main { offset: 0 },
+            1,
+        ));
+
+        // Addition: max(1, 1) = 1.
+        let sum = a.clone() + b.clone();
+        assert_eq!(sum.degree_multiple(), 1);
+
+        // Multiplication: 1 + 1 = 2.
+        let product = a * b;
+        assert_eq!(product.degree_multiple(), 2);
     }
 }

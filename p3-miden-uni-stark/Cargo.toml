@@ -12,6 +12,7 @@ homepage.workspace = true
 parallel = ["p3-maybe-rayon/parallel"]
 
 [dependencies]
+p3-miden-air.workspace = true
 p3-air.workspace = true
 p3-challenger.workspace = true
 p3-commit.workspace = true

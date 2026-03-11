@@ -39,10 +39,16 @@
 //! ```
 
 mod air;
+mod bool_builder;
+mod bool_expr;
+mod bool_taggable;
 mod builder;
 mod filtered_builder;
 
 pub use air::{BaseAirWithAuxTrace, BusType, MidenAir};
+pub use bool_builder::BoolExprBuilder;
+pub use bool_expr::BoolExpr;
+pub use bool_taggable::BoolTaggable;
 pub use builder::MidenAirBuilder;
 pub use filtered_builder::FilteredMidenAirBuilder;
 // Re-export for convenience
